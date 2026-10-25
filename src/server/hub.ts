@@ -5,7 +5,7 @@ import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, Publ
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
-import { db, flush, newId, save, type EventRec, type RequestRec, type StudentRec } from './store';
+import { db, flush, newId, save, type EventRec, type RequestRec, type SessionSummaryRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
@@ -36,6 +36,8 @@ const BLOCK = 10;
 const REQUEST_TTL_MS = 2 * 60 * 1000;
 const REQUEST_MAX_MS = 15 * 60 * 1000;
 const MAX_PRACTICE_PER_QUESTION = 5;
+/** Seconds per question when the Excel 시간(초) cell is blank (단답형 gets at least 20). */
+const DEFAULT_SECONDS = 10;
 /** A teacher click or key within this long after a phase change is taken as meant for the phase before. */
 const CLICK_GUARD_MS = 1000;
 /** Friends' characters per phone result: one row on a small phone. */
@@ -449,6 +451,8 @@ class Hub {
         const mine = students.filter((s) => s.classId === c.id);
         return { id: c.id, name: c.name, students: mine.length, devices: mine.filter((s) => s.hasDevice).length };
       });
+    const sessionsOf = new Map<string, SessionSummaryRec[]>();
+    for (const s of d.sessions) sessionsOf.set(s.eventId, [...(sessionsOf.get(s.eventId) ?? []), s]);
     const events = Object.values(d.events)
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((e) => ({
@@ -463,7 +467,8 @@ class Hub {
         seconds: mostCommon(e.questions.map((q) => q.seconds)),
         fileName: e.fileName ?? null,
         retryRound: !!e.retryRound,
-        played: d.sessions.filter((s) => s.eventId === e.id).length,
+        played: sessionsOf.get(e.id)?.length ?? 0,
+        classRuns: classRuns(e, sessionsOf.get(e.id) ?? []),
       }));
     let liveDetail = null;
     if (live) {
@@ -968,7 +973,7 @@ class Hub {
     const cached = draft.generated.get(g.name);
     if (cached) return cached;
     const others = draft.groups.filter((x) => x !== g).flatMap((x) => x.words.filter((w) => w.status === '사용'));
-    const gen = generateEvent({ words: g.words, custom: g.custom, bank: [...this.bankFor(draft), ...others], askedBefore: this.askedWords(), seed: hashString(draft.id + g.name), defaultSeconds: 15 });
+    const gen = generateEvent({ words: g.words, custom: g.custom, bank: [...this.bankFor(draft), ...others], askedBefore: this.askedWords(), seed: hashString(draft.id + g.name), defaultSeconds: DEFAULT_SECONDS });
     draft.generated.set(g.name, gen);
     return gen;
   }
@@ -1676,6 +1681,24 @@ class Hub {
       this.schedulePush(true);
     }
   }
+}
+
+/**
+ * Which classes have played an event: the latest run's day and class accuracy, how many runs, and whether that
+ * run was cut short (fewer than half the word questions, like the reward rule). Deleted classes are left out.
+ */
+function classRuns(e: EventRec, sessions: SessionSummaryRec[]) {
+  const classes = db().classes;
+  const planned = e.questions.filter((q) => q.wordKey).length;
+  const out = new Map<string, { classId: string; last: number; runs: number; accuracy: number; partial: boolean }>();
+  for (const s of [...sessions].sort((a, b) => a.endedAt - b.endedAt)) {
+    if (!own(classes, s.classId)) continue;
+    const connected = s.perStudent.reduce((n, p) => n + p.connected, 0);
+    const correct = s.perStudent.reduce((n, p) => n + p.correct, 0);
+    const prev = out.get(s.classId);
+    out.set(s.classId, { classId: s.classId, last: s.endedAt, runs: (prev?.runs ?? 0) + 1, accuracy: connected ? correct / connected : 0, partial: s.mainCount < Math.ceil(planned / 2) });
+  }
+  return [...out.values()];
 }
 
 /** The value that appears most often (the first one on a tie), for an event's usual question time. */

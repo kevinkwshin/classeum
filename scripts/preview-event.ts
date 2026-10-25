@@ -22,7 +22,7 @@ async function main() {
     bank,
     askedBefore: new Set(bank.map((w) => w.key)),
     seed: 42,
-    defaultSeconds: 15,
+    defaultSeconds: 10,
   });
   event.warnings.forEach((w) => console.log(`[warning] ${w}`));
   event.questions.forEach((q, i) => {

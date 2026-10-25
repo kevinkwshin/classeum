@@ -255,7 +255,8 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">이벤트</h1>
         <div className="flex gap-2">
-          <a href="/templates/classeum-vocab-week1.xlsx" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">템플릿 받기</a>
+          {/* Saved under a name that also becomes the event's name when it comes back filled in. */}
+          <a href="/templates/week7.xlsx" download="7주차_영단어.xlsx" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">템플릿 받기</a>
           <label className={`flex h-11 cursor-pointer items-center rounded-xl bg-ink px-4 text-[15px] font-bold text-white ${busy ? 'opacity-50' : ''}`}>
             {busy ? '읽는 중…' : '엑셀 올리기'}
             <input
@@ -291,8 +292,23 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
               >
                 <div className="text-lg font-bold">{e.name}</div>
                 <div className={`text-sm ${event?.id === e.id ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>
-                  {e.count}문항 · 약 {Math.round(e.estimateSec / 60)}분{e.played ? ` · ${e.played}번 진행` : ''}
+                  {e.count}문항 · 약 {Math.round(e.estimateSec / 60)}분{view.classes.length > 0 ? ` · ${e.classRuns.length}/${view.classes.length}반` : ''}
                 </div>
+                {/* The classes that have had it, so a week's quiz can be rotated without opening each event. */}
+                {e.classRuns.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {view.classes.map((c) => {
+                      const r = e.classRuns.find((x) => x.classId === c.id);
+                      if (!r) return null;
+                      const tone = event?.id === e.id ? (r.partial ? 'bg-[#24272F] text-[#F2C46B]' : 'bg-[#24272F] text-[#7FD8A6]') : r.partial ? 'bg-[#FFF8E6] text-[#8A6100]' : 'bg-good-soft text-good';
+                      return (
+                        <span key={c.id} className={`rounded-full px-2 py-0.5 text-xs font-bold ${tone}`}>
+                          {r.partial ? '△' : '✓'} {c.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </button>
             ))}
           </div>
@@ -306,6 +322,38 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
         if (res.eventIds?.[0]) setSelected(res.eventIds[0]);
         else notify('단어만 저장했어요 (만들 문제가 없어요)');
       }} />}
+    </div>
+  );
+}
+
+const dayOf = (at: number) => new Date(at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }).replace(/\.\s?/g, '/').replace(/\/$/, '');
+
+/**
+ * Which classes have had this quiz, for a teacher who rotates one week's quiz through several classes.
+ * The class picked for 대기실 열기 is outlined, and a note warns when it has already played it.
+ */
+function ClassRuns({ view, event, chosen }: { view: TeacherView; event: TeacherEvent; chosen: string }) {
+  if (view.classes.length === 0) return null;
+  const runs = new Map(event.classRuns.map((r) => [r.classId, r]));
+  const again = runs.get(chosen);
+  return (
+    <div className="flex w-full flex-col gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        {view.classes.map((c) => {
+          const r = runs.get(c.id);
+          const tone = !r ? 'bg-bg text-ink-3' : r.partial ? 'bg-[#FFF8E6] text-[#8A6100]' : 'bg-good-soft text-good';
+          return (
+            <span key={c.id} className={`rounded-full px-3 py-1 text-sm font-semibold ${tone} ${c.id === chosen ? 'ring-2 ring-ink/70' : ''}`}>
+              {!r ? `${c.name} 아직` : `${r.partial ? '△' : '✓'} ${c.name} ${dayOf(r.last)}${r.partial ? ' 일부만' : ` · ${Math.round(r.accuracy * 100)}%`}${r.runs > 1 ? ` · ${r.runs}번` : ''}`}
+            </span>
+          );
+        })}
+      </div>
+      {again && (
+        <div className="text-sm font-semibold text-[#8A6100]">
+          {view.classes.find((c) => c.id === chosen)?.name}은 {dayOf(again.last)}에 이 퀴즈를 {again.partial ? '일부만 ' : ''}했어요. 다시 열어도 돼요.
+        </div>
+      )}
     </div>
   );
 }
@@ -353,6 +401,7 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
             </>
           )}
         </div>
+        <ClassRuns view={view} event={event} chosen={classId} />
       </Card>
       {event.warnings.length > 0 && (
         <Card className="!bg-[#FFF8E6]">

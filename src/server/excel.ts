@@ -110,7 +110,7 @@ function seconds(raw: string, sheet: string, row: number, issues: ImportIssue[])
   if (!raw) return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 5 || n > 60) {
-    issues.push({ level: 'warning', sheet, row, column: '시간(초)', message: `시간 '${raw}'은 5~60 사이가 아니라서 기본 15초로 둡니다.` });
+    issues.push({ level: 'warning', sheet, row, column: '시간(초)', message: `시간 '${raw}'은 5~60 사이가 아니라서 기본 10초로 둡니다.` });
     return undefined;
   }
   return Math.round(n);

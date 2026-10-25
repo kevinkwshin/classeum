@@ -23,9 +23,7 @@ TITLE_FILL = PatternFill("solid", fgColor="101218")
 THIN = Side(style="thin", color="D5D8DF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 LAST_ROW = 500
-DEFAULT_SECONDS = 15
-# The example rows come with this many seconds filled in; the teacher can change or clear any of them.
-TEMPLATE_SECONDS = 10
+DEFAULT_SECONDS = 10
 POS = "명,동,형,부,대,전,접,감,구"
 
 # (header, required?, width, wrap?)
@@ -110,6 +108,55 @@ WEEK2 = [
 ]
 
 # 문항ID, 유형, 문제, 보기1-4, 정답, 해설, 피드백1-4
+# The default template ([템플릿 받기]): a teacher's real Lesson 7 list, 44 words.
+WEEK7_UNIT = "Lesson 7"
+WEEK7 = [
+    ("prefer", "(더) 좋아하다", "동", "", "", ""),
+    ("pair", "한 켤레[쌍]", "명", "", "", ""),
+    ("metal", "금속", "명", "", "", ""),
+    ("exchange", "교환하다", "동", "", "", ""),
+    ("customer", "손님, 고객", "명", "", "", ""),
+    ("clerk", "점원, 직원", "명", "", "", ""),
+    ("pencil case", "필통", "", "", "", ""),
+    ("try on", "(옷 등을) 입어 보다", "", "", "", ""),
+    ("mirror", "거울", "명", "", "", ""),
+    ("helpful", "기꺼이 돕는", "형", "", "", ""),
+    ("birthday", "생일", "명", "", "", ""),
+    ("flea market", "벼룩시장", "", "", "", ""),
+    ("for sale", "팔려고 내놓은", "", "", "", ""),
+    ("stand", "가판대", "명", "", "", ""),
+    ("economy", "경제", "명", "", "", ""),
+    ("give away", "무료로 주다", "", "", "", ""),
+    ("secondhand", "중고의", "형", "", "", ""),
+    ("rental", "임대, 대여", "명", "", "", ""),
+    ("rent", "빌리다, 임차하다", "동", "", "", ""),
+    ("lock", "자물쇠", "명", "", "", ""),
+    ("spend", "(돈을) 쓰다", "동", "", "", ""),
+    ("scan", "스캔하다, 훑다", "동", "", "", ""),
+    ("allow", "허락하다, 가능하게 하다", "동", "", "", ""),
+    ("easily", "쉽게", "부", "", "", ""),
+    ("free", "무료의", "형", "", "", ""),
+    ("instead of", "~ 대신에", "", "", "", ""),
+    ("in good condition", "상태가 좋은", "", "", "", ""),
+    ("head for", "~로 향하다", "", "", "", ""),
+    ("condition", "상태", "명", "", "", ""),
+    ("wallet", "지갑", "명", "", "", ""),
+    ("cash", "현금", "명", "", "", ""),
+    ("scratch", "긁힌 자국", "명", "", "", ""),
+    ("stay out", "(밤에) 집 밖에 있다", "", "", "", ""),
+    ("water", "(식물에) 물을 주다", "동", "", "", ""),
+    ("lake", "호수", "명", "", "", ""),
+    ("forget", "잊다", "동", "", "", ""),
+    ("scarf", "목도리, 스카프", "명", "", "", ""),
+    ("sneaker", "운동화", "명", "", "", ""),
+    ("boot", "부츠, 장화", "명", "", "", ""),
+    ("go well with", "~와 잘 어울리다", "", "", "", ""),
+    ("gray", "회색의", "형", "", "", ""),
+    ("daughter", "딸", "명", "", "", ""),
+    ("expensive", "비싼", "형", "", "", ""),
+    ("wise", "현명한, 지혜로운", "형", "", "", ""),
+]
+
 WEEK1_QUESTIONS = [
     ("Q001", "OX", "homework는 셀 수 있는 명사라서 homeworks라고 쓸 수 있다.", "", "", "", "", "X",
      "homework는 셀 수 없는 명사라서 -s를 붙이지 않아요.", "", "", "", ""),
@@ -131,7 +178,7 @@ GUIDE = [
     ("품사 (선택): 명·동·형·부·대·전·접·감·구 중에서 고르면 비슷한 오답을 고르는 데 써요.", None),
     ("헷갈리는 단어 (선택): 여러 개면 ; 로 나눕니다. 단어장에 없는 단어는 괄호에 뜻을 씁니다. (예: quite(꽤))", None),
     ("예문 (선택): 빈칸이 될 자리를 [ ] 로 감쌉니다. (예: Can I [borrow] your pen?)", None),
-    (f"시간(초) (선택): 칸마다 {TEMPLATE_SECONDS}초가 미리 들어 있어요. 단어마다 바꿀 수 있고, 지우면 {DEFAULT_SECONDS}초입니다.", None),
+    (f"시간(초) (선택): 비워 두면 {DEFAULT_SECONDS}초예요. 오래 걸리는 단어만 숫자를 쓰세요.", None),
     ("세트 (선택): 비워 두면 파일 이름으로 이벤트가 생겨요. (예: 3주차 단어장.xlsx → 3주차 단어장) 한 파일을 여러 퀴즈로 나눌 때만 쓰세요.", None),
     ("상태 (선택): 사용(기본) · 검토(저장만 하고 출제 안 함) · 보관(숨김)", None),
     ("단어ID (선택): 거의 쓰지 않아요. 철자는 같고 뜻이 다른 단어를 따로 기록할 때만 씁니다.", None),
@@ -200,7 +247,7 @@ def set_text_format(ws, columns, headers):
             ws.cell(row=r, column=col).number_format = "@"
 
 
-def build(path, words, questions):
+def build(path, words, questions, unit=""):
     wb = Workbook()
 
     guide = wb.active
@@ -220,11 +267,7 @@ def build(path, words, questions):
 
     ws = wb.create_sheet("단어장")
     write_header(ws, WORD_COLUMNS)
-    write_rows(ws, WORD_COLUMNS, [w + (TEMPLATE_SECONDS, "", "", "", "") for w in words])
-    # Words the teacher adds below the examples get the same seconds; rows without a word are skipped on upload.
-    sec_col = [h for h, *_ in WORD_COLUMNS].index("시간(초)") + 1
-    for r in range(len(words) + 2, LAST_ROW + 1):
-        ws.cell(row=r, column=sec_col, value=TEMPLATE_SECONDS)
+    write_rows(ws, WORD_COLUMNS, [w + ("", "", unit, "", "") for w in words])
     add_list(ws, WORD_COLUMNS, "품사", POS, "명, 동, 형, 부, 대, 전, 접, 감, 구 중에서 고르세요.")
     add_list(ws, WORD_COLUMNS, "상태", "사용,검토,보관", "사용, 검토, 보관 중에서 고르세요.")
     add_seconds_rule(ws, WORD_COLUMNS)
@@ -232,7 +275,7 @@ def build(path, words, questions):
 
     qs = wb.create_sheet("문항")
     write_header(qs, QUESTION_COLUMNS)
-    write_rows(qs, QUESTION_COLUMNS, [q + (TEMPLATE_SECONDS, "", "") for q in questions])
+    write_rows(qs, QUESTION_COLUMNS, [q + ("", "", "") for q in questions])
     add_list(qs, QUESTION_COLUMNS, "유형", "객관식,OX,단답형", "객관식, OX, 단답형 중에서 고르세요.")
     add_list(qs, QUESTION_COLUMNS, "상태", "사용,검토,보관", "사용, 검토, 보관 중에서 고르세요.")
     add_seconds_rule(qs, QUESTION_COLUMNS)
@@ -251,3 +294,4 @@ if __name__ == "__main__":
     os.makedirs(out, exist_ok=True)
     build(os.path.join(out, "classeum-vocab-week1.xlsx"), WEEK1, WEEK1_QUESTIONS)
     build(os.path.join(out, "classeum-vocab-week2.xlsx"), WEEK2, [])
+    build(os.path.join(out, "7주차_영단어.xlsx"), WEEK7, [], unit=WEEK7_UNIT)
