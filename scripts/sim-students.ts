@@ -1,8 +1,8 @@
 // Simulates a class of phones against a running Classeum server, for testing without 30 real devices.
-// Usage: npm run sim -- [count=30] [baseUrl=http://localhost:3000] [class=시험반]
-// It makes the class and its roster if needed, registers each fake phone, approves them as
-// the teacher, picks a look, and then walks each avatar into an answer zone during every
-// question of that class's quiz.
+// Usage: npm run sim -- [count=30] [baseUrl=http://localhost:3000] [class=시험반] [noroster]
+// It makes the class (and, unless 'noroster', its roster), registers each fake phone by typing
+// 반·번호·이름 like a student, approves them as the teacher, picks a look, and then walks each
+// avatar into an answer zone during every question of that class's quiz.
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import { join } from 'node:path';
 const COUNT = Number(process.argv[2] ?? 30);
 const BASE = process.argv[3] ?? 'http://localhost:3000';
 const CLASS = process.argv[4] ?? '시험반';
+const WITH_ROSTER = process.argv[5] !== 'noroster';
 const NAMES = ['하람', '도윤', '지후', '시온', '아린', '세린', '서윤', '다온', '하준', '유찬', '도하', '가온', '예준', '서아', '민재', '지안', '은우', '수아', '건우', '나은', '태윤', '채원', '준서', '하린', '시우', '유나', '현우', '소율', '지호', '다은', '우진', '서진', '라온', '윤슬', '주원', '예린', '도현', '하은', '지민', '서준'];
 const FAMILY = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임'];
 
@@ -62,14 +63,16 @@ async function main() {
   if (!classId) classId = ((await post({ type: 'add-class', name: CLASS })) as { classId?: string }).classId;
   if (!classId) throw new Error(`'${CLASS}' 반을 만들지 못했어요.`);
   await sleep(300);
+  // Different classes get different given names.
+  const offset = CLASS.length * 7;
+  const generated = (i: number) => `${FAMILY[i % FAMILY.length]}${NAMES[(i + offset) % NAMES.length]}`;
   const existing = ((teacher as View).students as { classId: string }[]).filter((s) => s.classId === classId);
-  if (existing.length < COUNT) {
-    // Different classes get different given names, so masked names (김*람) differ across runs.
-    const offset = CLASS.length * 7;
-    const lines = Array.from({ length: COUNT }, (_, i) => `${i + 1} ${FAMILY[i % FAMILY.length]}${NAMES[(i + offset) % NAMES.length]}`);
+  if (WITH_ROSTER && existing.length < COUNT) {
+    const lines = Array.from({ length: COUNT }, (_, i) => `${i + 1} ${generated(i)}`);
     await post({ type: 'roster', classId, text: lines.join('\n') });
     await sleep(300);
   }
+  const rosterName = (n: number) => ((teacher as View).students as { classId: string; number: number; name: string }[]).find((s) => s.classId === classId && s.number === n)?.name;
 
   const phones = Array.from({ length: COUNT }, (_, i) => ({ i, token: randomBytes(24).toString('hex'), view: null as View | null, skill: 0.45 + Math.random() * 0.5, answeredSeq: -1 }));
   for (const p of phones) {
@@ -78,15 +81,15 @@ async function main() {
   await sleep(800);
 
   for (const p of phones) {
-    const roster = (p.view?.roster ?? []) as { id: string; classId: string; number: number }[];
-    const target = roster.find((r) => r.classId === classId && r.number === p.i + 1);
-    if (target) await post({ type: 'register', token: p.token, studentId: target.id });
+    // Students type their own details; with a roster this matches it, without one it's a new student.
+    const res = await post({ type: 'register', token: p.token, classId, number: p.i + 1, name: rosterName(p.i + 1) ?? generated(p.i) });
+    if (!res.ok) console.log(`${p.i + 1}번 등록 요청 실패: ${res.error}`);
   }
   await sleep(300);
   await post({ type: 'approve-all' });
   // Requests for students who already had a device show as replacements; approve those one by one.
   await sleep(300);
-  for (const r of ((teacher as View).requests ?? []) as { id: string }[]) await post({ type: 'approve', requestId: r.id });
+  for (const r of ((teacher as View).requests ?? []) as { id: string; kind: string }[]) await post({ type: 'approve', requestId: r.id, kind: r.kind });
   await sleep(500);
 
   const skins = ['light', 'medium', 'tan'];

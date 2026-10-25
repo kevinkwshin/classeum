@@ -84,7 +84,9 @@ export interface TeacherView {
   qr: string;
   classes: { id: string; name: string; students: number; devices: number }[];
   students: TeacherStudent[];
-  requests: { id: string; studentId: string; className: string; number?: number; name?: string; symbol: string; replace: boolean; createdAt: number }[];
+  /** kind: match = on the roster · replace = new phone for a registered student · new = not on the roster yet · conflict = that number belongs to someone else. */
+  /** bound: the seat's student has a phone · records: they already have a character, items, attendance or notes. */
+  requests: { id: string; className: string; number: number; name: string; kind: 'match' | 'replace' | 'new' | 'conflict'; note: string; bound: boolean; records: boolean; holder: string; symbol: string; createdAt: number }[];
   events: TeacherEvent[];
   live: TeacherLive | null;
   items: ItemDef[];
@@ -95,12 +97,10 @@ export interface StudentView {
   role: 'student';
   serverNow: number;
   me: { id: string; className: string; number: number; name: string; look: AvatarLook | null; inventory: string[]; stamps: number } | null;
-  request?: { status: 'pending' | 'approved' | 'rejected' | 'expired'; symbol: string; className: string; number: number | null; name: string } | null;
+  request?: { status: 'pending' | 'approved' | 'rejected' | 'expired'; reason?: 'timeout' | 'taken' | 'class' | 'cancelled' | 'gone'; symbol: string; className: string; number: number; name: string } | null;
   /** Set when the server turned this phone away for now; it tries again on its own. */
   refused?: string;
-  /** Names come masked (김*윤) and only while the teacher or projector screen is open. */
-  roster?: { id: string; classId: string; number: number; name: string }[];
-  /** Classes to pick from before the name list; only today's class while a lobby or quiz is on. */
+  /** Classes a first-time phone can register in; only today's class while a lobby or quiz is on. */
   classes?: { id: string; name: string }[];
   registrationOpen?: boolean;
   /** Set when another class is having its quiz right now. */

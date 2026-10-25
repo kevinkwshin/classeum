@@ -27,14 +27,25 @@ export interface DeviceRec {
   lastSeen: number;
 }
 
+/**
+ * A first-visit registration: what the student typed, and how it compares with the roster.
+ * match: on the roster, no phone yet · replace: on the roster, another phone is bound ·
+ * new: nobody has that number in the class yet · conflict: that number belongs to someone else.
+ */
 export interface RequestRec {
   id: string;
-  studentId: string;
   tokenHash: string;
+  classId: string;
+  number: number;
+  name: string;
+  kind: 'match' | 'replace' | 'new' | 'conflict';
+  /** The roster student it matches (or collides with); '' for a new student. */
+  studentId: string;
   symbol: string;
   createdAt: number;
   status: 'pending' | 'approved' | 'rejected' | 'expired';
-  replace: boolean;
+  /** Why an expired request ended, so the phone can say what to fix. */
+  reason?: 'timeout' | 'taken' | 'class' | 'cancelled' | 'gone';
 }
 
 export interface EventRec {
@@ -120,6 +131,8 @@ function migrate(d: DB): DB {
     for (const s of loose) s.classId = id;
     for (const s of sessionsWithout) s.classId = id;
   }
+  // Requests from before self-registration have no typed details; they can't be approved anymore.
+  for (const [id, r] of Object.entries(d.requests)) if (!r.kind) delete d.requests[id];
   return d;
 }
 

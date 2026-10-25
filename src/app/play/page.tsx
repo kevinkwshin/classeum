@@ -164,31 +164,21 @@ function Button({ children, onClick, kind = 'primary', disabled, className = '' 
 
 // ---------- registration ----------
 
-/**
- * Search over masked names: '*' stands for any one letter, so 하윤 or 김하윤 both find 김*윤.
- * At least one visible letter has to match, so 하 alone doesn't list everyone.
- */
-function matchesMasked(masked: string, query: string): boolean {
-  const m = [...masked];
-  const q = [...query.replace(/\s+/g, '')];
-  if (q.length === 0) return true;
-  for (let start = 0; start + q.length <= m.length; start++) {
-    let exact = 0;
-    const fits = q.every((ch, i) => {
-      if (m[start + i] === ch) exact++;
-      return m[start + i] === '*' || m[start + i] === ch;
-    });
-    if (fits && exact > 0) return true;
-  }
-  return false;
-}
+// Same rule as the server: Hangul or Latin letters, spaces, '·', '.', '-'; at most 20.
+const NAME_RE = /^[가-힣A-Za-z][가-힣A-Za-z .·-]{0,19}$/;
+const cleanName = (raw: string) => raw.normalize('NFC').trim().replace(/\s+/g, ' ');
 
+/** First visit: the student writes 반, 번호 and 이름; the teacher approves with a matching symbol. */
 function Register({ view, send }: { view: StudentView; send: Send }) {
-  const [classPick, setClassPick] = useState<string | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [error, setError] = useState('');
   const req = view.request;
+  const classes = view.classes ?? [];
+  // After a rejection or timeout the form keeps what was typed, so only the mistake needs fixing.
+  const [classPick, setClassPick] = useState<string | null>(() => classes.find((c) => c.name === req?.className)?.id ?? null);
+  // The class from an earlier request, even if it isn't offered right now.
+  const [prefillClass] = useState(() => req?.className ?? null);
+  const [number, setNumber] = useState(() => (req ? String(req.number) : ''));
+  const [name, setName] = useState(() => req?.name ?? '');
+  const [error, setError] = useState('');
   // An error from before registration closed or reopened no longer applies.
   const [seenOpen, setSeenOpen] = useState(view.registrationOpen);
   if (seenOpen !== view.registrationOpen) {
@@ -203,89 +193,100 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
           <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-bg pb-5"><div className="cls-float"><PixelAvatar look={DEFAULT_LOOK} size={150} blink={1} /></div></div>
           <div className="text-center">
             <div className="text-2xl font-bold">선생님 확인 중</div>
-            <div className="mt-2 text-ink-3">
-              {req.className && `${req.className} `}
-              {req.number != null && `${req.number}번 `}
-              {req.name}
-            </div>
+            <div className="mt-2 text-ink-3">{req.className} {req.number}번 {req.name}</div>
           </div>
           <div className="rounded-2xl bg-bg px-7 py-3 text-center">
             <div className="text-xs font-bold text-ink-3">확인 기호</div>
             <div className="text-3xl font-extrabold">{req.symbol}</div>
           </div>
         </div>
-        <Button kind="ghost" className="w-full" onClick={() => send({ type: 'cancel-register' })}>취소하고 다시 고르기</Button>
+        <Button kind="ghost" className="w-full" onClick={() => send({ type: 'cancel-register' })}>취소하고 다시 쓰기</Button>
       </div>
     );
   }
 
-  // While a class is in the room only its 반 is offered, so the class step is skipped.
-  const classes = view.classes ?? [];
-  const classId = classes.length === 1 ? classes[0].id : classes.some((c) => c.id === classPick) ? classPick : null;
-  const q = query.trim();
-  // Digits search by number only; letters search the (masked) names.
-  const roster = (view.roster ?? []).filter((r) => r.classId === classId && (!q || (/^\d+$/.test(q) ? String(r.number) === q : matchesMasked(r.name, q))));
-  const canSend = !!picked && !!view.registrationOpen && (view.roster ?? []).some((r) => r.id === picked && r.classId === classId);
-  if (view.registrationOpen && classes.length > 1 && !classId) {
-    return (
-      <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-10">
-        <div className="font-display text-base font-bold">Classeum</div>
-        <div className="text-3xl font-bold tracking-tight">내 반</div>
-        <div className="grid auto-rows-min grid-cols-2 gap-2">
-          {classes.map((c, i) => (
-            <button key={c.id} type="button" onClick={() => setClassPick(c.id)} className="cls-slide-up h-16 rounded-2xl bg-bg text-lg font-bold" style={{ animationDelay: `${i * 40}ms` }}>
+  if (!view.registrationOpen || classes.length === 0) {
+    return <Message title="잠시만요" body={view.registrationOpen ? '선생님이 반을 만들면 등록할 수 있어요.' : '선생님 화면이 켜지면 등록할 수 있어요.'} />;
+  }
+
+  // While a class is in the room only its 반 is offered. It's picked for the student unless
+  // they had chosen (or earlier asked for) another class: then they must tap it on purpose.
+  const offered = (id: string | null) => !!id && classes.some((c) => c.id === id);
+  // Only a lesson in progress (one class offered) makes an earlier choice "another class"; a deleted class doesn't.
+  const choseOther =
+    classes.length === 1 &&
+    req?.reason !== 'gone' &&
+    ((classPick !== null && !offered(classPick)) || (classPick === null && !!prefillClass && !classes.some((c) => c.name === prefillClass)));
+  const classId = offered(classPick) ? classPick : classes.length === 1 && !choseOther ? classes[0].id : null;
+  const num = Number(number);
+  const canSend = !!classId && Number.isInteger(num) && num >= 1 && num <= 99 && NAME_RE.test(cleanName(name));
+  return (
+    <form
+      className="flex flex-1 flex-col gap-5 px-5 pb-6 pt-10"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canSend) return;
+        setError('');
+        send({ type: 'register', classId, number: num, name: cleanName(name) }).catch((err: Error) => setError(err.message));
+      }}
+    >
+      <div className="font-display text-base font-bold">Classeum</div>
+      <div className="text-3xl font-bold tracking-tight">처음 왔어요</div>
+      {req?.status === 'rejected' && <div className="rounded-xl bg-bad-soft px-4 py-3 text-sm font-semibold text-bad">선생님이 거절했어요. 반·번호·이름을 다시 확인해 주세요.</div>}
+      {req?.status === 'expired' && req.reason === 'taken' && <div className="rounded-xl bg-bad-soft px-4 py-3 text-sm font-semibold text-bad">그 번호는 다른 친구가 먼저 등록했어요. 번호를 다시 확인해 주세요.</div>}
+      {req?.status === 'expired' && req.reason === 'class' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">다른 반 수업이 시작돼서 요청이 취소됐어요.</div>}
+      {req?.status === 'expired' && req.reason === 'gone' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">그 반이 없어졌어요. 반을 다시 골라 주세요.</div>}
+      {req?.status === 'expired' && (req.reason === 'timeout' || !req.reason) && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">시간이 지나 다시 요청해야 해요.</div>}
+      {choseOther && classes.length > 0 && (
+        <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">지금은 {classes.map((c) => c.name).join(', ')} 수업이라 그 반만 등록할 수 있어요. 내 반이 맞는지 보고 골라 주세요.</div>
+      )}
+      <div className="flex flex-col gap-2">
+        <div className="text-sm font-bold text-ink-3">반</div>
+        <div className="flex flex-wrap gap-2">
+          {classes.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              aria-pressed={classId === c.id}
+              onClick={() => setClassPick(c.id)}
+              className={`h-12 rounded-2xl px-5 text-base font-bold ${classId === c.id ? 'bg-ink text-white' : 'bg-bg'}`}
+            >
               {c.name}
             </button>
           ))}
         </div>
       </div>
-    );
-  }
-  return (
-    <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-10">
-      <div className="flex items-center justify-between">
-        <div className="font-display text-base font-bold">Classeum</div>
-      </div>
-      {req?.status === 'rejected' && <div className="rounded-xl bg-bad-soft px-4 py-3 text-sm font-semibold text-bad">선생님이 거절했어요. 이름을 다시 골라 주세요.</div>}
-      {req?.status === 'expired' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">시간이 지나 다시 요청해야 해요.</div>}
-      <div className="flex items-end justify-between">
-        <div className="text-3xl font-bold tracking-tight">내 이름</div>
-        {classes.length > 1 && (
-          <button type="button" onClick={() => { setClassPick(null); setPicked(null); }} className="text-sm font-semibold text-ink-3 underline">
-            {classes.find((c) => c.id === classId)?.name} · 반 바꾸기
-          </button>
-        )}
-      </div>
-      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="이름 검색" aria-label="이름 검색" className="h-13 rounded-2xl bg-bg px-4 py-3 text-base outline-none" />
-      {roster.length === 0 && !q && (
-        <div className="text-ink-3">{view.registrationOpen ? '아직 명단이 없어요. 선생님께 말씀드려 주세요.' : '선생님 화면이 켜지면 이름을 고를 수 있어요.'}</div>
-      )}
-      <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2 overflow-y-auto">
-        {roster.map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => setPicked(r.id)}
-            className={`flex h-13 items-center gap-2 rounded-2xl px-4 py-3 text-left font-semibold ${picked === r.id ? 'bg-ink text-white' : 'bg-bg'}`}
-          >
-            <span className={`tabular font-extrabold ${picked === r.id ? 'text-accent' : 'text-[#A3A8B4]'}`}>{r.number}</span>
-            {r.name}
-          </button>
-        ))}
-      </div>
+      <label className="flex flex-col gap-2">
+        <span className="text-sm font-bold text-ink-3">번호</span>
+        <input
+          value={number}
+          onChange={(e) => setNumber(e.target.value.replace(/\D/g, '').slice(0, 2))}
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="예: 15"
+          className="h-14 rounded-2xl bg-bg px-4 text-xl font-bold outline-none"
+        />
+      </label>
+      <label className="flex flex-col gap-2">
+        <span className="text-sm font-bold text-ink-3">이름</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoComplete="off"
+          autoCorrect="off"
+          enterKeyHint="send"
+          maxLength={20}
+          placeholder="예: 김하윤"
+          className="h-14 rounded-2xl bg-bg px-4 text-xl font-bold outline-none"
+        />
+      </label>
       {error && <div className="text-sm font-semibold text-bad">{error}</div>}
-      <div className="text-center text-sm text-ink-3">내 이름이 없으면 선생님께 말해 주세요</div>
-      <Button
-        kind="dark"
-        disabled={!canSend}
-        onClick={() => {
-          setError('');
-          send({ type: 'register', studentId: picked }).catch((e: Error) => setError(e.message));
-        }}
-      >
-        요청 보내기
-      </Button>
-    </div>
+      <div className="flex-1" />
+      <p className="text-center text-sm text-ink-3">선생님이 확인하면 들어가요. 폰을 바꿨다면 예전과 똑같이 쓰면 기록이 이어져요.</p>
+      <button type="submit" disabled={!canSend} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
+        등록 요청
+      </button>
+    </form>
   );
 }
 

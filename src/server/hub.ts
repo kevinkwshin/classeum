@@ -112,21 +112,24 @@ interface Draft {
   issues: ImportIssue[];
 }
 
-/** 김하윤 → 김*윤: phones that aren't registered yet never receive full names. */
-export function maskName(name: string): string {
-  const chars = [...name.trim()];
-  if (chars.length <= 1) return name.trim();
-  if (chars.length === 2) return `${chars[0]}*`;
-  return chars[0] + '*'.repeat(chars.length - 2) + chars[chars.length - 1];
+/** Names as students type them: Hangul or Latin letters, spaces, '·', '.', '-'; at most 20. */
+const NAME_RE = /^[가-힣A-Za-z][가-힣A-Za-z .·-]{0,19}$/;
+
+export function cleanName(raw: string): string {
+  return raw.normalize('NFC').trim().replace(/\s+/g, ' ');
+}
+
+/** 김 하윤 and 김하윤 are the same name when matching a registration to the roster. */
+function nameKey(name: string): string {
+  return cleanName(name).replace(/\s/g, '').toLowerCase();
 }
 
 /** What every unregistered phone shares in one push, built once instead of per phone. */
 interface RegistrationContext {
   open: boolean;
   latest: Map<string, RequestRec>;
-  /** The classes a phone can pick from: just today's class while a lobby or quiz is on. */
+  /** The classes a phone can register in: just today's class while a lobby or quiz is on. */
   classes: { id: string; name: string }[];
-  roster: { id: string; classId: string; number: number; name: string }[];
 }
 
 /** Own keys only, so ids like 'constructor' or '__proto__' sent by a phone never match. */
@@ -409,14 +412,14 @@ class Hub {
       });
     const requests = Object.values(d.requests)
       .filter((r) => r.status === 'pending')
+      .sort((a, b) => a.createdAt - b.createdAt)
       .map((r) => ({
         id: r.id,
-        studentId: r.studentId,
-        className: className(d.students[r.studentId]?.classId),
-        number: d.students[r.studentId]?.number,
-        name: d.students[r.studentId]?.name,
+        className: className(r.classId),
+        number: r.number,
+        name: r.name,
+        ...(({ kind, note, bound, records, at }) => ({ kind, note, bound, records, holder: kind === 'conflict' ? at?.name ?? '' : '' }))(this.classify(r)),
         symbol: r.symbol,
-        replace: r.replace,
         createdAt: r.createdAt,
       }));
     const classes = Object.values(d.classes)
@@ -477,17 +480,13 @@ class Hub {
       const prev = latest.get(r.tokenHash);
       if (!prev || r.createdAt >= prev.createdAt) latest.set(r.tokenHash, r);
     }
-    if (!open) return { open, latest, classes: [], roster: [] };
+    if (!open) return { open, latest, classes: [] };
     const today = this.live?.classId;
     const classes = Object.values(d.classes)
       .filter((c) => !today || c.id === today)
       .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))
       .map((c) => ({ id: c.id, name: c.name }));
-    const roster = Object.values(d.students)
-      .filter((s) => !today || s.classId === today)
-      .sort(byClassAndNumber)
-      .map((s) => ({ id: s.id, classId: s.classId, number: s.number, name: maskName(s.name) }));
-    return { open, latest, classes, roster };
+    return { open, latest, classes };
   }
 
   studentView(tokenHash?: string, getReg: () => RegistrationContext = () => this.registrationContext()) {
@@ -500,18 +499,10 @@ class Hub {
       return {
         ...base,
         me: null,
-        request: req
-          ? {
-              status: req.status,
-              symbol: req.symbol,
-              className: className(d.students[req.studentId]?.classId),
-              number: d.students[req.studentId]?.number ?? null,
-              name: maskName(d.students[req.studentId]?.name ?? ''),
-            }
-          : null,
+        // Only what this phone typed itself; no other student's name ever reaches an unregistered phone.
+        request: req ? { status: req.status, reason: req.reason, symbol: req.symbol, className: className(req.classId), number: req.number, name: req.name } : null,
         registrationOpen: reg.open,
         classes: reg.classes,
-        roster: reg.roster,
       };
     }
     // A quiz for another class is none of this phone's business: it sees no session.
@@ -560,19 +551,31 @@ class Hub {
 
   // ---------- registration ----------
 
-  requestRegistration(tokenHash: string, studentId: string) {
+  /**
+   * First visit: the student types 반, 번호 and 이름. The request is matched against the roster
+   * (if the teacher entered one) and waits for the teacher's approval either way.
+   */
+  requestRegistration(tokenHash: string, input: { classId: string; number: number; name: string }) {
     const d = db();
     if (!this.registrationOpen()) throw new Error('선생님 화면이 켜져 있을 때 등록할 수 있어요.');
-    if (!own(d.students, studentId)) throw new Error('명단에 없는 학생이에요.');
-    if (this.live && d.students[studentId].classId !== this.live.classId) throw new Error(`지금은 ${className(this.live.classId)} 수업이라 그 반 학생만 등록할 수 있어요.`);
     if (d.devices[tokenHash]) throw new Error('이 기기는 이미 등록되어 있어요.');
+    const cls = own(d.classes, input.classId);
+    if (!cls) throw new Error('반을 골라 주세요.');
+    if (this.live && cls.id !== this.live.classId) throw new Error(`지금은 ${className(this.live.classId)} 수업이라 그 반만 등록할 수 있어요.`);
+    const number = Number(input.number);
+    if (!Number.isInteger(number) || number < 1 || number > 99) throw new Error('번호는 1~99 사이로 써 주세요.');
+    const name = cleanName(String(input.name ?? ''));
+    if (!NAME_RE.test(name)) throw new Error('이름은 한글이나 영어로 써 주세요.');
     for (const r of Object.values(d.requests)) {
-      if (r.tokenHash === tokenHash && r.status === 'pending') r.status = 'expired';
+      if (r.tokenHash === tokenHash && r.status === 'pending') {
+        r.status = 'expired';
+        r.reason = 'cancelled';
+      }
     }
     const pending = Object.values(d.requests).filter((r) => r.status === 'pending');
     if (pending.length >= Math.max(60, 3 * Object.keys(d.students).length)) throw new Error('대기 중인 요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.');
-    if (pending.filter((r) => r.studentId === studentId).length >= 3) throw new Error('이 이름으로 온 요청이 너무 많아요. 선생님께 말해 주세요.');
-    const replace = Object.values(d.devices).some((x) => x.studentId === studentId);
+    if (pending.filter((r) => r.classId === cls.id && r.number === number).length >= 3) throw new Error('이 번호로 온 요청이 너무 많아요. 선생님께 말해 주세요.');
+    const seat = this.classify({ classId: cls.id, number, name });
     const id = newId('req');
     const taken = new Set(pending.map((r) => r.symbol));
     let symbol = '';
@@ -589,61 +592,112 @@ class Hub {
       }
       if (!symbol) throw new Error('대기 중인 요청이 너무 많아요.');
     }
-    d.requests[id] = {
-      id,
-      studentId,
-      tokenHash,
-      symbol,
-      createdAt: Date.now(),
-      status: 'pending',
-      replace,
-    };
+    d.requests[id] = { id, tokenHash, classId: cls.id, number, name, kind: seat.kind, studentId: seat.at?.id ?? '', symbol, createdAt: Date.now(), status: 'pending' };
     save();
     this.schedulePush(true);
+  }
+
+  /**
+   * How a registration compares with the roster as it is NOW (the teacher may have pasted or
+   * edited it since the student asked), plus what the teacher should know before approving.
+   */
+  private classify(r: { classId: string; number: number; name: string }) {
+    const d = db();
+    const classmates = Object.values(d.students).filter((x) => x.classId === r.classId);
+    const at = classmates.find((x) => x.number === r.number);
+    const bound = !!at && Object.values(d.devices).some((v) => v.studentId === at.id);
+    // Anything that would pass to another person if this seat were renamed.
+    const records = !!at && (!!at.look || at.inventory.length > 0 || (d.attendance[at.id]?.length ?? 0) > 0 || !!d.lastSummary[at.id]);
+    const sameName = classmates.find((x) => x !== at && nameKey(x.name) === nameKey(r.name));
+    let kind: RequestRec['kind'] = 'new';
+    if (at && nameKey(at.name) === nameKey(r.name)) kind = bound ? 'replace' : 'match';
+    else if (at) kind = 'conflict';
+    const notes: string[] = [];
+    if (kind === 'conflict') notes.push(`명단의 ${r.number}번은 ${at!.name}`, ...(bound ? ['그 학생 폰 등록됨'] : []));
+    if (sameName) notes.push(`같은 이름이 ${sameName.number}번에 있어요`);
+    return { kind, at, bound, records, note: notes.join(' · ') };
   }
 
   cancelRegistration(tokenHash: string) {
     for (const r of Object.values(db().requests)) {
-      if (r.tokenHash === tokenHash && r.status !== 'approved') r.status = 'expired';
+      if (r.tokenHash === tokenHash && r.status !== 'approved') {
+        r.status = 'expired';
+        r.reason = 'cancelled';
+      }
     }
     save();
     this.schedulePush(true);
   }
 
-  decideRequest(requestId: string, approve: boolean) {
+  /** `shownKind` is what the teacher's screen showed; if the roster changed since, nothing happens silently. */
+  decideRequest(requestId: string, approve: boolean, shownKind?: string) {
     const d = db();
     const r = own(d.requests, requestId);
     if (!r || r.status !== 'pending') return;
-    r.status = approve ? 'approved' : 'rejected';
-    if (approve) {
-      // One permanent device per student: approving a new one releases the old one.
-      for (const [hash, dev] of Object.entries(d.devices)) {
-        if (dev.studentId === r.studentId) delete d.devices[hash];
-      }
-      d.devices[r.tokenHash] = { studentId: r.studentId, createdAt: Date.now(), lastSeen: Date.now() };
-      if (d.students[r.studentId]?.look) this.join(r.studentId);
+    if (!approve) {
+      r.status = 'rejected';
+      save();
+      this.schedulePush(true);
+      return;
     }
+    const cls = own(d.classes, r.classId);
+    if (!cls) throw new Error('그 반이 없어졌어요. 거절해 주세요.');
+    const { kind, at } = this.classify(r);
+    // Approvals always say what the teacher saw; an old screen that doesn't is asked to reload.
+    if (shownKind === undefined) throw new Error('선생님 화면을 새로 고친 뒤 다시 승인해 주세요.');
+    if (shownKind !== kind) throw new Error('명단이 바뀌었어요. 요청을 다시 확인해 주세요.');
+    r.kind = kind;
+    let studentId: string;
+    if (!at) {
+      studentId = newId('stu');
+      d.students[studentId] = { id: studentId, classId: r.classId, number: r.number, name: r.name, look: null, inventory: [], createdAt: Date.now() };
+    } else {
+      // A different name at that number is renamed only on a conflict the teacher saw and approved.
+      if (kind === 'conflict') at.name = r.name;
+      studentId = at.id;
+    }
+    r.status = 'approved';
+    r.studentId = studentId;
+    // One permanent device per student: approving a new one releases the old one.
+    for (const [hash, dev] of Object.entries(d.devices)) {
+      if (dev.studentId === studentId) delete d.devices[hash];
+    }
+    d.devices[r.tokenHash] = { studentId, createdAt: Date.now(), lastSeen: Date.now() };
+    // Other requests for the same seat are settled by this one.
+    for (const other of Object.values(d.requests)) {
+      if (other !== r && other.status === 'pending' && other.classId === r.classId && other.number === r.number) {
+        other.status = 'expired';
+        other.reason = 'taken';
+      }
+    }
+    if (d.students[studentId]?.look) this.join(studentId);
     save();
     this.schedulePush(true);
   }
 
-  /** Approves every pending request that is unambiguous: one device asking for a name nobody else has. */
+  /**
+   * Approves what needs no checking: a roster match without a phone, or a new number nobody
+   * else asked for. Phone changes, number clashes and look-alike wrong numbers wait for the
+   * teacher, and during a lobby or quiz only today's class is approved.
+   */
   approveAllSimple(): number {
     const d = db();
     const pending = Object.values(d.requests).filter((r) => r.status === 'pending');
-    const perStudent = new Map<string, number>();
-    for (const r of pending) perStudent.set(r.studentId, (perStudent.get(r.studentId) ?? 0) + 1);
-    // Phones see masked names; two students who look the same there (김*윤) need the teacher's symbol check.
-    const lookalikes = new Map<string, number>();
-    const look = (s: StudentRec) => `${s.classId}:${maskName(s.name)}`;
-    for (const s of Object.values(d.students)) lookalikes.set(look(s), (lookalikes.get(look(s)) ?? 0) + 1);
+    const perSeat = new Map<string, number>();
+    for (const r of pending) perSeat.set(`${r.classId}:${r.number}`, (perSeat.get(`${r.classId}:${r.number}`) ?? 0) + 1);
     let n = 0;
     for (const r of pending) {
-      const s = own(d.students, r.studentId);
-      // During a lobby or quiz only today's class; other classes wait for a manual check.
-      if (r.replace || perStudent.get(r.studentId) !== 1 || !s || (this.live && s.classId !== this.live.classId) || (lookalikes.get(look(s)) ?? 0) > 1) continue;
-      this.decideRequest(r.id, true);
-      n++;
+      const { kind, note } = this.classify(r);
+      if (kind !== 'match' && kind !== 'new') continue;
+      if (perSeat.get(`${r.classId}:${r.number}`) !== 1) continue;
+      if (this.live && r.classId !== this.live.classId) continue;
+      if (note) continue;
+      try {
+        this.decideRequest(r.id, true, kind);
+        n++;
+      } catch {
+        // The roster changed under it; leave it for the teacher.
+      }
     }
     return n;
   }
@@ -702,10 +756,20 @@ class Hub {
     this.schedulePush(true);
   }
 
-  deleteClass(classId: string) {
+  /** Deletes a class; with `withStudents` its students go too (the teacher confirmed that). */
+  deleteClass(classId: string, withStudents = false) {
     const d = db();
-    if (Object.values(d.students).some((s) => s.classId === classId)) throw new Error('학생이 있는 반은 지울 수 없어요. 학생을 먼저 지워 주세요.');
-    if (this.live?.classId === classId) throw new Error('수업 중인 반은 지울 수 없어요.');
+    if (!own(d.classes, classId)) return;
+    if (this.live?.classId === classId) throw new Error('수업 중인 반은 지울 수 없어요. 아레나를 먼저 닫아 주세요.');
+    const students = Object.values(d.students).filter((s) => s.classId === classId);
+    if (students.length && !withStudents) throw new Error('학생이 있는 반이에요. 학생도 함께 지울지 확인해 주세요.');
+    this.removeStudents(students.map((s) => s.id));
+    for (const r of Object.values(d.requests)) {
+      if (r.status === 'pending' && r.classId === classId) {
+        r.status = 'expired';
+        r.reason = 'gone';
+      }
+    }
     delete d.classes[classId];
     save();
     this.schedulePush(true);
@@ -737,6 +801,8 @@ class Hub {
       if (!m) continue;
       const number = Number(m[1]);
       const name = m[2].trim();
+      // Students can only type 1-99 when they register, so other numbers could never be matched.
+      if (number < 1 || number > 99) continue;
       const existing = byNumber.get(number);
       if (existing) existing.name = name;
       else {
@@ -752,11 +818,31 @@ class Hub {
   }
 
   removeStudent(studentId: string) {
+    this.removeStudents([studentId]);
+  }
+
+  /**
+   * Takes students off the roster with their phone, character, saved notes and attendance.
+   * Past answers stay in the class's word statistics. Not while their class is mid-quiz.
+   */
+  removeStudents(studentIds: string[]): number {
     const d = db();
-    this.revokeDevice(studentId);
-    delete d.students[studentId];
+    const live = this.live;
+    const ids = studentIds.filter((id) => own(d.students, id));
+    if (live && live.phase !== 'lobby' && live.phase !== 'summary' && ids.some((id) => d.students[id].classId === live.classId)) {
+      throw new Error('퀴즈가 진행 중인 반의 학생은 지울 수 없어요.');
+    }
+    // Other phones' requests for these seats stay; classify() shows them as new students now.
+    for (const id of ids) {
+      for (const [hash, dev] of Object.entries(d.devices)) if (dev.studentId === id) delete d.devices[hash];
+      live?.joined.delete(id);
+      delete d.lastSummary[id];
+      delete d.attendance[id];
+      delete d.students[id];
+    }
     save();
     this.schedulePush(true);
+    return ids.length;
   }
 
   private stampAttendance(studentId: string) {
@@ -894,9 +980,12 @@ class Hub {
     const event = own(db().events, eventId);
     if (!event) throw new Error('이벤트를 찾을 수 없어요.');
     if (!own(db().classes, classId)) throw new Error('오늘 수업할 반을 골라 주세요.');
-    // Requests from other classes' students can't be approved during this class.
+    // Requests for other classes can't be approved during this class.
     for (const r of Object.values(db().requests)) {
-      if (r.status === 'pending' && db().students[r.studentId]?.classId !== classId) r.status = 'expired';
+      if (r.status === 'pending' && r.classId !== classId) {
+        r.status = 'expired';
+        r.reason = 'class';
+      }
     }
     if (this.live && this.live.phase !== 'summary') throw new Error('이미 진행 중인 아레나가 있어요.');
     this.live = {
@@ -1441,6 +1530,7 @@ class Hub {
     for (const [id, r] of Object.entries(d.requests)) {
       if (r.status === 'pending' && now - r.createdAt > REQUEST_TTL_MS) {
         r.status = 'expired';
+        r.reason = 'timeout';
         changed = true;
       } else if (r.status !== 'pending' && now - r.createdAt > 24 * 60 * 60 * 1000) {
         delete d.requests[id];

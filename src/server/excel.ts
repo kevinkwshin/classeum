@@ -344,6 +344,10 @@ function parseRoster(data: Cell[][], issues: ImportIssue[]) {
     const num = Number(text(row[numCol]));
     const name = text(row[nameCol]);
     if (!className && !name && !text(row[numCol])) return;
+    if (className && text(row[numCol]) !== '' && Number.isInteger(num) && name && (num < 1 || num > 99)) {
+      issues.push({ level: 'warning', sheet, row: i + 2, message: `번호는 1~99만 쓸 수 있어 건너뛰었어요 (${num}).` });
+      return;
+    }
     if (!className || !Number.isInteger(num) || num <= 0 || !name) {
       issues.push({ level: 'warning', sheet, row: i + 2, message: '반, 번호, 이름 중 비어 있는 칸이 있어 건너뛰었어요.' });
       return;

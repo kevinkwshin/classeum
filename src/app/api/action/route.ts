@@ -4,7 +4,7 @@ import { isTeacher } from '@/server/auth';
 
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'open-lobby', 'close-session', 'control',
-  'add-class', 'rename-class', 'delete-class', 'revoke-class',
+  'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -46,7 +46,8 @@ export async function POST(request: NextRequest) {
       if (!isTeacher(request)) return Response.json({ ok: false, error: '노트북의 선생님 화면에서만 할 수 있어요.' }, { status: 403 });
       switch (type) {
         case 'approve':
-          h.decideRequest(String(body.requestId), true);
+          if (body.kind !== 'match' && body.kind !== 'replace' && body.kind !== 'new' && body.kind !== 'conflict') throw new Error('선생님 화면을 새로 고친 뒤 다시 승인해 주세요.');
+          h.decideRequest(String(body.requestId), true, body.kind);
           break;
         case 'reject':
           h.decideRequest(String(body.requestId), false);
@@ -64,13 +65,15 @@ export async function POST(request: NextRequest) {
           h.renameClass(String(body.classId), String(body.name ?? ''));
           break;
         case 'delete-class':
-          h.deleteClass(String(body.classId));
+          h.deleteClass(String(body.classId), body.withStudents === true);
           break;
         case 'revoke-class':
           return Response.json({ ok: true, revoked: h.revokeClass(String(body.classId)) });
         case 'remove-student':
           h.removeStudent(String(body.studentId));
           break;
+        case 'remove-students':
+          return Response.json({ ok: true, removed: h.removeStudents(Array.isArray(body.studentIds) ? body.studentIds.slice(0, 500).map(String) : []) });
         case 'create-event':
           return Response.json({ ok: true, eventIds: h.createEvents(String(body.draftId)) });
         case 'delete-event':
@@ -97,7 +100,7 @@ export async function POST(request: NextRequest) {
     const tokenHash = hashToken(token);
     switch (type) {
       case 'register':
-        h.requestRegistration(tokenHash, String(body.studentId));
+        h.requestRegistration(tokenHash, { classId: String(body.classId ?? ''), number: Number(body.number), name: String(body.name ?? '') });
         break;
       case 'cancel-register':
         h.cancelRegistration(tokenHash);

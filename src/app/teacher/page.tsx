@@ -143,6 +143,13 @@ function ClassTabs({ classes, value, onChange, extra }: { classes: { id: string;
   );
 }
 
+const REQUEST_KIND: Record<TeacherView['requests'][number]['kind'], { label: string; tone: string; action: string }> = {
+  match: { label: '명단 확인', tone: 'font-semibold text-good', action: '승인' },
+  new: { label: '새 학생', tone: 'text-ink-3', action: '추가' },
+  replace: { label: '기기 교체', tone: 'font-semibold text-bad', action: '교체' },
+  conflict: { label: '번호 겹침', tone: 'font-semibold text-bad', action: '이름 바꿔 승인' },
+};
+
 function Requests({ view, act, inline = false }: { view: TeacherView; act: Send; inline?: boolean }) {
   // Floating, it sits below the top bars (so 퀴즈 시작 / 종료 stay clickable) and folds away to a pill.
   const [open, setOpen] = useState(true);
@@ -160,8 +167,8 @@ function Requests({ view, act, inline = false }: { view: TeacherView; act: Send;
       {open && (
         <>
           {view.requests.length > 1 && (
-            <Btn kind="ghost" className="mb-2 w-full text-sm" onClick={() => act({ type: 'approve-all' })} title="이름이 겹치지 않는 새 기기만 한 번에 승인해요">
-              겹치지 않는 요청 모두 승인
+            <Btn kind="ghost" className="mb-2 w-full text-sm" onClick={() => act({ type: 'approve-all' }).catch(() => undefined)} title="명단과 맞거나 새로 온 학생을 한 번에 승인해요. 기기 교체와 번호 겹침은 하나씩 확인하세요.">
+              모두 승인 (교체·겹침 빼고)
             </Btn>
           )}
           <div className="flex max-h-[60vh] flex-col overflow-y-auto">
@@ -171,10 +178,28 @@ function Requests({ view, act, inline = false }: { view: TeacherView; act: Send;
                   <div className="font-bold">
                     <span className="text-ink-3">{r.className}</span> {r.number} {r.name}
                   </div>
-                  <div className={`text-[13px] ${r.replace ? 'font-semibold text-bad' : 'text-ink-3'}`}>{r.replace ? '기기 교체' : '새 기기'} · <b className="text-ink">{r.symbol}</b></div>
+                  <div className={`text-[13px] ${REQUEST_KIND[r.kind].tone}`}>
+                    {REQUEST_KIND[r.kind].label}
+                    {r.note && ` · ${r.note}`} · <b className="text-ink">{r.symbol}</b>
+                  </div>
                 </div>
-                <button type="button" aria-label="거절" onClick={() => act({ type: 'reject', requestId: r.id })} className="h-10 w-10 rounded-xl border border-[#D5D8DF] text-lg">✕</button>
-                <Btn onClick={() => act({ type: 'approve', requestId: r.id })} className="h-10 px-3 text-sm">{r.replace ? '교체' : '승인'}</Btn>
+                <button type="button" aria-label="거절" onClick={() => act({ type: 'reject', requestId: r.id })} className="h-10 w-10 shrink-0 rounded-xl border border-[#D5D8DF] text-lg">✕</button>
+                <Btn
+                  onClick={() => {
+                    if (r.kind === 'conflict') {
+                      const message =
+                        r.bound || r.records
+                          ? `${r.className} ${r.number}번 ${r.holder}의 ${r.bound ? '폰 연결이 끊기고, ' : ''}캐릭터와 기록이 '${r.name}'에게 넘어가요.\n번호를 잘못 쓴 건 아닌지 확인했나요?`
+                          : `${r.className} ${r.number}번의 이름을 '${r.holder}'에서 '${r.name}'(으)로 바꾸고 승인할까요?`;
+                      if (!confirm(message)) return;
+                    }
+                    // The kind shown here goes along, so a roster change in between can't approve something else.
+                    act({ type: 'approve', requestId: r.id, kind: r.kind }).catch(() => undefined);
+                  }}
+                  className="h-10 shrink-0 px-3 text-sm"
+                >
+                  {REQUEST_KIND[r.kind].action}
+                </Btn>
               </div>
             ))}
           </div>
@@ -606,7 +631,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
         <Card className="w-80 shrink-0">
           <h2 className="mb-3 text-lg font-bold">아직 안 들어옴</h2>
           <div className="flex flex-wrap gap-1.5">{notJoined.map((s) => <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">{s.number} {s.name}{!s.hasDevice ? ' ·미등록' : ''}</span>)}</div>
-          <p className="mt-4 text-xs leading-relaxed text-ink-3">처음 온 학생은 QR을 찍고 이름을 고르면 오른쪽 위에 등록 요청이 떠요. 지금은 {live.className} 학생만 들어올 수 있어요.</p>
+          <p className="mt-4 text-xs leading-relaxed text-ink-3">처음 온 학생은 QR을 찍고 반·번호·이름을 쓰면 오른쪽 위에 등록 요청이 떠요. 지금은 {live.className} 학생만 들어올 수 있어요.</p>
         </Card>
       </div>
     </div>
@@ -621,6 +646,23 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
   const [newClass, setNewClass] = useState('');
   const current = view.classes.find((c) => c.id === classId);
   const students = view.students.filter((s) => s.classId === classId);
+  // Checked students of this class only; switching classes or deleting simply drops the rest.
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  const picked = students.filter((s) => checked.has(s.id));
+  const allPicked = students.length > 0 && picked.length === students.length;
+  const toggle = (id: string) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const removePicked = () => {
+    if (!confirm(`${current?.name} 학생 ${picked.length}명을 명단에서 지울까요?\n폰 연결, 캐릭터, 오답 노트, 출석 발자국도 함께 지워지고 되돌릴 수 없어요.`)) return;
+    act({ type: 'remove-students', studentIds: picked.map((s) => s.id) })
+      .then(() => setChecked(new Set()))
+      .catch(() => undefined);
+  };
   const addClass = () =>
     act({ type: 'add-class', name: newClass })
       .then((res) => {
@@ -654,12 +696,38 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
       ) : (
         <div className="flex gap-5">
           <Card className="min-w-0 flex-1 !p-2">
+            {picked.length > 0 && (
+              <div className="mb-1 flex items-center justify-between rounded-xl bg-bad-soft px-4 py-2.5">
+                <span className="text-sm font-bold">{picked.length}명 선택</span>
+                <span className="flex gap-2">
+                  <Btn kind="ghost" className="!h-9 text-sm" onClick={() => setChecked(new Set())}>선택 해제</Btn>
+                  <Btn className="!h-9 !bg-bad text-sm" onClick={removePicked}>선택한 학생 지우기</Btn>
+                </span>
+              </div>
+            )}
             <table className="w-full text-left text-[15px]">
-              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">번호</th><th>이름</th><th>캐릭터</th><th>기기</th><th>출석</th><th /></tr></thead>
+              <thead className="text-xs font-bold text-ink-3">
+                <tr>
+                  <th className="w-10 pl-4">
+                    <input
+                      type="checkbox"
+                      aria-label="이 반 학생 모두 선택"
+                      checked={allPicked}
+                      disabled={students.length === 0}
+                      onChange={() => setChecked(allPicked ? new Set() : new Set(students.map((s) => s.id)))}
+                      className="h-4 w-4 accent-ink"
+                    />
+                  </th>
+                  <th className="px-2 py-3">번호</th><th>이름</th><th>캐릭터</th><th>기기</th><th>출석</th><th />
+                </tr>
+              </thead>
               <tbody>
                 {students.map((s) => (
-                  <tr key={s.id} className="border-t border-[#EEF0F3]">
-                    <td className="tabular px-4 py-2.5 text-ink-3">{s.number}</td>
+                  <tr key={s.id} className={`border-t border-[#EEF0F3] ${checked.has(s.id) ? 'bg-bad-soft/50' : ''}`}>
+                    <td className="pl-4">
+                      <input type="checkbox" aria-label={`${s.number} ${s.name} 선택`} checked={checked.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4 accent-ink" />
+                    </td>
+                    <td className="tabular px-2 py-2.5 text-ink-3">{s.number}</td>
                     <td className="font-semibold">{s.name}</td>
                     <td>{s.look ? <PixelAvatar look={normalizeLook(s.look)} size={28} /> : <span className="text-xs text-ink-3">-</span>}</td>
                     <td className="text-sm">{s.hasDevice ? <span className={s.connected ? 'font-semibold text-good' : 'text-ink-2'}>{s.connected ? '접속 중' : '등록됨'}</span> : <span className="text-ink-3">미등록</span>}</td>
@@ -670,7 +738,7 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
                     </td>
                   </tr>
                 ))}
-                {students.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-ink-3">{current.name} 명단이 비어 있어요. 오른쪽에 붙여 넣거나 엑셀 명단 시트로 올려 주세요.</td></tr>}
+                {students.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-ink-3">{current.name} 학생이 아직 없어요. 학생이 처음 접속해 등록하면 여기에 생겨요. 명단을 미리 넣어 둘 수도 있어요.</td></tr>}
               </tbody>
             </table>
           </Card>
@@ -678,7 +746,7 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
             <Card className="flex flex-col gap-3">
               <h2 className="text-lg font-bold">{current.name} 명단 추가</h2>
               <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} placeholder={'1 강하람\n2 김도윤'} className="rounded-xl bg-bg p-3 text-sm outline-none" />
-              <p className="text-xs text-ink-3">한 줄에 ‘번호 이름’. 이 반에 같은 번호가 있으면 이름을 바꿔요. 다른 반은 그대로예요. 연락처나 생년월일은 받지 않아요.</p>
+              <p className="text-xs text-ink-3">넣지 않아도 돼요. 학생이 처음 접속해 반·번호·이름을 쓰면 승인할 때 명단에 들어가요. 미리 넣어 두면 학생이 쓴 이름과 맞춰 보여 줘서 승인이 쉬워요. 한 줄에 ‘번호 이름’, 같은 번호는 이름을 바꿔요.</p>
               <Btn disabled={!text.trim()} onClick={() => act({ type: 'roster', classId, text }).then(() => setText('')).catch(() => undefined)}>저장</Btn>
             </Card>
             <Card className="flex flex-col gap-2">
@@ -692,7 +760,18 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
               >
                 이 반 기기 모두 해제
               </Btn>
-              {current.students === 0 && <Btn kind="ghost" className="text-sm !text-bad" onClick={() => { if (confirm(`${current.name}을 지울까요?`)) act({ type: 'delete-class', classId }).catch(() => undefined); }}>반 지우기</Btn>}
+              <Btn
+                kind="ghost"
+                className="text-sm !text-bad"
+                onClick={() => {
+                  const message = current.students
+                    ? `${current.name}과 학생 ${current.students}명을 모두 지울까요?\n폰 연결, 캐릭터, 오답 노트, 출석 발자국도 함께 지워지고 되돌릴 수 없어요.`
+                    : `${current.name}을 지울까요?`;
+                  if (confirm(message)) act({ type: 'delete-class', classId, withStudents: current.students > 0 }).catch(() => undefined);
+                }}
+              >
+                반 지우기
+              </Btn>
             </Card>
           </div>
         </div>
