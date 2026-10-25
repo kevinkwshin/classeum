@@ -938,8 +938,11 @@ class Hub {
   // ---------- events ----------
 
   makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }, fileName?: string) {
+    // Only the name as shown in the teacher's file picker: no folders, no control characters, not too long.
+    const cleanFile = fileName?.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined;
+    // Rows without a 세트 make an event named after the file ('3주차 단어장'), or after the day if the name is unknown.
+    const defaultName = cleanFile?.replace(/\.xlsx?$/i, '').trim().slice(0, 40) || `${shortDate()} 퀴즈`;
     const groups = new Map<string, { words: Word[]; custom: CustomQuestion[] }>();
-    const defaultName = `${shortDate()} 퀴즈`;
     for (const w of result.words) {
       const name = w.set || defaultName;
       if (!groups.has(name)) groups.set(name, { words: [], custom: [] });
@@ -950,8 +953,6 @@ class Hub {
       if (!groups.has(name)) groups.set(name, { words: [], custom: [] });
       groups.get(name)!.custom.push(q);
     }
-    // Only the name as shown in the teacher's file picker: no folders, no control characters, not too long.
-    const cleanFile = fileName?.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined;
     const draft: Draft = { id: newId('draft'), createdAt: Date.now(), groups: [...groups].map(([name, g]) => ({ name, ...g })), generated: new Map(), roster: result.roster, issues: result.issues, fileName: cleanFile };
     this.drafts.set(draft.id, draft);
     return draft;
