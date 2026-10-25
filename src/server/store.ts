@@ -57,6 +57,10 @@ export interface EventRec {
   warnings: string[];
   reward: RewardSetting;
   wordKeys: string[];
+  /** After the main round, ask again the words much of the class got wrong. Off unless the teacher turns it on. */
+  retryRound?: boolean;
+  /** The Excel file it was made from (events made before this was kept have none). */
+  fileName?: string;
 }
 
 export interface ResponseRec {

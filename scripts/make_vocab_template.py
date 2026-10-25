@@ -24,6 +24,8 @@ THIN = Side(style="thin", color="D5D8DF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 LAST_ROW = 500
 DEFAULT_SECONDS = 15
+# The example rows come with this many seconds filled in; the teacher can change or clear any of them.
+TEMPLATE_SECONDS = 10
 POS = "명,동,형,부,대,전,접,감,구"
 
 # (header, required?, width, wrap?)
@@ -129,7 +131,7 @@ GUIDE = [
     ("품사 (선택): 명·동·형·부·대·전·접·감·구 중에서 고르면 비슷한 오답을 고르는 데 써요.", None),
     ("헷갈리는 단어 (선택): 여러 개면 ; 로 나눕니다. 단어장에 없는 단어는 괄호에 뜻을 씁니다. (예: quite(꽤))", None),
     ("예문 (선택): 빈칸이 될 자리를 [ ] 로 감쌉니다. (예: Can I [borrow] your pen?)", None),
-    (f"시간(초) (선택): 비워 두면 {DEFAULT_SECONDS}초입니다. 특별히 오래 걸리는 단어만 숫자를 쓰세요.", None),
+    (f"시간(초) (선택): 칸마다 {TEMPLATE_SECONDS}초가 미리 들어 있어요. 단어마다 바꿀 수 있고, 지우면 {DEFAULT_SECONDS}초입니다.", None),
     ("세트 (선택): 비워 두면 올린 날짜로 이벤트가 생겨요. (예: 10-29 퀴즈)", None),
     ("상태 (선택): 사용(기본) · 검토(저장만 하고 출제 안 함) · 보관(숨김)", None),
     ("단어ID (선택): 거의 쓰지 않아요. 철자는 같고 뜻이 다른 단어를 따로 기록할 때만 씁니다.", None),
@@ -218,7 +220,11 @@ def build(path, words, questions):
 
     ws = wb.create_sheet("단어장")
     write_header(ws, WORD_COLUMNS)
-    write_rows(ws, WORD_COLUMNS, [w + ("", "", "", "", "") for w in words])
+    write_rows(ws, WORD_COLUMNS, [w + (TEMPLATE_SECONDS, "", "", "", "") for w in words])
+    # Words the teacher adds below the examples get the same seconds; rows without a word are skipped on upload.
+    sec_col = [h for h, *_ in WORD_COLUMNS].index("시간(초)") + 1
+    for r in range(len(words) + 2, LAST_ROW + 1):
+        ws.cell(row=r, column=sec_col, value=TEMPLATE_SECONDS)
     add_list(ws, WORD_COLUMNS, "품사", POS, "명, 동, 형, 부, 대, 전, 접, 감, 구 중에서 고르세요.")
     add_list(ws, WORD_COLUMNS, "상태", "사용,검토,보관", "사용, 검토, 보관 중에서 고르세요.")
     add_seconds_rule(ws, WORD_COLUMNS)
@@ -226,7 +232,7 @@ def build(path, words, questions):
 
     qs = wb.create_sheet("문항")
     write_header(qs, QUESTION_COLUMNS)
-    write_rows(qs, QUESTION_COLUMNS, [q + ("", "", "") for q in questions])
+    write_rows(qs, QUESTION_COLUMNS, [q + (TEMPLATE_SECONDS, "", "") for q in questions])
     add_list(qs, QUESTION_COLUMNS, "유형", "객관식,OX,단답형", "객관식, OX, 단답형 중에서 고르세요.")
     add_list(qs, QUESTION_COLUMNS, "상태", "사용,검토,보관", "사용, 검토, 보관 중에서 고르세요.")
     add_seconds_rule(qs, QUESTION_COLUMNS)

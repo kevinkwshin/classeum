@@ -3,7 +3,7 @@ import { hashToken, hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
 
 const TEACHER_ACTIONS = new Set([
-  'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'open-lobby', 'close-session', 'control',
+  'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
 ]);
 
@@ -81,6 +81,9 @@ export async function POST(request: NextRequest) {
           break;
         case 'reward':
           h.setReward(String(body.eventId), String(body.itemId), Number(body.challengePct), Number(body.growthPp));
+          break;
+        case 'retry-round':
+          h.setRetryRound(String(body.eventId), body.on === true);
           break;
         case 'open-lobby':
           h.openLobby(String(body.eventId), String(body.classId));

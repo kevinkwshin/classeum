@@ -58,6 +58,11 @@ export interface TeacherEvent {
   warnings: string[];
   reward: RewardSetting;
   estimateSec: number;
+  /** The usual seconds per question (most questions have it). */
+  seconds: number;
+  retryRound: boolean;
+  /** The Excel file it was made from; null for events made before this was kept. */
+  fileName: string | null;
   played: number;
 }
 

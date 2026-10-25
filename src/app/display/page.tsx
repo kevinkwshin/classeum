@@ -100,14 +100,23 @@ function RewardCard({ s }: { s: SessionPublic }) {
   );
 }
 
-/** Largest lobby avatar (up to 52px, 8px gaps) that fits everyone in the w×h area. */
-function lobbyAvatarSize(count: number, w: number, h: number) {
-  if (!count || !w || !h) return 52;
-  for (let size = 52; size > 20; size -= 2) {
-    const perRow = Math.max(1, Math.floor((w + 8) / (size + 8)));
-    if (Math.ceil(count / perRow) * (size + 8) - 8 <= h) return size;
-  }
-  return 20;
+// With name tags each lobby slot is at least this wide (a three-syllable name) and this much taller.
+const LOBBY_NAME_W = 52;
+const LOBBY_NAME_H = 16;
+
+/**
+ * Largest lobby avatar (up to 52px, 8px gaps) that fits everyone in the w×h area, with names under them when
+ * asked and there is room; a class too big for names on this screen shows the characters alone instead.
+ */
+function lobbyLayout(count: number, w: number, h: number, wantNames: boolean): { size: number; names: boolean } {
+  if (!count || !w || !h) return { size: 52, names: wantNames };
+  const fits = (size: number, names: boolean) => {
+    const perRow = Math.max(1, Math.floor((w + 8) / (Math.max(size, names ? LOBBY_NAME_W : 0) + 8)));
+    return Math.ceil(count / perRow) * (size + (names ? LOBBY_NAME_H : 0) + 8) - 8 <= h;
+  };
+  if (wantNames) for (let size = 52; size >= 20; size -= 2) if (fits(size, true)) return { size, names: true };
+  for (let size = 52; size > 20; size -= 2) if (fits(size, false)) return { size, names: false };
+  return { size: 20, names: false };
 }
 
 function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
@@ -128,7 +137,8 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const size = lobbyAvatarSize(avatars.length, box.w, box.h);
+  // The teacher's 이름표 switch decides whether names show here too.
+  const { size, names } = lobbyLayout(avatars.length, box.w, box.h, view.nameLabels !== false);
   return (
     // min-h-0: a lobby opened with the class already connected must not stretch past the screen before it is measured.
     <div className="flex min-h-0 flex-1 gap-[3vw]">
@@ -141,10 +151,11 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
       <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
         <div className="flex items-start justify-between">
           <div>
-            <div className="font-display text-3xl font-bold">Classeum</div>
-            <div className="mt-4 text-3xl font-bold text-accent">{s.className}</div>
-            <div className="mt-1 text-6xl font-bold tracking-tight">{s.eventName}</div>
-            <div className="mt-2 text-3xl font-medium text-ink-3">{s.mainCount}문항</div>
+            {/* A shorter header on 720p projectors leaves the room to the characters and their names. */}
+            <div className="font-display text-3xl font-bold [@media(max-height:800px)]:text-2xl">Classeum</div>
+            <div className="mt-4 text-3xl font-bold text-accent [@media(max-height:800px)]:mt-2 [@media(max-height:800px)]:text-2xl">{s.className}</div>
+            <div className="mt-1 text-6xl font-bold tracking-tight [@media(max-height:800px)]:text-5xl">{s.eventName}</div>
+            <div className="mt-2 text-3xl font-medium text-ink-3 [@media(max-height:800px)]:mt-1 [@media(max-height:800px)]:text-2xl">{s.mainCount}문항</div>
           </div>
           <div key={avatars.length} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{avatars.length}</div>
         </div>
@@ -152,13 +163,14 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
         <div ref={area} className="-mt-6 flex min-h-0 flex-1 flex-col justify-center overflow-y-clip pt-6">
           <div className="flex min-h-[min(18vh,100%)] flex-wrap content-start gap-2">
             {avatars.map((a, i) => (
-              <div key={a.studentId} className="cls-drop-in">
+              <div key={a.studentId} className="cls-drop-in flex flex-col items-center" style={{ width: names ? Math.max(size, LOBBY_NAME_W) : undefined }}>
                 <div className="cls-float" style={{ animationDelay: `-${(i * 0.37) % 2.4}s` }}>
                   {/* Now and then someone hops or spins while the class waits. */}
                   <div className="cls-antic origin-bottom" style={{ animationDuration: `${7 + (i % 6)}s`, animationDelay: `-${(i * 2.3) % 9}s` }}>
                     <PixelAvatar look={a.look} size={size} blink={i} />
                   </div>
                 </div>
+                {names && <span className="max-w-full truncate text-[13px] font-bold leading-4 text-ink-2">{a.name}</span>}
               </div>
             ))}
           </div>

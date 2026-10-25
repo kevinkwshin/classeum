@@ -124,6 +124,8 @@ interface Draft {
   generated: Map<string, Generated>;
   roster: { className: string; number: number; name: string }[];
   issues: ImportIssue[];
+  /** The uploaded Excel file's name, kept on the events it makes. */
+  fileName?: string;
 }
 
 /** Names as students type them: Hangul or Latin letters, spaces, '·', '.', '-'; at most 20. */
@@ -456,7 +458,11 @@ class Hub {
         count: e.questions.length,
         warnings: e.warnings,
         reward: e.reward,
-        estimateSec: Math.round(e.questions.reduce((sum, q) => sum + Math.min(q.seconds, 9) + 4, 0) + 120),
+        // About a minute for the summary, and another for the retry round when it is on.
+        estimateSec: Math.round(e.questions.reduce((sum, q) => sum + Math.min(q.seconds, 9) + 4, 0) + 60 + (e.retryRound ? 60 : 0)),
+        seconds: mostCommon(e.questions.map((q) => q.seconds)),
+        fileName: e.fileName ?? null,
+        retryRound: !!e.retryRound,
         played: d.sessions.filter((s) => s.eventId === e.id).length,
       }));
     let liveDetail = null;
@@ -931,7 +937,7 @@ class Hub {
 
   // ---------- events ----------
 
-  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }) {
+  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }, fileName?: string) {
     const groups = new Map<string, { words: Word[]; custom: CustomQuestion[] }>();
     const defaultName = `${shortDate()} 퀴즈`;
     for (const w of result.words) {
@@ -944,7 +950,9 @@ class Hub {
       if (!groups.has(name)) groups.set(name, { words: [], custom: [] });
       groups.get(name)!.custom.push(q);
     }
-    const draft: Draft = { id: newId('draft'), createdAt: Date.now(), groups: [...groups].map(([name, g]) => ({ name, ...g })), generated: new Map(), roster: result.roster, issues: result.issues };
+    // Only the name as shown in the teacher's file picker: no folders, no control characters, not too long.
+    const cleanFile = fileName?.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined;
+    const draft: Draft = { id: newId('draft'), createdAt: Date.now(), groups: [...groups].map(([name, g]) => ({ name, ...g })), generated: new Map(), roster: result.roster, issues: result.issues, fileName: cleanFile };
     this.drafts.set(draft.id, draft);
     return draft;
   }
@@ -1023,6 +1031,7 @@ class Hub {
         warnings: gen.warnings,
         reward: { itemId: nextItem.id, challengePct: 70, growthPp: 10 },
         wordKeys: g.words.map((w) => w.key),
+        fileName: draft.fileName,
       };
       ids.push(id);
     }
@@ -1042,6 +1051,14 @@ class Hub {
   deleteEvent(eventId: string) {
     if (this.live?.eventId === eventId) throw new Error('진행 중인 이벤트는 지울 수 없어요.');
     delete db().events[eventId];
+    save();
+    this.schedulePush(true);
+  }
+
+  setRetryRound(eventId: string, on: boolean) {
+    const e = db().events[eventId];
+    if (!e) throw new Error('이벤트를 찾을 수 없어요.');
+    e.retryRound = on;
     save();
     this.schedulePush(true);
   }
@@ -1315,7 +1332,7 @@ class Hub {
       this.beginQuestion();
       return;
     }
-    if (live.round === 'main') {
+    if (live.round === 'main' && db().events[live.eventId]?.retryRound) {
       const retry = this.buildRetry();
       if (retry.length > 0) {
         live.round = 'retry';
@@ -1658,6 +1675,13 @@ class Hub {
       this.schedulePush(true);
     }
   }
+}
+
+/** The value that appears most often (the first one on a tie), for an event's usual question time. */
+function mostCommon(values: number[]): number {
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts].reduce((best, cur) => (cur[1] > best[1] ? cur : best), [0, 0])[0];
 }
 
 function clamp(n: number, lo: number, hi: number) {

@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
   if (file.size > 5 * 1024 * 1024) return Response.json({ ok: false, error: '파일이 너무 커요 (5MB 이하).' }, { status: 400 });
   const result = await importWorkbook(Buffer.from(await file.arrayBuffer()));
   const h = hub();
-  const draft = h.makeDraft(result);
+  const draft = h.makeDraft(result, file.name);
   // Rows that would rename someone already on the roster are skipped; say so before 만들기.
   const kept = h.rosterConflicts(result.roster).map((message) => ({ level: 'warning' as const, sheet: '명단', message }));
   return Response.json({

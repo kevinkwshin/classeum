@@ -331,7 +331,12 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
       <Card className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           <div className="text-2xl font-bold">{event.name}</div>
-          <div className="text-ink-3">{event.count}문항 · 기본 15초 · 약 {Math.round(event.estimateSec / 60)}분</div>
+          <div className="text-ink-3">{event.count}문항 · 문항당 {event.seconds}초 · 약 {Math.round(event.estimateSec / 60)}분</div>
+          {event.fileName && (
+            <div className="mt-0.5 break-all text-sm text-ink-3">
+              📄 {event.fileName} · {new Date(event.createdAt).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })} 올림
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
           <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요?`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
@@ -394,6 +399,18 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
           <span className="text-sm text-ink-3">둘 중 하나만 달성하면 받아요</span>
           <Btn kind="gold" disabled={!dirty} onClick={saveReward} className="ml-auto">저장</Btn>
         </div>
+      </Card>
+      <Card className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <label className="flex items-center gap-3 text-[15px] font-semibold">
+          <input
+            type="checkbox"
+            checked={event.retryRound}
+            onChange={(e) => act({ type: 'retry-round', eventId: event.id, on: e.target.checked }).catch(() => undefined)}
+            className="h-5 w-5 accent-ink"
+          />
+          끝나고 많이 틀린 단어 다시 풀기
+        </label>
+        <span className="text-sm text-ink-3">반 정답률 70% 아래 단어, 최대 5문제 · 보통은 꺼 두세요</span>
       </Card>
     </div>
   );
@@ -657,6 +674,8 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
           <h1 className="text-2xl font-bold">{live.className} · {live.eventName} · {live.mainCount}문항</h1>
         </div>
         <div className="flex gap-2">
+          {/* Names show under the characters on the projector, in the lobby and at each reveal. */}
+          <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
           <a href="/display" target="classeum-display" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</a>
           <Btn kind="ghost" onClick={() => act({ type: 'close-session' })}>대기실 닫기</Btn>
           <Btn kind="accent" onClick={() => control('start')} className="px-6">퀴즈 시작</Btn>
