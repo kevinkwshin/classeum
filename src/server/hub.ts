@@ -34,6 +34,8 @@ const RETRY_INTRO_MS = 3000;
 const BLOCK = 10;
 const REQUEST_TTL_MS = 2 * 60 * 1000;
 const MAX_PRACTICE_PER_QUESTION = 5;
+/** Friends' characters per phone result: one row on a small phone. */
+const FRIENDS_SHOWN = 9;
 /** Two tabs on one phone are fine; a third replaces the oldest. */
 const MAX_STREAMS_PER_DEVICE = 2;
 const ANIMALS = ['여우', '부엉이', '사슴', '고래', '펭귄', '다람쥐', '거북', '판다', '수달', '코알라', '호랑이', '토끼'];
@@ -89,7 +91,13 @@ interface Live {
   /** When the current question began; a skip racing an auto-advance must not hit the new one. */
   questionAt: number;
   reveal: RevealInfo | null;
-  choices: Map<string, { choice: number; correct: boolean; text?: string }>;
+  /** This question's answers; `streak` is the student's run of right answers after it, `broke` the run it just ended. */
+  choices: Map<string, { choice: number; correct: boolean; text?: string; streak: number; broke: number }>;
+  /** Right answers in a row per student this session (private to each phone). */
+  streak: Map<string, number>;
+  bestStreak: Map<string, number>;
+  /** Who got this question right, shuffled per question, so each phone's friends row is a slice of it. */
+  correctOrder: string[];
   mainStats: Map<string, { correct: number; total: number; wordKey?: string }>;
   perStudent: Map<string, StudentResult>;
   checkpoint: { kind: 'block' | 'retry'; accuracy: number; done: number; total: number } | null;
@@ -537,6 +545,9 @@ class Hub {
         feedback: choice >= 0 && choice !== q.answerIndex ? q.options[choice]?.feedback : undefined,
         explanation: q.explanation,
         counted: !!mine,
+        streak: mine?.streak ?? 0,
+        broke: mine?.broke ?? 0,
+        friends: mine ? this.correctFriends(student.id, q.mode === 'CUSTOM_TEXT') : { total: 0, looks: [] },
       };
     }
     return {
@@ -551,6 +562,15 @@ class Hub {
       mySummary: live.phase === 'summary' ? live.studentSummary.get(student.id) ?? null : null,
       lastNotes,
     };
+  }
+
+  /** Classmates who got this question right, as characters only (no names), for the phone's result. */
+  private correctFriends(selfId: string, text: boolean): { total: number; looks: AvatarLook[] } {
+    const d = db();
+    const others = this.live!.correctOrder.filter((id) => id !== selfId);
+    // The projector never shows who typed what, so a text question sends only the count.
+    const shown = text ? [] : others.slice(0, FRIENDS_SHOWN);
+    return { total: others.length, looks: shown.map((id) => normalizeLook(d.students[id]?.look ?? undefined)) };
   }
 
   // ---------- registration ----------
@@ -1022,6 +1042,9 @@ class Hub {
       questionAt: 0,
       reveal: null,
       choices: new Map(),
+      streak: new Map(),
+      bestStreak: new Map(),
+      correctOrder: [],
       mainStats: new Map(),
       perStudent: new Map(),
       checkpoint: null,
@@ -1069,6 +1092,7 @@ class Hub {
     live.textCounter = new Map();
     live.questionAt = Date.now();
     live.choices = new Map();
+    live.correctOrder = [];
     live.reveal = null;
     live.checkpoint = null;
     live.phaseEndsAt = Date.now() + (live.index === 0 ? FIRST_INTRO_MS : INTRO_MS);
@@ -1127,6 +1151,8 @@ class Hub {
     const now = Date.now();
     const connected = this.connectedStudents();
     const counted = [...live.joined].filter((id) => connected.has(id) || live.positions.has(id) || live.texts.has(id));
+    // Streaks follow the scored questions only (main-round words), like the score beside them on the summary.
+    const scored = live.round === 'main' && !!q.wordKey;
     const zoneCounts = q.options.map(() => 0);
     let correct = 0;
     let unanswered = 0;
@@ -1150,7 +1176,13 @@ class Hub {
         ok = choice === q.answerIndex;
       }
       if (ok) correct++;
-      live.choices.set(id, { choice, correct: ok, text });
+      const prevStreak = live.streak.get(id) ?? 0;
+      const streak = ok ? prevStreak + 1 : 0;
+      if (scored) {
+        live.streak.set(id, streak);
+        if (streak > (live.bestStreak.get(id) ?? 0)) live.bestStreak.set(id, streak);
+      }
+      live.choices.set(id, { choice, correct: ok, text, streak: scored ? streak : 0, broke: scored && !ok ? prevStreak : 0 });
       db().responses.push({ sessionId: live.id, eventId: live.eventId, questionId: q.id, wordKey: q.wordKey, round: live.round, studentId: id, choice, text, correct: ok, at: now });
       // Hand-written bonus questions don't count toward accuracy, rewards or the retry round.
       if (live.round === 'main' && q.wordKey) {
@@ -1160,6 +1192,7 @@ class Hub {
         live.perStudent.set(id, r);
       }
     }
+    live.correctOrder = [...live.choices].filter(([, c]) => c.correct).map(([id]) => id).sort((x, y) => hashString(x + live.seq) - hashString(y + live.seq));
     const accuracy = counted.length ? correct / counted.length : 0;
     if (live.round === 'main' && q.wordKey) live.mainStats.set(q.id, { correct, total: counted.length, wordKey: q.wordKey });
     let topWrong: RevealInfo['topWrong'];
@@ -1305,6 +1338,7 @@ class Hub {
         reward,
         stampAdded: live.stamped.has(id),
         shortQuiz,
+        bestStreak: live.bestStreak.get(id) ?? 0,
         unlocked: d.rewards.filter((x) => x.sessionId === live.id && x.studentId === id && x.reason === 'attendance').map((x) => x.itemId),
         ...this.wrongNotes(id, event),
       };

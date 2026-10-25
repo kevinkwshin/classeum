@@ -168,6 +168,8 @@ export interface StudentSummary {
   stampAdded: boolean;
   /** The teacher ended the quiz before half the words; answers count, rewards weren't judged. */
   shortQuiz?: boolean;
+  /** Longest run of right answers this session (only this student sees it). */
+  bestStreak?: number;
   unlocked: string[];
   wrong: WrongNote[];
   practice: Question[];

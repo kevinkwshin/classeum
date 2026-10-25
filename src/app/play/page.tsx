@@ -797,20 +797,34 @@ function Result({ view }: { view: StudentView }) {
   const kind = r.correct ? 'happy' : r.choice < 0 && !r.mineLabel ? 'sleep' : 'pop';
   const look = normalizeLook(view.me?.look ?? undefined);
   return (
-    <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-8">
+    // Short phones tighten the spacing so the friends row still fits on screen.
+    <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-8 [@media(max-height:700px)]:gap-3 [@media(max-height:700px)]:pb-4 [@media(max-height:700px)]:pt-5">
       <div className="flex items-center justify-between">
         <div className="tabular text-lg font-extrabold">{s.index + 1}</div>
-        <div
-          className={`cls-pop rounded-full px-3 py-1 text-sm font-extrabold text-white ${kind === 'happy' ? 'bg-good' : kind === 'pop' ? 'bg-[#E5484D]' : 'bg-ink-3'}`}
-          style={{ animationDelay: kind === 'pop' ? '0.75s' : '0.2s' }}
-        >
-          {kind === 'happy' ? '정답!' : kind === 'pop' ? '펑!' : '쿨쿨…'}
+        <div className="flex items-center gap-1.5">
+          {/* Only this phone sees its streak. */}
+          {r.streak >= 2 && (
+            <div key={r.streak} className="cls-pop rounded-full bg-[#FFF1E6] px-3 py-1 text-sm font-extrabold text-[#C2410C]" style={{ animationDelay: '0.5s' }}>
+              🔥 {r.streak}연속
+            </div>
+          )}
+          {r.broke >= 3 && (
+            <div className="cls-pop rounded-full bg-bg px-3 py-1 text-sm font-extrabold text-ink-3" style={{ animationDelay: '0.9s' }}>
+              🔥 {r.broke}연속 끝
+            </div>
+          )}
+          <div
+            className={`cls-pop rounded-full px-3 py-1 text-sm font-extrabold text-white ${kind === 'happy' ? 'bg-good' : kind === 'pop' ? 'bg-[#E5484D]' : 'bg-ink-3'}`}
+            style={{ animationDelay: kind === 'pop' ? '0.75s' : '0.2s' }}
+          >
+            {kind === 'happy' ? '정답!' : kind === 'pop' ? '펑!' : '쿨쿨…'}
+          </div>
         </div>
       </div>
-      <div className="flex justify-center pt-6">
-        <Reaction kind={kind} look={look} size={112} delay={150} bubble={reactionLine(kind, `${view.me?.id}:${s.question?.seq}`)} />
+      <div className="flex justify-center pt-4 [@media(max-height:700px)]:[zoom:0.75]">
+        <Reaction kind={kind} look={look} size={96} delay={150} bubble={reactionLine(kind, `${view.me?.id}:${s.question?.seq}`)} />
       </div>
-      <div className="cls-slide-up rounded-3xl bg-good p-6 text-white">
+      <div className="cls-slide-up rounded-3xl bg-good p-6 text-white [@media(max-height:700px)]:px-5 [@media(max-height:700px)]:py-4">
         <div className="text-sm font-semibold text-[#CDEFDF]">{s.question?.prompt}</div>
         <div className="mt-1 text-[32px] font-extrabold leading-tight">{r.correctLabel}</div>
       </div>
@@ -826,10 +840,39 @@ function Result({ view }: { view: StudentView }) {
           {r.correct ? '✓' : '✕'}
         </div>
       </div>
+      {/* Right under my answer, so it stays on screen on a small phone even when the notes below run long. */}
+      <CorrectFriends friends={r.friends} me={r.correct ? look : null} />
       {kind === 'sleep' && <div className="px-1 text-base leading-relaxed text-ink-2">출발선에서 졸았어요. 다음엔 칸으로 쏙!</div>}
       {!r.correct && r.feedback && <div className="px-1 text-base leading-relaxed text-ink-2">네가 고른 {r.feedback}</div>}
       {!r.correct && r.explanation && <div className="px-1 text-sm leading-relaxed text-ink-3">{r.explanation}</div>}
-      <div className="mt-auto text-center text-sm text-ink-3">다음 문제를 기다려요</div>
+      <div className="mt-auto text-center text-sm text-ink-3 [@media(max-height:700px)]:hidden">다음 문제를 기다려요</div>
+    </div>
+  );
+}
+
+/** Classmates who got it right, as characters only, in one row; if I did too, I'm first. */
+function CorrectFriends({ friends, me }: { friends: NonNullable<StudentView['result']>['friends']; me: AvatarLook | null }) {
+  const looks = (me ? [me, ...friends.looks] : friends.looks).slice(0, 9);
+  const total = friends.total + (me ? 1 : 0);
+  return (
+    <div className="cls-slide-up rounded-3xl bg-bg px-4 py-3" style={{ animationDelay: '0.9s' }}>
+      {/* The count is friends only; my own character just leads the row. */}
+      <div className="text-sm font-bold">{total === 0 ? '이번엔 아무도 못 맞혔어요' : friends.total === 0 ? '나만 맞혔어요!' : `맞힌 친구 ${friends.total}명`}</div>
+      {total === 0 && <div className="mt-1 text-sm text-ink-3">다 같이 다음에!</div>}
+      {/* Text questions send only the count, so there may be no characters to draw. */}
+      {looks.length > 0 && (
+        <div className="mt-2 flex items-end gap-1">
+          {looks.map((l, i) => (
+            <div key={i} className="cls-drop-in relative" style={{ animationDelay: `${1300 + i * 40}ms` }}>
+              <div className="cls-float" style={{ animationDelay: `-${(i * 0.37) % 2.4}s` }}>
+                <PixelAvatar look={l} size={24} />
+              </div>
+              {me && i === 0 && <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded bg-accent px-1 text-[9px] font-extrabold leading-tight text-ink">나</span>}
+            </div>
+          ))}
+          {total > looks.length && <span className="ml-1 self-center text-xs font-bold text-ink-3">+{total - looks.length}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -889,11 +932,18 @@ function Summary({ view, onLocker, onNotes }: { view: StudentView; onLocker: () 
             <span className="text-3xl text-ink-3">/{sum.mainTotal}</span>
           </div>
         </div>
-        {sum.stampAdded && (
-          <div className="cls-pop rounded-xl bg-[#24272F] px-3 py-2 text-sm font-bold text-[#D5D8DF]" style={{ animationDelay: '0.9s' }}>
-            발자국 +1
-          </div>
-        )}
+        <div className="flex flex-col items-end gap-1.5">
+          {sum.stampAdded && (
+            <div className="cls-pop rounded-xl bg-[#24272F] px-3 py-2 text-sm font-bold text-[#D5D8DF]" style={{ animationDelay: '0.9s' }}>
+              발자국 +1
+            </div>
+          )}
+          {(sum.bestStreak ?? 0) >= 2 && (
+            <div className="cls-pop rounded-xl bg-[#24272F] px-3 py-2 text-sm font-bold text-[#FDBA74]" style={{ animationDelay: '1s' }}>
+              🔥 최고 {sum.bestStreak}연속
+            </div>
+          )}
+        </div>
       </div>
       {sum.reward && item ? (
         <div className="cls-unbox flex items-center gap-4 rounded-3xl bg-gold p-4 text-ink" style={{ animationDelay: '1.1s' }}>

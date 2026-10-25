@@ -120,6 +120,11 @@ export interface StudentView {
     feedback?: string;
     explanation?: string;
     counted: boolean;
+    /** Right answers in a row including this one (0 if wrong); `broke` is the run a wrong answer just ended. */
+    streak: number;
+    broke: number;
+    /** Others who got it right: how many, and up to 9 of their characters (none on text questions). */
+    friends: { total: number; looks: AvatarLook[] };
   } | null;
   mySummary?: StudentSummary | null;
   /** The latest finished session's notes, shown from the home screen between classes. */
