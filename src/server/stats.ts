@@ -3,6 +3,8 @@ import { db } from './store';
 
 export interface StudentStats {
   id: string;
+  classId: string;
+  className: string;
   number: number;
   name: string;
   attendance: number;
@@ -22,13 +24,17 @@ export interface WordStats {
   topWrong: string | null;
 }
 
-export function computeStats(): { students: StudentStats[]; words: WordStats[] } {
+/** One class's students and words, or everyone when classId is empty. */
+export function computeStats(classId?: string): { students: StudentStats[]; words: WordStats[] } {
   const d = db();
-  const sessions = [...d.sessions].sort((a, b) => a.startedAt - b.startedAt);
+  const sessions = [...d.sessions].filter((ses) => !classId || ses.classId === classId).sort((a, b) => a.startedAt - b.startedAt);
+  const classSessions = new Set(sessions.map((ses) => ses.id));
   const students: StudentStats[] = Object.values(d.students)
-    .sort((a, b) => a.number - b.number)
+    .filter((s) => !classId || s.classId === classId)
+    .sort((a, b) => (d.classes[a.classId]?.name ?? '').localeCompare(d.classes[b.classId]?.name ?? '', 'ko', { numeric: true }) || a.number - b.number)
     .map((s) => {
-      const perSession = sessions.map((ses) => {
+      // Only the sessions of the student's own class count, so other classes' quizzes aren't "missed".
+      const perSession = sessions.filter((ses) => ses.classId === s.classId).map((ses) => {
         const p = ses.perStudent.find((x) => x.studentId === s.id);
         return {
           sessionId: ses.id,
@@ -57,6 +63,8 @@ export function computeStats(): { students: StudentStats[]; words: WordStats[] }
       });
       return {
         id: s.id,
+        classId: s.classId,
+        className: d.classes[s.classId]?.name ?? '',
         number: s.number,
         name: s.name,
         attendance: d.attendance[s.id]?.length ?? 0,
@@ -71,6 +79,7 @@ export function computeStats(): { students: StudentStats[]; words: WordStats[] }
   const byWord = new Map<string, { attempts: number; correct: number; wrongLabels: Map<string, number> }>();
   for (const r of d.responses) {
     if (!r.wordKey || r.round !== 'main') continue;
+    if (classId && !classSessions.has(r.sessionId)) continue;
     const w = byWord.get(r.wordKey) ?? { attempts: 0, correct: 0, wrongLabels: new Map() };
     w.attempts++;
     if (r.correct) w.correct++;
@@ -96,17 +105,30 @@ export function computeStats(): { students: StudentStats[]; words: WordStats[] }
 }
 
 /** CSV with a BOM so Korean Excel opens it as UTF-8. */
-export function statsCsv(): string {
-  const { students } = computeStats();
-  const sessionNames = students[0]?.sessions.map((s) => `${new Date(s.date).toLocaleDateString('ko-KR')} ${s.eventName}`) ?? [];
-  const header = ['번호', '이름', '출석', '평균 정답률', ...sessionNames, '자주 틀리는 단어', '이제 맞히는 단어', '받은 보상'];
+export function statsCsv(classId?: string): string {
+  const { students } = computeStats(classId);
+  // Session columns differ per class; each student's own sessions go under one header row per class.
+  const sessionIds: string[] = [];
+  const sessionLabel = new Map<string, string>();
+  for (const s of students) {
+    for (const x of s.sessions) {
+      if (sessionLabel.has(x.sessionId)) continue;
+      sessionIds.push(x.sessionId);
+      sessionLabel.set(x.sessionId, `${s.className} ${new Date(x.date).toLocaleDateString('ko-KR')} ${x.eventName}`);
+    }
+  }
+  const header = ['반', '번호', '이름', '출석', '평균 정답률', ...sessionIds.map((id) => sessionLabel.get(id)!), '자주 틀리는 단어', '이제 맞히는 단어', '받은 보상'];
   const pct = (v: number | null) => (v === null ? '' : `${Math.round(v * 100)}%`);
   const rows = students.map((s) => [
+    s.className,
     s.number,
     s.name,
     s.attendance,
     pct(s.average),
-    ...s.sessions.map((x) => pct(x.accuracy)),
+    ...sessionIds.map((id) => {
+      const x = s.sessions.find((y) => y.sessionId === id);
+      return x ? pct(x.accuracy) : '';
+    }),
     s.missed.map((m) => `${m.word}(${m.count})`).join(' '),
     s.fixed.join(' '),
     s.rewards,

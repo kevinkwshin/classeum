@@ -1,18 +1,13 @@
 import type { NextRequest } from 'next/server';
-import { canClaim, keyMatches, markClaimed, teacherCookieHeader } from '@/server/auth';
+import { keyMatches, teacherCookieHeader } from '@/server/auth';
 import { isLocalHost } from '@/server/lan';
 
-// GET /api/teacher/login?key=… (the link printed in the terminal), or without a key on the
-// very first visit from the laptop. Sets the teacher cookie and goes to the teacher page.
+// GET /api/teacher/login?key=…[&next=/display]: the link printed in the terminal. Sets the
+// teacher cookie and goes to the teacher (or projector) screen.
 export async function GET(request: NextRequest) {
-  const key = request.nextUrl.searchParams.get('key');
-  const local = isLocalHost(request.headers.get('host'));
-  const ok = local && (keyMatches(key) || (!key && canClaim()));
-  const target = new URL(ok ? '/teacher' : '/teacher?denied=1', request.nextUrl.origin);
-  const res = new Response(null, { status: 303, headers: { Location: target.pathname + target.search } });
-  if (ok) {
-    markClaimed();
-    res.headers.append('Set-Cookie', teacherCookieHeader());
-  }
+  const ok = isLocalHost(request.headers.get('host')) && keyMatches(request.nextUrl.searchParams.get('key'));
+  const dest = request.nextUrl.searchParams.get('next') === '/display' ? '/display' : '/teacher';
+  const res = new Response(null, { status: 303, headers: { Location: ok ? dest : '/teacher?denied=1' } });
+  if (ok) res.headers.append('Set-Cookie', teacherCookieHeader());
   return res;
 }

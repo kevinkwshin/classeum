@@ -109,10 +109,15 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   const [lockerOpen, setLockerOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   // Text drafts live here so the pause screen doesn't wipe them.
-  const [drafts] = useState(() => new Map<number, string>());
+  const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
   // The locker and notes only show between questions; a starting quiz always wins.
   const between = !s || s.phase === 'lobby' || s.phase === 'summary';
+  // A starting quiz closes the locker and notes for good, so they don't cover the results later.
+  if (!between && (lockerOpen || notesOpen)) {
+    setLockerOpen(false);
+    setNotesOpen(false);
+  }
   if (view.refused) return <Message title="잠시만 기다려 주세요" body={view.refused} />;
   if (!view.me) return <Register view={view} send={send} />;
   if (!view.me.look) return <CharacterPick send={send} name={view.me.name} />;
@@ -179,6 +184,7 @@ function matchesMasked(masked: string, query: string): boolean {
 }
 
 function Register({ view, send }: { view: StudentView; send: Send }) {
+  const [classPick, setClassPick] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -198,6 +204,7 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
           <div className="text-center">
             <div className="text-2xl font-bold">선생님 확인 중</div>
             <div className="mt-2 text-ink-3">
+              {req.className && `${req.className} `}
               {req.number != null && `${req.number}번 `}
               {req.name}
             </div>
@@ -212,10 +219,28 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
     );
   }
 
+  // While a class is in the room only its 반 is offered, so the class step is skipped.
+  const classes = view.classes ?? [];
+  const classId = classes.length === 1 ? classes[0].id : classes.some((c) => c.id === classPick) ? classPick : null;
   const q = query.trim();
   // Digits search by number only; letters search the (masked) names.
-  const roster = (view.roster ?? []).filter((r) => !q || (/^\d+$/.test(q) ? String(r.number) === q : matchesMasked(r.name, q)));
-  const canSend = !!picked && !!view.registrationOpen && (view.roster ?? []).some((r) => r.id === picked);
+  const roster = (view.roster ?? []).filter((r) => r.classId === classId && (!q || (/^\d+$/.test(q) ? String(r.number) === q : matchesMasked(r.name, q))));
+  const canSend = !!picked && !!view.registrationOpen && (view.roster ?? []).some((r) => r.id === picked && r.classId === classId);
+  if (view.registrationOpen && classes.length > 1 && !classId) {
+    return (
+      <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-10">
+        <div className="font-display text-base font-bold">Classeum</div>
+        <div className="text-3xl font-bold tracking-tight">내 반</div>
+        <div className="grid auto-rows-min grid-cols-2 gap-2">
+          {classes.map((c, i) => (
+            <button key={c.id} type="button" onClick={() => setClassPick(c.id)} className="cls-slide-up h-16 rounded-2xl bg-bg text-lg font-bold" style={{ animationDelay: `${i * 40}ms` }}>
+              {c.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-10">
       <div className="flex items-center justify-between">
@@ -223,9 +248,16 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
       </div>
       {req?.status === 'rejected' && <div className="rounded-xl bg-bad-soft px-4 py-3 text-sm font-semibold text-bad">선생님이 거절했어요. 이름을 다시 골라 주세요.</div>}
       {req?.status === 'expired' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">시간이 지나 다시 요청해야 해요.</div>}
-      <div className="text-3xl font-bold tracking-tight">내 이름</div>
+      <div className="flex items-end justify-between">
+        <div className="text-3xl font-bold tracking-tight">내 이름</div>
+        {classes.length > 1 && (
+          <button type="button" onClick={() => { setClassPick(null); setPicked(null); }} className="text-sm font-semibold text-ink-3 underline">
+            {classes.find((c) => c.id === classId)?.name} · 반 바꾸기
+          </button>
+        )}
+      </div>
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="이름 검색" aria-label="이름 검색" className="h-13 rounded-2xl bg-bg px-4 py-3 text-base outline-none" />
-      {(view.roster ?? []).length === 0 && (
+      {roster.length === 0 && !q && (
         <div className="text-ink-3">{view.registrationOpen ? '아직 명단이 없어요. 선생님께 말씀드려 주세요.' : '선생님 화면이 켜지면 이름을 고를 수 있어요.'}</div>
       )}
       <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2 overflow-y-auto">
@@ -358,8 +390,10 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
       <div className={`flex flex-col items-center gap-4 rounded-3xl p-6 transition-colors duration-500 ${waiting ? 'bg-ink text-white' : 'bg-white'}`}>
         <PokeAvatar look={look} size={128} />
         <div className="text-center">
-          <div className="text-xl font-bold">{waiting ? '곧 시작해요' : '퀴즈를 기다리는 중'}</div>
-          <div className={`mt-1 text-sm ${waiting ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>{waiting ? '앞 화면을 봐 주세요' : '퀴즈가 열리면 자동으로 넘어가요'}</div>
+          <div className="text-xl font-bold">{waiting ? '곧 시작해요' : view.elsewhere ? `지금은 ${view.elsewhere} 수업 중` : '퀴즈를 기다리는 중'}</div>
+          <div className={`mt-1 text-sm ${waiting ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>
+            {waiting ? '앞 화면을 봐 주세요' : view.elsewhere ? `${me.className} 수업 때 다시 만나요` : '퀴즈가 열리면 자동으로 넘어가요'}
+          </div>
         </div>
       </div>
       {waiting && s?.reward && (
@@ -572,17 +606,18 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
   );
 
   return (
-    <div className="flex flex-1 select-none flex-col gap-4 px-5 pb-6 pt-8" style={{ WebkitTouchCallout: 'none', overscrollBehavior: 'none' }}>
+    // Fits one screen (about 650 px tall phones too): the field gives up height so the ▼ button is never cut off.
+    <div className="flex h-[100dvh] select-none flex-col gap-3 px-5 pb-5 pt-5" style={{ WebkitTouchCallout: 'none', overscrollBehavior: 'none' }}>
       <QuestionHeader view={view} serverNow={serverNow} />
       <div className="flex flex-col items-center gap-1 rounded-3xl bg-bg px-4 py-4">
         <div className="text-xs font-bold text-ink-3">{s.round === 'retry' ? '다시 도전' : q.modeLabel}</div>
         <div
-          className={`text-center font-extrabold tracking-tight ${s.phase === 'intro' && s.index === 0 ? 'invisible' : 'cls-drop-in'} ${q.prompt.length > 24 ? 'text-lg leading-snug' : 'text-[34px]'}`}
+          className={`text-center font-extrabold tracking-tight ${s.phase === 'intro' && s.index === 0 ? 'invisible' : 'cls-drop-in'} ${q.prompt.length > 24 ? 'text-lg leading-snug' : 'text-[34px] leading-tight'}`}
         >
           {q.prompt}
         </div>
       </div>
-      <div className="relative aspect-[16/11] w-full overflow-hidden rounded-2xl bg-bg">
+      <div className="relative aspect-[16/11] min-h-[132px] w-full shrink overflow-hidden rounded-2xl bg-bg">
         <div className="absolute inset-0 grid gap-1.5 p-1.5" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: n === 2 ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}>
           {cells.map((z) => {
             const label = q.options[z];
@@ -622,8 +657,8 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
         </div>
         {s.phase === 'intro' && <IntroOverlay view={view} serverNow={serverNow} />}
       </div>
-      <div className="flex items-center justify-center gap-1.5 text-[13px] font-semibold text-ink-3">큰 화면은 안개 · 내 위치는 나만</div>
-      <div className="mx-auto grid flex-1 grid-cols-[84px_84px_84px] grid-rows-[72px_72px_72px] content-center gap-2">
+      <div className="flex items-center justify-center gap-1.5 text-[13px] font-semibold text-ink-3 [@media(max-height:620px)]:hidden">큰 화면은 안개 · 내 위치는 나만</div>
+      <div className="mx-auto grid shrink-0 grid-cols-[84px_84px_84px] grid-rows-[repeat(3,64px)] gap-2 [@media(max-height:620px)]:grid-rows-[repeat(3,50px)]">
         <div />
         {pad('위로', 0, -STEP, '▲')}
         <div />
@@ -654,35 +689,60 @@ function IntroOverlay({ view, serverNow }: { view: StudentView; serverNow: () =>
   );
 }
 
-function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send: Send; serverNow: () => number; drafts: Map<number, string> }) {
+function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send: Send; serverNow: () => number; drafts: Map<string, string> }) {
   const s = view.session!;
   const q = s.question!;
-  const [value, setValue] = useState(drafts.get(q.seq) ?? view.myText ?? '');
-  const [sent, setSent] = useState(view.myText ?? '');
+  const draftKey = `${s.id}:${q.seq}`;
+  const [value, setValue] = useState(drafts.get(draftKey) ?? view.myText ?? '');
+  // What the server holds, and whether it came from 제출: only a submitted answer counts as done
+  // for closing early; drafts are still graded if time runs out.
+  const [saved, setSaved] = useState({ text: view.myText ?? '', final: !!view.myTextFinal });
   const [error, setError] = useState('');
+  const latest = useRef(value);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const active = s.phase === 'moving' && !s.paused;
   const submit = useCallback(
-    (text: string) => {
+    (text: string, final: boolean) => {
       if (!text.trim()) return;
       setError('');
-      send({ type: 'text', seq: q.seq, value: text })
-        .then(() => setSent(text))
-        .catch(() => setError('전송 실패 · 다시 눌러 주세요'));
+      // 제출 cancels a pending autosave, so a late draft can't undo it.
+      if (final && timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+      const attempt = (left: number) => {
+        // Numbered like moves, so the server drops a draft that arrives after a newer answer.
+        send({ type: 'text', seq: q.seq, value: text, final, n: nextMoveNumber() })
+          .then(() => setSaved((prev) => (!final && prev.final && prev.text === text ? prev : { text, final })))
+          .catch(() => {
+            if (left > 0 && latest.current === text) setTimeout(() => attempt(left - 1), 400);
+            else setError('전송 실패 · 다시 눌러 주세요');
+          });
+      };
+      attempt(1);
     },
     [send, q.seq],
   );
-  // Typing saves on its own shortly after the student stops, so time-up never loses an answer.
+  // While typing, the latest text is saved at most every 0.3 s (not only after a pause).
   useEffect(() => {
-    if (!active || value === sent || !value.trim()) return;
-    const id = setTimeout(() => submit(value), 500);
-    return () => clearTimeout(id);
-  }, [active, value, sent, submit]);
+    if (!active || value === saved.text || !value.trim() || timer.current) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      submit(latest.current, false);
+    }, 300);
+  }, [active, value, saved.text, submit]);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
   return (
     <form
       className="flex flex-1 flex-col gap-5 px-5 pb-6 pt-8"
       onSubmit={(e) => {
         e.preventDefault();
-        if (active) submit(value);
+        if (active) submit(value, true);
       }}
     >
       <QuestionHeader view={view} serverNow={serverNow} />
@@ -691,7 +751,8 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
         value={value}
         onChange={(e) => {
           setValue(e.target.value);
-          drafts.set(q.seq, e.target.value);
+          latest.current = e.target.value;
+          drafts.set(draftKey, e.target.value);
         }}
         autoCapitalize="none"
         autoCorrect="off"
@@ -705,7 +766,7 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
       />
       {error && <div className="text-sm font-semibold text-bad">{error}</div>}
       <button type="submit" disabled={!active || !value.trim()} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
-        {sent && sent === value ? '저장했어요 · 고칠 수 있어요' : '제출'}
+        {saved.final && saved.text === value ? '제출했어요 · 고칠 수 있어요' : '제출'}
       </button>
     </form>
   );

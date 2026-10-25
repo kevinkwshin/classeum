@@ -15,7 +15,7 @@ export interface ImportIssue {
 export interface ImportResult {
   words: Word[];
   questions: CustomQuestion[];
-  roster: { number: number; name: string }[];
+  roster: { className: string; number: number; name: string }[];
   issues: ImportIssue[];
 }
 
@@ -187,12 +187,16 @@ function parseWords(data: Cell[][], issues: ImportIssue[]): Word[] {
       return;
     }
     const spellings = spellingRaw.split('|').map((s) => s.trim()).filter(Boolean);
+    if (spellings.length === 0) {
+      issues.push({ level: 'error', sheet, row: r, column: '단어', message: '단어가 비어 있어요.' });
+      return;
+    }
     if (spellings.some((s) => !SPELLING_RE.test(s) || s.length > 40)) {
       issues.push({ level: 'error', sheet, row: r, column: '단어', message: `'${spellingRaw}'에는 영어, 띄어쓰기, ' - . 만 쓸 수 있어요.` });
       return;
     }
     const id = get(row, '단어ID');
-    const key = id ? `id:${id}` : wordKey(spellingRaw);
+    const key = id ? `id:${id}` : wordKey(spellings[0]);
     if (seen.has(key)) {
       issues.push({ level: 'warning', sheet, row: r, column: '단어', message: `'${spellingRaw}'는 ${seen.get(key)}행과 같은 단어라서 건너뛰었어요.` });
       return;
@@ -300,7 +304,8 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
       options = ['O', 'X'];
       answerIndex = a === 'O' ? 0 : 1;
     } else {
-      answers = answerRaw.split('|').map((a) => normalizeAnswer(a)).filter(Boolean);
+      // Kept as typed ('Seoul', 'I am a student.') for display; grading normalizes both sides.
+      answers = answerRaw.split('|').map((a) => a.trim().replace(/\s+/g, ' ')).filter((a) => normalizeAnswer(a));
     }
     out.push({
       id,
@@ -320,26 +325,36 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
   return out;
 }
 
+/** Optional 명단 sheet: 반, 번호, 이름. Numbers only need to be unique within one 반. */
 function parseRoster(data: Cell[][], issues: ImportIssue[]) {
   const sheet = '명단';
   if (data.length === 0) return [];
   const header = data[0].map((c) => headerKey(text(c)));
+  const classCol = header.indexOf('반');
   const numCol = header.indexOf('번호');
   const nameCol = header.indexOf('이름');
-  if (numCol < 0 || nameCol < 0) {
-    issues.push({ level: 'warning', sheet, row: 1, message: "명단 시트에 '번호'와 '이름' 머리글이 없어서 건너뛰었어요." });
+  if (classCol < 0 || numCol < 0 || nameCol < 0) {
+    issues.push({ level: 'warning', sheet, row: 1, message: "명단 시트에 '반', '번호', '이름' 머리글이 모두 있어야 해요. 명단은 건너뛰었어요." });
     return [];
   }
-  const out: { number: number; name: string }[] = [];
+  const out: { className: string; number: number; name: string }[] = [];
+  const seen = new Map<string, number>();
   data.slice(1).forEach((row, i) => {
+    const className = text(row[classCol]);
     const num = Number(text(row[numCol]));
     const name = text(row[nameCol]);
-    if (!name && !text(row[numCol])) return;
-    if (!Number.isInteger(num) || num <= 0 || !name) {
-      issues.push({ level: 'warning', sheet, row: i + 2, message: '번호나 이름이 비어 있어 건너뛰었어요.' });
+    if (!className && !name && !text(row[numCol])) return;
+    if (!className || !Number.isInteger(num) || num <= 0 || !name) {
+      issues.push({ level: 'warning', sheet, row: i + 2, message: '반, 번호, 이름 중 비어 있는 칸이 있어 건너뛰었어요.' });
       return;
     }
-    out.push({ number: num, name });
+    const key = `${className}:${num}`;
+    if (seen.has(key)) {
+      issues.push({ level: 'warning', sheet, row: i + 2, message: `${className} ${num}번이 ${seen.get(key)}행에도 있어서 건너뛰었어요.` });
+      return;
+    }
+    seen.set(key, i + 2);
+    out.push({ className: className.slice(0, 20), number: num, name });
   });
   return out;
 }

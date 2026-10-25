@@ -222,20 +222,25 @@ function placeAnswer(q: Question, target: number, rnd: () => number): Question {
   return { ...q, options, answerIndex: slot };
 }
 
-/** Spreads the right answer evenly over the slots each question has, never the same slot three times running. */
+/**
+ * Picks each question's answer slot at random, leaning towards slots used less so far, and
+ * never the same slot three times running. No slot is ever ruled out by the others (a fixed
+ * bag of 1-2-3-4 would let students work out every fourth answer by elimination).
+ */
 function answerSlots(counts: number[], rnd: () => number): number[] {
   const slots: number[] = [];
-  let bag: number[] = [];
+  const used = [0, 0, 0, 0];
   for (const count of counts) {
     const n = slots.length;
     const banned = n >= 2 && slots[n - 1] === slots[n - 2] ? slots[n - 1] : -1;
-    if (bag.length === 0) bag = shuffle([0, 1, 2, 3], rnd);
-    const idx = bag.findIndex((s) => s < count && s !== banned);
-    if (idx >= 0) slots.push(bag.splice(idx, 1)[0]);
-    else {
-      const allowed = Array.from({ length: count }, (_, k) => k).filter((k) => k !== banned);
-      slots.push(allowed[Math.floor(rnd() * allowed.length)]);
-    }
+    const allowed = Array.from({ length: count }, (_, k) => k).filter((k) => k !== banned);
+    const low = Math.min(...allowed.map((k) => used[k]));
+    const weights = allowed.map((k) => 1 / (1 + 2 * (used[k] - low)));
+    let r = rnd() * weights.reduce((a, b) => a + b, 0);
+    let i = 0;
+    while (i < allowed.length - 1 && (r -= weights[i]) > 0) i++;
+    slots.push(allowed[i]);
+    used[allowed[i]]++;
   }
   return slots;
 }

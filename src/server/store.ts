@@ -4,8 +4,16 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
 
+/** A class (반) the teacher runs; numbers are unique only within one class. */
+export interface ClassRec {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
 export interface StudentRec {
   id: string;
+  classId: string;
   number: number;
   name: string;
   look: AvatarLook | null;
@@ -56,6 +64,7 @@ export interface ResponseRec {
 export interface SessionSummaryRec {
   id: string;
   eventId: string;
+  classId: string;
   startedAt: number;
   endedAt: number;
   mainCount: number;
@@ -80,6 +89,7 @@ export interface LastSummaryRec extends StudentSummary {
 
 export interface DB {
   version: 1;
+  classes: Record<string, ClassRec>;
   students: Record<string, StudentRec>;
   devices: Record<string, DeviceRec>;
   requests: Record<string, RequestRec>;
@@ -97,13 +107,26 @@ const DIR = join(process.cwd(), '.data');
 const FILE = join(DIR, 'classeum.json');
 
 function empty(): DB {
-  return { version: 1, students: {}, devices: {}, requests: {}, words: {}, events: {}, sessions: [], responses: [], rewards: [], attendance: {}, lastSummary: {} };
+  return { version: 1, classes: {}, students: {}, devices: {}, requests: {}, words: {}, events: {}, sessions: [], responses: [], rewards: [], attendance: {}, lastSummary: {} };
+}
+
+/** Data saved before classes existed: everyone goes into one class the teacher can rename. */
+function migrate(d: DB): DB {
+  const loose = Object.values(d.students).filter((s) => !s.classId);
+  const sessionsWithout = d.sessions.filter((s) => !s.classId);
+  if (loose.length || sessionsWithout.length) {
+    const id = 'cls_default';
+    d.classes[id] ??= { id, name: '1반', createdAt: Date.now() };
+    for (const s of loose) s.classId = id;
+    for (const s of sessionsWithout) s.classId = id;
+  }
+  return d;
 }
 
 function load(): DB {
   if (!existsSync(FILE)) return empty();
   try {
-    return { ...empty(), ...JSON.parse(readFileSync(FILE, 'utf8')) };
+    return migrate({ ...empty(), ...JSON.parse(readFileSync(FILE, 'utf8')) });
   } catch {
     // Keep the broken file for inspection and start fresh rather than crash the class.
     renameSync(FILE, `${FILE}.broken-${Date.now()}`);

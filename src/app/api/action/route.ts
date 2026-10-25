@@ -4,6 +4,7 @@ import { isTeacher } from '@/server/auth';
 
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'open-lobby', 'close-session', 'control',
+  'add-class', 'rename-class', 'delete-class', 'revoke-class',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -16,7 +17,25 @@ export async function POST(request: NextRequest) {
   }
   let body: Record<string, unknown>;
   try {
-    body = await request.json();
+    // Counted while reading, so a chunked body without Content-Length can't be huge either.
+    const reader = request.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (reader) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 16_000) {
+          await reader.cancel().catch(() => undefined);
+          return Response.json({ ok: false, error: '요청이 너무 커요.' }, { status: 413 });
+        }
+        chunks.push(value);
+      }
+    }
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('bad body');
+    body = parsed as Record<string, unknown>;
   } catch {
     return Response.json({ ok: false, error: '잘못된 요청이에요.' }, { status: 400 });
   }
@@ -38,7 +57,17 @@ export async function POST(request: NextRequest) {
           h.revokeDevice(String(body.studentId));
           break;
         case 'roster':
-          return Response.json({ ok: true, added: h.setRoster(String(body.text ?? '')) });
+          return Response.json({ ok: true, added: h.setRoster(String(body.classId), String(body.text ?? '')) });
+        case 'add-class':
+          return Response.json({ ok: true, classId: h.addClass(String(body.name ?? '')) });
+        case 'rename-class':
+          h.renameClass(String(body.classId), String(body.name ?? ''));
+          break;
+        case 'delete-class':
+          h.deleteClass(String(body.classId));
+          break;
+        case 'revoke-class':
+          return Response.json({ ok: true, revoked: h.revokeClass(String(body.classId)) });
         case 'remove-student':
           h.removeStudent(String(body.studentId));
           break;
@@ -51,7 +80,7 @@ export async function POST(request: NextRequest) {
           h.setReward(String(body.eventId), String(body.itemId), Number(body.challengePct), Number(body.growthPp));
           break;
         case 'open-lobby':
-          h.openLobby(String(body.eventId));
+          h.openLobby(String(body.eventId), String(body.classId));
           break;
         case 'close-session':
           h.closeSession();
@@ -80,7 +109,7 @@ export async function POST(request: NextRequest) {
         h.move(tokenHash, Number(body.seq), { x: Number(body.x), y: Number(body.y) }, Number(body.n ?? NaN));
         break;
       case 'text':
-        h.submitText(tokenHash, Number(body.seq), String(body.value ?? ''));
+        h.submitText(tokenHash, Number(body.seq), String(body.value ?? ''), body.final === true, Number(body.n ?? NaN));
         break;
       case 'practice':
         h.recordPractice(tokenHash, String(body.questionId), Number(body.choice));

@@ -113,7 +113,8 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
         <div className="flex items-start justify-between">
           <div>
             <div className="font-display text-3xl font-bold">Classeum</div>
-            <div className="mt-4 text-6xl font-bold tracking-tight">{s.eventName}</div>
+            <div className="mt-4 text-3xl font-bold text-accent">{s.className}</div>
+            <div className="mt-1 text-6xl font-bold tracking-tight">{s.eventName}</div>
             <div className="mt-2 text-3xl font-medium text-ink-3">{s.mainCount}문항</div>
           </div>
           <div key={avatars.length} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{avatars.length}</div>
@@ -268,7 +269,7 @@ function Summary({ s, parade }: { s: SessionPublic; parade: NonNullable<DisplayV
   const size = parade.length > 30 ? 44 : 56;
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-10">
-      <div className="cls-slide-up text-4xl font-bold text-ink-3">{s.eventName} 끝!</div>
+      <div className="cls-slide-up text-4xl font-bold text-ink-3">{s.className} · {s.eventName} 끝!</div>
       <div className="flex gap-8">
         <div className="cls-pop rounded-[32px] bg-ink px-14 py-10 text-white">
           <div className="text-2xl font-semibold text-[#A3A8B4]">반 정답률</div>

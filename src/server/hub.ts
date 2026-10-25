@@ -57,6 +57,8 @@ interface StudentResult {
 interface Live {
   id: string;
   eventId: string;
+  /** The class in the room today; only its students join, register and count. */
+  classId: string;
   startedAt: number;
   phase: Phase;
   round: Round;
@@ -77,7 +79,15 @@ interface Live {
   positions: Map<string, FieldPoint>;
   moveCounter: Map<string, number>;
   texts: Map<string, string>;
+  /** Students who pressed 제출 for their text; auto-saved drafts don't count as done. */
+  textFinal: Set<string>;
+  /** Newest text number per student, so a late draft can't overwrite a newer answer. */
+  textCounter: Map<string, number>;
   lastMoveAt: number;
+  /** When 건너뛰기 last worked, so a double click or a quick second S can't skip the next question too. */
+  lastSkipAt: number;
+  /** When the current question began; a skip racing an auto-advance must not hit the new one. */
+  questionAt: number;
   reveal: RevealInfo | null;
   choices: Map<string, { choice: number; correct: boolean; text?: string }>;
   mainStats: Map<string, { correct: number; total: number; wordKey?: string }>;
@@ -98,7 +108,7 @@ interface Draft {
   groups: { name: string; words: Word[]; custom: CustomQuestion[] }[];
   /** What the teacher previewed, reused as-is when the events are created. */
   generated: Map<string, Generated>;
-  roster: { number: number; name: string }[];
+  roster: { className: string; number: number; name: string }[];
   issues: ImportIssue[];
 }
 
@@ -114,7 +124,28 @@ export function maskName(name: string): string {
 interface RegistrationContext {
   open: boolean;
   latest: Map<string, RequestRec>;
-  roster: { id: string; number: number; name: string }[];
+  /** The classes a phone can pick from: just today's class while a lobby or quiz is on. */
+  classes: { id: string; name: string }[];
+  roster: { id: string; classId: string; number: number; name: string }[];
+}
+
+/** Own keys only, so ids like 'constructor' or '__proto__' sent by a phone never match. */
+function own<T>(table: Record<string, T>, key: string | undefined): T | undefined {
+  return key !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+function className(classId: string | undefined): string {
+  return own(db().classes, classId)?.name ?? '';
+}
+
+/** '3', '3반' and '3 반' all mean the same class when matching names from a 명단 sheet. */
+function sameClassName(a: string, b: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, '').replace(/반$/, '');
+  return norm(a) === norm(b);
+}
+
+function byClassAndNumber(a: StudentRec, b: StudentRec): number {
+  return className(a.classId).localeCompare(className(b.classId), 'ko', { numeric: true }) || a.number - b.number;
 }
 
 function publicQuestion(q: Question, seq: number): PublicQuestion {
@@ -203,7 +234,7 @@ class Hub {
   studentOf(tokenHash?: string): StudentRec | undefined {
     if (!tokenHash) return undefined;
     const sid = db().devices[tokenHash]?.studentId;
-    return sid ? db().students[sid] : undefined;
+    return own(db().students, sid);
   }
 
   connectedStudents(): Set<string> {
@@ -224,6 +255,7 @@ class Hub {
   private join(studentId: string) {
     const live = this.live;
     if (!live || live.phase === 'summary') return;
+    if (db().students[studentId]?.classId !== live.classId) return;
     if (!live.joined.has(studentId)) {
       live.joined.add(studentId);
       if (this.stampAttendance(studentId)) live.stamped.add(studentId);
@@ -285,6 +317,8 @@ class Hub {
     return {
       id: live.id,
       eventName: event?.name ?? '',
+      classId: live.classId,
+      className: className(live.classId),
       phase: live.phase,
       round: live.round,
       index: live.index,
@@ -309,7 +343,7 @@ class Hub {
     let settled = 0;
     for (const id of participants) {
       if (q?.mode === 'CUSTOM_TEXT') {
-        if (live.texts.has(id)) settled++;
+        if (live.textFinal.has(id)) settled++;
         continue;
       }
       const z = q ? zoneOf(live.positions.get(id) ?? { x: 0.5, y: 0.5 }, q.options.length) : -1;
@@ -355,12 +389,14 @@ class Hub {
     const d = db();
     const live = this.live;
     const connected = this.connectedStudents();
+    const deviceOf = new Map(Object.values(d.devices).map((dev) => [dev.studentId, dev]));
     const students = Object.values(d.students)
-      .sort((a, b) => a.number - b.number)
+      .sort(byClassAndNumber)
       .map((s) => {
-        const device = Object.values(d.devices).find((dev) => dev.studentId === s.id);
+        const device = deviceOf.get(s.id);
         return {
           id: s.id,
+          classId: s.classId,
           number: s.number,
           name: s.name,
           hasDevice: !!device,
@@ -373,7 +409,22 @@ class Hub {
       });
     const requests = Object.values(d.requests)
       .filter((r) => r.status === 'pending')
-      .map((r) => ({ id: r.id, studentId: r.studentId, number: d.students[r.studentId]?.number, name: d.students[r.studentId]?.name, symbol: r.symbol, replace: r.replace, createdAt: r.createdAt }));
+      .map((r) => ({
+        id: r.id,
+        studentId: r.studentId,
+        className: className(d.students[r.studentId]?.classId),
+        number: d.students[r.studentId]?.number,
+        name: d.students[r.studentId]?.name,
+        symbol: r.symbol,
+        replace: r.replace,
+        createdAt: r.createdAt,
+      }));
+    const classes = Object.values(d.classes)
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))
+      .map((c) => {
+        const mine = students.filter((s) => s.classId === c.id);
+        return { id: c.id, name: c.name, students: mine.length, devices: mine.filter((s) => s.hasDevice).length };
+      });
     const events = Object.values(d.events)
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((e) => ({
@@ -392,7 +443,7 @@ class Hub {
       const counts = live.phase === 'moving' ? this.movingCounts() : null;
       const unsettled = counts
         ? counts.participants
-            .filter((id) => (q?.mode === 'CUSTOM_TEXT' ? !live.texts.has(id) : zoneOf(live.positions.get(id) ?? { x: 0.5, y: 0.5 }, q?.options.length ?? 4) < 0))
+            .filter((id) => (q?.mode === 'CUSTOM_TEXT' ? !live.textFinal.has(id) : zoneOf(live.positions.get(id) ?? { x: 0.5, y: 0.5 }, q?.options.length ?? 4) < 0))
             .map((id) => d.students[id])
             .filter(Boolean)
             .map((s) => ({ number: s.number, name: s.name }))
@@ -415,7 +466,7 @@ class Hub {
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + Math.min(x.seconds, 9) + 4, 0)),
       };
     }
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, students, requests, events, live: liveDetail, items: ITEMS };
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, items: ITEMS };
   }
 
   private registrationContext(): RegistrationContext {
@@ -426,12 +477,17 @@ class Hub {
       const prev = latest.get(r.tokenHash);
       if (!prev || r.createdAt >= prev.createdAt) latest.set(r.tokenHash, r);
     }
-    const roster = open
-      ? Object.values(d.students)
-          .sort((a, b) => a.number - b.number)
-          .map((s) => ({ id: s.id, number: s.number, name: maskName(s.name) }))
-      : [];
-    return { open, latest, roster };
+    if (!open) return { open, latest, classes: [], roster: [] };
+    const today = this.live?.classId;
+    const classes = Object.values(d.classes)
+      .filter((c) => !today || c.id === today)
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))
+      .map((c) => ({ id: c.id, name: c.name }));
+    const roster = Object.values(d.students)
+      .filter((s) => !today || s.classId === today)
+      .sort(byClassAndNumber)
+      .map((s) => ({ id: s.id, classId: s.classId, number: s.number, name: maskName(s.name) }));
+    return { open, latest, classes, roster };
   }
 
   studentView(tokenHash?: string, getReg: () => RegistrationContext = () => this.registrationContext()) {
@@ -445,15 +501,25 @@ class Hub {
         ...base,
         me: null,
         request: req
-          ? { status: req.status, symbol: req.symbol, number: d.students[req.studentId]?.number ?? null, name: maskName(d.students[req.studentId]?.name ?? '') }
+          ? {
+              status: req.status,
+              symbol: req.symbol,
+              className: className(d.students[req.studentId]?.classId),
+              number: d.students[req.studentId]?.number ?? null,
+              name: maskName(d.students[req.studentId]?.name ?? ''),
+            }
           : null,
         registrationOpen: reg.open,
+        classes: reg.classes,
         roster: reg.roster,
       };
     }
-    const live = this.live;
+    // A quiz for another class is none of this phone's business: it sees no session.
+    const elsewhere = this.live && this.live.classId !== student.classId ? className(this.live.classId) : null;
+    const live = elsewhere ? null : this.live;
     const me = {
       id: student.id,
+      className: className(student.classId),
       number: student.number,
       name: student.name,
       look: student.look,
@@ -462,7 +528,7 @@ class Hub {
     };
     const last = d.lastSummary[student.id];
     const lastNotes = last && (!live || live.phase === 'lobby') ? { eventName: last.eventName, at: last.at, wrong: last.wrong, practice: last.practice } : null;
-    if (!live) return { ...base, me, session: null, lastNotes };
+    if (!live) return { ...base, me, session: null, lastNotes, elsewhere };
     const q = this.currentQuestion();
     const mine = live.choices.get(student.id);
     let result = null;
@@ -485,6 +551,7 @@ class Hub {
       joined: live.joined.has(student.id),
       myPoint: live.phase === 'moving' || live.phase === 'intro' ? live.positions.get(student.id) ?? null : null,
       myText: live.texts.get(student.id) ?? null,
+      myTextFinal: live.textFinal.has(student.id),
       result,
       mySummary: live.phase === 'summary' ? live.studentSummary.get(student.id) ?? null : null,
       lastNotes,
@@ -496,7 +563,8 @@ class Hub {
   requestRegistration(tokenHash: string, studentId: string) {
     const d = db();
     if (!this.registrationOpen()) throw new Error('선생님 화면이 켜져 있을 때 등록할 수 있어요.');
-    if (!d.students[studentId]) throw new Error('명단에 없는 학생이에요.');
+    if (!own(d.students, studentId)) throw new Error('명단에 없는 학생이에요.');
+    if (this.live && d.students[studentId].classId !== this.live.classId) throw new Error(`지금은 ${className(this.live.classId)} 수업이라 그 반 학생만 등록할 수 있어요.`);
     if (d.devices[tokenHash]) throw new Error('이 기기는 이미 등록되어 있어요.');
     for (const r of Object.values(d.requests)) {
       if (r.tokenHash === tokenHash && r.status === 'pending') r.status = 'expired';
@@ -544,7 +612,7 @@ class Hub {
 
   decideRequest(requestId: string, approve: boolean) {
     const d = db();
-    const r = d.requests[requestId];
+    const r = own(d.requests, requestId);
     if (!r || r.status !== 'pending') return;
     r.status = approve ? 'approved' : 'rejected';
     if (approve) {
@@ -567,11 +635,13 @@ class Hub {
     for (const r of pending) perStudent.set(r.studentId, (perStudent.get(r.studentId) ?? 0) + 1);
     // Phones see masked names; two students who look the same there (김*윤) need the teacher's symbol check.
     const lookalikes = new Map<string, number>();
-    for (const s of Object.values(d.students)) lookalikes.set(maskName(s.name), (lookalikes.get(maskName(s.name)) ?? 0) + 1);
+    const look = (s: StudentRec) => `${s.classId}:${maskName(s.name)}`;
+    for (const s of Object.values(d.students)) lookalikes.set(look(s), (lookalikes.get(look(s)) ?? 0) + 1);
     let n = 0;
     for (const r of pending) {
-      const s = d.students[r.studentId];
-      if (r.replace || perStudent.get(r.studentId) !== 1 || !s || (lookalikes.get(maskName(s.name)) ?? 0) > 1) continue;
+      const s = own(d.students, r.studentId);
+      // During a lobby or quiz only today's class; other classes wait for a manual check.
+      if (r.replace || perStudent.get(r.studentId) !== 1 || !s || (this.live && s.classId !== this.live.classId) || (lookalikes.get(look(s)) ?? 0) > 1) continue;
       this.decideRequest(r.id, true);
       n++;
     }
@@ -608,9 +678,59 @@ class Hub {
     this.schedulePush(true);
   }
 
-  setRoster(lines: string) {
+  // ---------- classes ----------
+
+  addClass(name: string): string {
     const d = db();
-    const byNumber = new Map(Object.values(d.students).map((s) => [s.number, s]));
+    const clean = name.trim().slice(0, 20);
+    if (!clean) throw new Error('반 이름을 써 주세요.');
+    if (Object.values(d.classes).some((c) => c.name === clean)) throw new Error(`'${clean}'은 이미 있어요.`);
+    const id = newId('cls');
+    d.classes[id] = { id, name: clean, createdAt: Date.now() };
+    save();
+    this.schedulePush(true);
+    return id;
+  }
+
+  renameClass(classId: string, name: string) {
+    const d = db();
+    const clean = name.trim().slice(0, 20);
+    if (!own(d.classes, classId) || !clean) throw new Error('반 이름을 써 주세요.');
+    if (Object.values(d.classes).some((c) => c.id !== classId && c.name === clean)) throw new Error(`'${clean}'은 이미 있어요.`);
+    d.classes[classId].name = clean;
+    save();
+    this.schedulePush(true);
+  }
+
+  deleteClass(classId: string) {
+    const d = db();
+    if (Object.values(d.students).some((s) => s.classId === classId)) throw new Error('학생이 있는 반은 지울 수 없어요. 학생을 먼저 지워 주세요.');
+    if (this.live?.classId === classId) throw new Error('수업 중인 반은 지울 수 없어요.');
+    delete d.classes[classId];
+    save();
+    this.schedulePush(true);
+  }
+
+  /** End of term or new phones: every student of the class registers again (records stay). */
+  revokeClass(classId: string): number {
+    const d = db();
+    let n = 0;
+    for (const [hash, dev] of Object.entries(d.devices)) {
+      if (d.students[dev.studentId]?.classId !== classId) continue;
+      delete d.devices[hash];
+      this.live?.joined.delete(dev.studentId);
+      n++;
+    }
+    save();
+    this.schedulePush(true);
+    return n;
+  }
+
+  /** Adds or renames students of one class from lines like "3 김하윤"; other classes are untouched. */
+  setRoster(classId: string, lines: string) {
+    const d = db();
+    if (!own(d.classes, classId)) throw new Error('반을 먼저 골라 주세요.');
+    const byNumber = new Map(Object.values(d.students).filter((s) => s.classId === classId).map((s) => [s.number, s]));
     let added = 0;
     for (const line of lines.split(/\r?\n/)) {
       const m = line.trim().match(/^(\d+)[\s.,)\t]+(.+)$/);
@@ -621,7 +741,7 @@ class Hub {
       if (existing) existing.name = name;
       else {
         const id = newId('stu');
-        d.students[id] = { id, number, name, look: null, inventory: [], createdAt: Date.now() };
+        d.students[id] = { id, classId, number, name, look: null, inventory: [], createdAt: Date.now() };
         byNumber.set(number, d.students[id]);
         added++;
       }
@@ -659,7 +779,7 @@ class Hub {
 
   // ---------- events ----------
 
-  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { number: number; name: string }[]; issues: ImportIssue[] }) {
+  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }) {
     const groups = new Map<string, { words: Word[]; custom: CustomQuestion[] }>();
     const defaultName = `${shortDate()} 퀴즈`;
     for (const w of result.words) {
@@ -718,6 +838,8 @@ class Hub {
     const d = db();
     const ids: string[] = [];
     for (const g of draft.groups) {
+      // Words are saved even when a group makes no event (all 검토 or 보관), so retiring words works.
+      for (const w of g.words) d.words[w.key] = w;
       const id = newId('evt');
       const gen = this.generateFor(draft, g);
       if (gen.questions.length === 0) continue;
@@ -736,10 +858,15 @@ class Hub {
         reward: { itemId: nextItem.id, challengePct: 70, growthPp: 10 },
         wordKeys: g.words.map((w) => w.key),
       };
-      for (const w of g.words) d.words[w.key] = w;
       ids.push(id);
     }
-    if (draft.roster.length) this.setRoster(draft.roster.map((r) => `${r.number} ${r.name}`).join('\n'));
+    // A 명단 sheet fills each 반 by name, creating classes that don't exist yet.
+    const byClass = new Map<string, string[]>();
+    for (const r of draft.roster) byClass.set(r.className, [...(byClass.get(r.className) ?? []), `${r.number} ${r.name}`]);
+    for (const [name, lines] of byClass) {
+      const existing = Object.values(d.classes).find((c) => sameClassName(c.name, name));
+      this.setRoster(existing ? existing.id : this.addClass(/^\d+$/.test(name) ? `${name}반` : name), lines.join('\n'));
+    }
     this.drafts.delete(draftId);
     save();
     this.schedulePush(true);
@@ -763,13 +890,19 @@ class Hub {
 
   // ---------- live session ----------
 
-  openLobby(eventId: string) {
-    const event = db().events[eventId];
+  openLobby(eventId: string, classId: string) {
+    const event = own(db().events, eventId);
     if (!event) throw new Error('이벤트를 찾을 수 없어요.');
+    if (!own(db().classes, classId)) throw new Error('오늘 수업할 반을 골라 주세요.');
+    // Requests from other classes' students can't be approved during this class.
+    for (const r of Object.values(db().requests)) {
+      if (r.status === 'pending' && db().students[r.studentId]?.classId !== classId) r.status = 'expired';
+    }
     if (this.live && this.live.phase !== 'summary') throw new Error('이미 진행 중인 아레나가 있어요.');
     this.live = {
       id: newId('ses'),
       eventId,
+      classId,
       startedAt: Date.now(),
       phase: 'lobby',
       round: 'main',
@@ -788,7 +921,11 @@ class Hub {
       positions: new Map(),
       moveCounter: new Map(),
       texts: new Map(),
+      textFinal: new Set(),
+      textCounter: new Map(),
       lastMoveAt: 0,
+      lastSkipAt: 0,
+      questionAt: 0,
       reveal: null,
       choices: new Map(),
       mainStats: new Map(),
@@ -834,6 +971,9 @@ class Hub {
     live.positions = new Map();
     live.moveCounter = new Map();
     live.texts = new Map();
+    live.textFinal = new Set();
+    live.textCounter = new Map();
+    live.questionAt = Date.now();
     live.choices = new Map();
     live.reveal = null;
     live.checkpoint = null;
@@ -843,7 +983,17 @@ class Hub {
 
   tick() {
     const live = this.live;
-    if (!live || live.blank) return;
+    if (!live) return;
+    if (live.blank) {
+      // A deadline set while covered (Enter, 다음, Space) waits too, until the screen is uncovered.
+      if (!live.paused && live.phaseEndsAt !== null) {
+        live.paused = { remaining: Math.max(0, live.phaseEndsAt - Date.now()) };
+        live.phaseEndsAt = null;
+        live.pausedByBlank = true;
+        this.schedulePush(true);
+      }
+      return;
+    }
     if (live.paused || live.phaseEndsAt === null) {
       if (live?.phase === 'moving' && !live.paused) this.maybeEarlyClose();
       return;
@@ -895,8 +1045,9 @@ class Hub {
       if (q.mode === 'CUSTOM_TEXT') {
         text = live.texts.get(id);
         if (text) {
-          ok = (q.answers ?? []).includes(normalizeAnswer(text));
-          if (!ok) textWrong.set(normalizeAnswer(text), (textWrong.get(normalizeAnswer(text)) ?? 0) + 1);
+          const typed = normalizeAnswer(text);
+          ok = (q.answers ?? []).some((a) => normalizeAnswer(a) === typed);
+          if (!ok) textWrong.set(typed, (textWrong.get(typed) ?? 0) + 1);
         } else unanswered++;
       } else {
         choice = zoneOf(live.positions.get(id) ?? { x: 0.5, y: 0.5 }, q.options.length);
@@ -1022,6 +1173,8 @@ class Hub {
     let totalCorrect = 0;
     let totalConnected = 0;
     const perStudent: { studentId: string; connected: number; correct: number; judged: boolean }[] = [];
+    // Only a student who answered something this time gets their saved notes replaced.
+    const tookPart = new Set(d.responses.filter((x) => x.sessionId === live.id && x.round !== 'practice' && (x.choice >= 0 || !!x.text)).map((x) => x.studentId));
     for (const id of live.joined) {
       const s = d.students[id];
       if (!s) continue;
@@ -1057,9 +1210,10 @@ class Hub {
         ...this.wrongNotes(id, event),
       };
       live.studentSummary.set(id, summary);
-      d.lastSummary[id] = { ...summary, sessionId: live.id, eventId: live.eventId, eventName: event.name, at: Date.now() };
+      if (tookPart.has(id)) d.lastSummary[id] = { ...summary, sessionId: live.id, eventId: live.eventId, eventName: event.name, at: Date.now() };
     }
-    d.sessions.push({ id: live.id, eventId: live.eventId, startedAt: live.startedAt, endedAt: Date.now(), mainCount, perStudent });
+    // A run stopped before anyone answered a word question leaves no empty column in the stats.
+    if (mainCount > 0 && tookPart.size > 0) d.sessions.push({ id: live.id, eventId: live.eventId, classId: live.classId, startedAt: live.startedAt, endedAt: Date.now(), mainCount, perStudent });
     live.summary = { accuracy: totalConnected ? totalCorrect / totalConnected : 0, rewarded, judged: judgedCount };
     live.phase = 'summary';
     live.phaseEndsAt = null;
@@ -1121,11 +1275,20 @@ class Hub {
     return true;
   }
 
-  submitText(tokenHash: string, seq: number, value: string) {
+  submitText(tokenHash: string, seq: number, value: string, final: boolean, n: number) {
     const live = this.live;
     const s = this.studentOf(tokenHash);
-    if (!live || !s || live.phase !== 'moving' || seq !== live.seq || !live.joined.has(s.id)) return false;
-    live.texts.set(s.id, value.slice(0, 60));
+    if (!live || !s || live.phase !== 'moving' || live.paused || seq !== live.seq || !live.joined.has(s.id)) return false;
+    if (Number.isFinite(n)) {
+      if (n <= (live.textCounter.get(s.id) ?? -1)) return false;
+      live.textCounter.set(s.id, n);
+    }
+    const text = value.slice(0, 60);
+    const prev = live.texts.get(s.id);
+    live.texts.set(s.id, text);
+    // A draft of the very same text (an autosave landing after 제출) keeps the answer submitted.
+    if (final) live.textFinal.add(s.id);
+    else if (prev !== text) live.textFinal.delete(s.id);
     live.lastMoveAt = Date.now();
     this.schedulePush(false);
     return true;
@@ -1183,6 +1346,10 @@ class Hub {
         }
         break;
       case 'skip':
+        // A double click or a quick second S would land on the question that just began; ignore it.
+        if (now - live.lastSkipAt < 800) break;
+        if (live.phase === 'intro' && now - live.questionAt < 800) break;
+        if (live.phase === 'intro' || live.phase === 'moving' || live.phase === 'reveal' || live.phase === 'checkpoint') live.lastSkipAt = now;
         if (live.phase === 'intro' || live.phase === 'moving') {
           live.paused = null;
           live.phase = 'reveal';
@@ -1256,8 +1423,9 @@ class Hub {
     if (live.phase === 'moving') {
       live.phaseEndsAt = now + Math.max(rem, 3000);
       live.resumedAt = now;
-      // Phones remount after the pause screen; start the move ordering over.
+      // Phones remount after the pause screen; start the move and text ordering over.
       live.moveCounter = new Map();
+      live.textCounter = new Map();
     } else if (live.phase === 'intro' || rem > 0) {
       live.phaseEndsAt = now + rem;
     } else {

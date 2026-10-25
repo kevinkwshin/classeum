@@ -1,13 +1,15 @@
 // Simulates a class of phones against a running Classeum server, for testing without 30 real devices.
-// Usage: npm run sim -- [count=30] [baseUrl=http://localhost:3000]
-// It adds a roster if needed, registers each fake phone, approves them as the teacher,
-// picks a look, and then walks each avatar into an answer zone during every question.
+// Usage: npm run sim -- [count=30] [baseUrl=http://localhost:3000] [class=시험반]
+// It makes the class and its roster if needed, registers each fake phone, approves them as
+// the teacher, picks a look, and then walks each avatar into an answer zone during every
+// question of that class's quiz.
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const COUNT = Number(process.argv[2] ?? 30);
 const BASE = process.argv[3] ?? 'http://localhost:3000';
+const CLASS = process.argv[4] ?? '시험반';
 const NAMES = ['하람', '도윤', '지후', '시온', '아린', '세린', '서윤', '다온', '하준', '유찬', '도하', '가온', '예준', '서아', '민재', '지안', '은우', '수아', '건우', '나은', '태윤', '채원', '준서', '하린', '시우', '유나', '현우', '소율', '지호', '다은', '우진', '서진', '라온', '윤슬', '주원', '예린', '도현', '하은', '지민', '서준'];
 const FAMILY = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임'];
 
@@ -17,9 +19,9 @@ type View = Record<string, any>;
 // Acts as the teacher with the key the server keeps in .data (run from the project folder).
 const TEACHER = { Cookie: `cls_teacher=${readFileSync(join(process.cwd(), '.data', 'teacher-key'), 'utf8').trim()}` };
 
-async function post(body: Record<string, unknown>) {
+async function post(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string } & Record<string, unknown>> {
   const res = await fetch(`${BASE}/api/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...TEACHER }, body: JSON.stringify(body) });
-  return res.json() as Promise<{ ok: boolean; error?: string }>;
+  return res.json() as Promise<{ ok: boolean; error?: string } & Record<string, unknown>>;
 }
 
 /** Minimal SSE reader on top of fetch streaming. */
@@ -56,10 +58,16 @@ async function main() {
   await sleep(500);
   if (!teacher) throw new Error('선생님 화면 연결 실패: 서버가 켜져 있나요?');
 
-  const existing = (teacher as View).students as { number: number }[];
+  let classId = ((teacher as View).classes as { id: string; name: string }[]).find((c) => c.name === CLASS)?.id;
+  if (!classId) classId = ((await post({ type: 'add-class', name: CLASS })) as { classId?: string }).classId;
+  if (!classId) throw new Error(`'${CLASS}' 반을 만들지 못했어요.`);
+  await sleep(300);
+  const existing = ((teacher as View).students as { classId: string }[]).filter((s) => s.classId === classId);
   if (existing.length < COUNT) {
-    const lines = Array.from({ length: COUNT }, (_, i) => `${i + 1} ${FAMILY[i % FAMILY.length]}${NAMES[i % NAMES.length]}`);
-    await post({ type: 'roster', text: lines.join('\n') });
+    // Different classes get different given names, so masked names (김*람) differ across runs.
+    const offset = CLASS.length * 7;
+    const lines = Array.from({ length: COUNT }, (_, i) => `${i + 1} ${FAMILY[i % FAMILY.length]}${NAMES[(i + offset) % NAMES.length]}`);
+    await post({ type: 'roster', classId, text: lines.join('\n') });
     await sleep(300);
   }
 
@@ -70,8 +78,8 @@ async function main() {
   await sleep(800);
 
   for (const p of phones) {
-    const roster = (p.view?.roster ?? []) as { id: string; number: number }[];
-    const target = roster.find((r) => r.number === p.i + 1);
+    const roster = (p.view?.roster ?? []) as { id: string; classId: string; number: number }[];
+    const target = roster.find((r) => r.classId === classId && r.number === p.i + 1);
     if (target) await post({ type: 'register', token: p.token, studentId: target.id });
   }
   await sleep(300);

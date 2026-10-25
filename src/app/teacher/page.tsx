@@ -23,14 +23,17 @@ function TeacherApp() {
   const { view, conn, send, serverNow } = useLive<TeacherView>('teacher');
   const [tab, setTab] = useState<Tab>('arena');
   const [toast, setToast] = useState('');
+  const notify = useCallback((message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(''), 3000);
+  }, []);
   const act: Send = useCallback(
     (a) =>
       send(a).catch((e: Error) => {
-        setToast(e.message);
-        setTimeout(() => setToast(''), 3000);
+        notify(e.message);
         throw e;
       }),
-    [send],
+    [send, notify],
   );
 
   if (!view) {
@@ -72,11 +75,19 @@ function TeacherApp() {
       )}
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
-        {tab === 'arena' && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} />)}
+        {tab === 'arena' && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} />)}
         {tab === 'students' && !running && <Students view={view} act={act} />}
-        {tab === 'stats' && !running && <Stats />}
+        {tab === 'stats' && !running && <Stats classes={view.classes} />}
       </main>
-      {view.requests.length > 0 && <Requests view={view} act={act} />}
+      {/* During a quiz it floats over the console; otherwise it gets its own column so it covers no buttons. */}
+      {view.requests.length > 0 &&
+        (view.live ? (
+          <Requests view={view} act={act} />
+        ) : (
+          <div className="w-80 shrink-0 pr-5 pt-6">
+            <Requests view={view} act={act} inline />
+          </div>
+        ))}
       {toast && <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-ink px-5 py-3 text-sm font-semibold text-white">{toast}</div>}
     </div>
   );
@@ -97,11 +108,48 @@ function Btn({ children, onClick, kind = 'dark', disabled, className = '', title
 
 // ---------- device requests ----------
 
-function Requests({ view, act }: { view: TeacherView; act: Send }) {
-  // Sits below the top bars (so 퀴즈 시작 / 종료 stay clickable) and folds away to a pill.
+/** The class picked last (in any tab), remembered on this laptop; falls back to the first class. */
+function useClassChoice(classes: { id: string }[]) {
+  const [picked, setPicked] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('classeum.class');
+    } catch {
+      return null;
+    }
+  });
+  const id = picked && classes.some((c) => c.id === picked) ? picked : classes[0]?.id ?? '';
+  const choose = (next: string) => {
+    setPicked(next);
+    try {
+      localStorage.setItem('classeum.class', next);
+    } catch {
+      // Private window: the choice just isn't remembered.
+    }
+  };
+  return [id, choose] as const;
+}
+
+function ClassTabs({ classes, value, onChange, extra }: { classes: { id: string; name: string; students?: number }[]; value: string; onChange: (id: string) => void; extra?: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {classes.map((c) => (
+        <button key={c.id} type="button" aria-pressed={value === c.id} onClick={() => onChange(c.id)} className={`h-10 rounded-xl px-4 text-sm font-bold ${value === c.id ? 'bg-ink text-white' : 'bg-white text-ink-2'}`}>
+          {c.name}
+          {c.students !== undefined && <span className={`ml-1.5 tabular ${value === c.id ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>{c.students}</span>}
+        </button>
+      ))}
+      {extra}
+    </div>
+  );
+}
+
+function Requests({ view, act, inline = false }: { view: TeacherView; act: Send; inline?: boolean }) {
+  // Floating, it sits below the top bars (so 퀴즈 시작 / 종료 stay clickable) and folds away to a pill.
   const [open, setOpen] = useState(true);
   return (
-    <aside className={`cls-slide-up fixed right-5 top-24 z-40 rounded-[20px] bg-white shadow-[0_8px_30px_rgba(16,18,24,0.12)] ${open ? 'w-80 p-5' : 'px-4 py-2.5'}`}>
+    <aside
+      className={`cls-slide-up rounded-[20px] bg-white shadow-[0_8px_30px_rgba(16,18,24,0.12)] ${inline ? 'sticky top-6' : 'fixed right-5 top-24 z-40'} ${open || inline ? 'w-80 p-5' : 'px-4 py-2.5'}`}
+    >
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className={`flex w-full items-center justify-between gap-3 ${open ? 'mb-3' : ''}`}>
         <h2 className={`font-bold ${open ? 'text-lg' : 'text-sm'}`}>기기 등록 요청</h2>
         <span className="flex items-center gap-2">
@@ -120,7 +168,9 @@ function Requests({ view, act }: { view: TeacherView; act: Send }) {
             {view.requests.map((r) => (
               <div key={r.id} className="flex items-center gap-3 border-t border-[#EEF0F3] py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="font-bold">{r.number} {r.name}</div>
+                  <div className="font-bold">
+                    <span className="text-ink-3">{r.className}</span> {r.number} {r.name}
+                  </div>
                   <div className={`text-[13px] ${r.replace ? 'font-semibold text-bad' : 'text-ink-3'}`}>{r.replace ? '기기 교체' : '새 기기'} · <b className="text-ink">{r.symbol}</b></div>
                 </div>
                 <button type="button" aria-label="거절" onClick={() => act({ type: 'reject', requestId: r.id })} className="h-10 w-10 rounded-xl border border-[#D5D8DF] text-lg">✕</button>
@@ -147,7 +197,7 @@ interface UploadResult {
   groups?: { name: string; wordCount: number; reviewCount: number; customCount: number; warnings: string[]; questions: { prompt: string; modeLabel: string; options: string[]; answerIndex: number; answers?: string[] }[] }[];
 }
 
-function Events({ view, act }: { view: TeacherView; act: Send }) {
+function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (message: string) => void }) {
   const [upload, setUpload] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -216,18 +266,27 @@ function Events({ view, act }: { view: TeacherView; act: Send }) {
         const res = (await act({ type: 'create-event', draftId: upload.draftId })) as { eventIds?: string[] };
         setUpload(null);
         if (res.eventIds?.[0]) setSelected(res.eventIds[0]);
+        else notify('단어만 저장했어요 (만들 문제가 없어요)');
       }} />}
     </div>
   );
 }
 
 function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEvent; act: Send }) {
+  const [classId, setClassId] = useClassChoice(view.classes);
   const [itemId, setItemId] = useState(event.reward.itemId);
   const [challenge, setChallenge] = useState(event.reward.challengePct);
   const [growth, setGrowth] = useState(event.reward.growthPp);
   const item = itemById(itemId);
   const dirty = itemId !== event.reward.itemId || challenge !== event.reward.challengePct || growth !== event.reward.growthPp;
-  const saveReward = () => act({ type: 'reward', eventId: event.id, itemId, challengePct: challenge, growthPp: growth });
+  // Same limits as the server, written back so the editor shows what will really be used.
+  const saveReward = () => {
+    const c = Math.min(100, Math.max(30, Math.round(challenge) || 30));
+    const g = Math.min(50, Math.max(1, Math.round(growth) || 1));
+    setChallenge(c);
+    setGrowth(g);
+    return act({ type: 'reward', eventId: event.id, itemId, challengePct: c, growthPp: g });
+  };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5">
@@ -236,9 +295,20 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
           <div className="text-2xl font-bold">{event.name}</div>
           <div className="text-ink-3">{event.count}문항 · 기본 15초 · 약 {Math.round(event.estimateSec / 60)}분</div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요?`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
-          <Btn kind="accent" onClick={async () => { if (dirty) await saveReward(); await act({ type: 'open-lobby', eventId: event.id }); window.open('/display', 'classeum-display'); }}>대기실 열기</Btn>
+          {view.classes.length === 0 ? (
+            <span className="text-sm font-semibold text-ink-3">학생·기기에서 반을 먼저 만들어 주세요</span>
+          ) : (
+            <>
+              <select aria-label="오늘 수업할 반" value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
+                {view.classes.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <Btn kind="accent" onClick={async () => { if (dirty) await saveReward(); await act({ type: 'open-lobby', eventId: event.id, classId }); window.open('/display', 'classeum-display'); }}>대기실 열기</Btn>
+            </>
+          )}
         </div>
       </Card>
       {event.warnings.length > 0 && (
@@ -371,7 +441,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
   if (live.phase === 'summary') {
     return (
       <div className="flex flex-col items-center gap-8 p-12">
-        <h1 className="text-3xl font-bold">{live.eventName} 끝</h1>
+        <h1 className="text-3xl font-bold">{live.className} · {live.eventName} 끝</h1>
         <div className="flex gap-5">
           <Card className="min-w-56 !bg-ink text-white"><div className="text-[#A3A8B4]">반 정답률</div><div className="tabular text-6xl font-extrabold text-[#3DDC97]">{Math.round((live.summary?.accuracy ?? 0) * 100)}%</div></Card>
           <Card className="min-w-56"><div className="text-ink-3">보상 받은 학생</div><div className="tabular text-6xl font-extrabold">{live.summary?.rewarded ?? 0}<span className="text-2xl text-ink-3"> / {live.summary?.judged ?? 0}</span></div></Card>
@@ -382,7 +452,8 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
     );
   }
 
-  const q = live.current;
+  // A checkpoint keeps the last question as current; show the rest screen instead of it.
+  const q = live.phase === 'checkpoint' ? null : live.current;
   const ms = remainingMs(live.phaseEndsAt, live.paused, live.pausedRemaining, serverNow());
   const total = live.round === 'retry' ? live.total : live.mainCount;
   const steps: [string, boolean][] = [
@@ -397,6 +468,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
     <div className="flex min-h-screen flex-col">
       <div className="flex h-[76px] items-center justify-between gap-5 bg-ink px-7 text-white">
         <div className="flex items-center gap-6">
+          <div className="text-sm font-bold text-[#A3A8B4]">{live.className}</div>
           <div className="tabular text-[22px] font-extrabold">{live.index + 1 > 0 ? live.index + 1 : '-'}<span className="text-ink-3"> / {total}</span></div>
           {live.round === 'retry' && <span className="rounded-full bg-gold px-3 py-1 text-sm font-bold text-ink">다시 도전</span>}
           <div className="flex gap-1.5">
@@ -503,14 +575,15 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
 }
 
 function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherLive; act: Send; control: (a: string) => void }) {
-  const joined = view.students.filter((s) => s.joined);
-  const notJoined = view.students.filter((s) => !s.joined);
+  const mine = view.students.filter((s) => s.classId === live.classId);
+  const joined = mine.filter((s) => s.joined);
+  const notJoined = mine.filter((s) => !s.joined);
   return (
     <div className="flex flex-col gap-5 p-8">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-sm text-ink-3">대기실</div>
-          <h1 className="text-2xl font-bold">{live.eventName} · {live.mainCount}문항</h1>
+          <h1 className="text-2xl font-bold">{live.className} · {live.eventName} · {live.mainCount}문항</h1>
         </div>
         <div className="flex gap-2">
           <a href="/display" target="classeum-display" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</a>
@@ -533,7 +606,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
         <Card className="w-80 shrink-0">
           <h2 className="mb-3 text-lg font-bold">아직 안 들어옴</h2>
           <div className="flex flex-wrap gap-1.5">{notJoined.map((s) => <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">{s.number} {s.name}{!s.hasDevice ? ' ·미등록' : ''}</span>)}</div>
-          <p className="mt-4 text-xs leading-relaxed text-ink-3">처음 온 학생은 QR을 찍고 이름을 고르면 오른쪽 위에 등록 요청이 떠요.</p>
+          <p className="mt-4 text-xs leading-relaxed text-ink-3">처음 온 학생은 QR을 찍고 이름을 고르면 오른쪽 위에 등록 요청이 떠요. 지금은 {live.className} 학생만 들어올 수 있어요.</p>
         </Card>
       </div>
     </div>
@@ -543,39 +616,87 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
 // ---------- students ----------
 
 function Students({ view, act }: { view: TeacherView; act: Send }) {
+  const [classId, setClassId] = useClassChoice(view.classes);
   const [text, setText] = useState('');
+  const [newClass, setNewClass] = useState('');
+  const current = view.classes.find((c) => c.id === classId);
+  const students = view.students.filter((s) => s.classId === classId);
+  const addClass = () =>
+    act({ type: 'add-class', name: newClass })
+      .then((res) => {
+        setNewClass('');
+        const id = (res as { classId?: string }).classId;
+        if (id) setClassId(id);
+      })
+      .catch(() => undefined);
   return (
     <div className="flex flex-col gap-5 p-8">
       <h1 className="text-2xl font-bold">학생·기기</h1>
-      <div className="flex gap-5">
-        <Card className="min-w-0 flex-1 !p-2">
-          <table className="w-full text-left text-[15px]">
-            <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">번호</th><th>이름</th><th>캐릭터</th><th>기기</th><th>출석</th><th /></tr></thead>
-            <tbody>
-              {view.students.map((s) => (
-                <tr key={s.id} className="border-t border-[#EEF0F3]">
-                  <td className="tabular px-4 py-2.5 text-ink-3">{s.number}</td>
-                  <td className="font-semibold">{s.name}</td>
-                  <td>{s.look ? <PixelAvatar look={normalizeLook(s.look)} size={28} /> : <span className="text-xs text-ink-3">-</span>}</td>
-                  <td className="text-sm">{s.hasDevice ? <span className={s.connected ? 'font-semibold text-good' : 'text-ink-2'}>{s.connected ? '접속 중' : '등록됨'}</span> : <span className="text-ink-3">미등록</span>}</td>
-                  <td className="tabular text-sm">{s.stamps}</td>
-                  <td className="pr-3 text-right">
-                    {s.hasDevice && <button type="button" className="text-sm font-semibold text-ink-2 underline" onClick={() => { if (confirm(`${s.name}의 기기 연결을 해제할까요? 다시 등록하면 기록은 그대로예요.`)) act({ type: 'revoke', studentId: s.id }); }}>연결 해제</button>}
-                    <button type="button" className="ml-3 text-sm font-semibold text-bad underline" onClick={() => { if (confirm(`${s.name}을 명단에서 지울까요?`)) act({ type: 'remove-student', studentId: s.id }); }}>삭제</button>
-                  </td>
-                </tr>
-              ))}
-              {view.students.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-ink-3">명단이 비어 있어요. 오른쪽에 붙여 넣거나 엑셀 명단 시트로 올려 주세요.</td></tr>}
-            </tbody>
-          </table>
-        </Card>
-        <Card className="flex w-80 shrink-0 flex-col gap-3">
-          <h2 className="text-lg font-bold">명단 추가</h2>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} placeholder={'1 강하람\n2 김도윤'} className="rounded-xl bg-bg p-3 text-sm outline-none" />
-          <p className="text-xs text-ink-3">한 줄에 ‘번호 이름’. 같은 번호가 있으면 이름을 바꿔요. 연락처나 생년월일은 받지 않아요.</p>
-          <Btn disabled={!text.trim()} onClick={() => act({ type: 'roster', text }).then(() => setText(''))}>저장</Btn>
-        </Card>
-      </div>
+      <ClassTabs
+        classes={view.classes}
+        value={classId}
+        onChange={setClassId}
+        extra={
+          <form
+            className="flex items-center gap-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (newClass.trim()) addClass();
+            }}
+          >
+            <input value={newClass} onChange={(e) => setNewClass(e.target.value)} placeholder="새 반 이름 (예: 2-3반)" aria-label="새 반 이름" className="h-10 w-44 rounded-xl bg-white px-3 text-sm outline-none" />
+            <Btn kind="ghost" disabled={!newClass.trim()} className="!h-10 text-sm" onClick={() => { if (newClass.trim()) addClass(); }}>반 추가</Btn>
+          </form>
+        }
+      />
+      {!current ? (
+        <Card className="text-ink-3">반을 먼저 만들어 주세요. 반마다 명단을 따로 넣고, 대기실을 열 때 오늘 수업할 반을 골라요.</Card>
+      ) : (
+        <div className="flex gap-5">
+          <Card className="min-w-0 flex-1 !p-2">
+            <table className="w-full text-left text-[15px]">
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">번호</th><th>이름</th><th>캐릭터</th><th>기기</th><th>출석</th><th /></tr></thead>
+              <tbody>
+                {students.map((s) => (
+                  <tr key={s.id} className="border-t border-[#EEF0F3]">
+                    <td className="tabular px-4 py-2.5 text-ink-3">{s.number}</td>
+                    <td className="font-semibold">{s.name}</td>
+                    <td>{s.look ? <PixelAvatar look={normalizeLook(s.look)} size={28} /> : <span className="text-xs text-ink-3">-</span>}</td>
+                    <td className="text-sm">{s.hasDevice ? <span className={s.connected ? 'font-semibold text-good' : 'text-ink-2'}>{s.connected ? '접속 중' : '등록됨'}</span> : <span className="text-ink-3">미등록</span>}</td>
+                    <td className="tabular text-sm">{s.stamps}</td>
+                    <td className="pr-3 text-right">
+                      {s.hasDevice && <button type="button" className="text-sm font-semibold text-ink-2 underline" onClick={() => { if (confirm(`${s.name}의 기기 연결을 해제할까요? 다시 등록하면 기록은 그대로예요.`)) act({ type: 'revoke', studentId: s.id }); }}>연결 해제</button>}
+                      <button type="button" className="ml-3 text-sm font-semibold text-bad underline" onClick={() => { if (confirm(`${s.name}을 명단에서 지울까요?`)) act({ type: 'remove-student', studentId: s.id }); }}>삭제</button>
+                    </td>
+                  </tr>
+                ))}
+                {students.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-ink-3">{current.name} 명단이 비어 있어요. 오른쪽에 붙여 넣거나 엑셀 명단 시트로 올려 주세요.</td></tr>}
+              </tbody>
+            </table>
+          </Card>
+          <div className="flex w-80 shrink-0 flex-col gap-4">
+            <Card className="flex flex-col gap-3">
+              <h2 className="text-lg font-bold">{current.name} 명단 추가</h2>
+              <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} placeholder={'1 강하람\n2 김도윤'} className="rounded-xl bg-bg p-3 text-sm outline-none" />
+              <p className="text-xs text-ink-3">한 줄에 ‘번호 이름’. 이 반에 같은 번호가 있으면 이름을 바꿔요. 다른 반은 그대로예요. 연락처나 생년월일은 받지 않아요.</p>
+              <Btn disabled={!text.trim()} onClick={() => act({ type: 'roster', classId, text }).then(() => setText('')).catch(() => undefined)}>저장</Btn>
+            </Card>
+            <Card className="flex flex-col gap-2">
+              <h2 className="font-bold">반 관리</h2>
+              <Btn kind="ghost" className="text-sm" onClick={() => { const name = prompt('새 반 이름', current.name); if (name && name.trim() !== current.name) act({ type: 'rename-class', classId, name }).catch(() => undefined); }}>이름 바꾸기</Btn>
+              <Btn
+                kind="ghost"
+                className="text-sm"
+                disabled={current.devices === 0}
+                onClick={() => { if (confirm(`${current.name} 학생 ${current.devices}명의 기기 연결을 모두 해제할까요? 다음에 다시 등록해야 하고, 기록과 캐릭터는 그대로예요.`)) act({ type: 'revoke-class', classId }).catch(() => undefined); }}
+              >
+                이 반 기기 모두 해제
+              </Btn>
+              {current.students === 0 && <Btn kind="ghost" className="text-sm !text-bad" onClick={() => { if (confirm(`${current.name}을 지울까요?`)) act({ type: 'delete-class', classId }).catch(() => undefined); }}>반 지우기</Btn>}
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -583,20 +704,30 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
 // ---------- stats ----------
 
 interface StatsData {
-  students: { id: string; number: number; name: string; attendance: number; sessions: { sessionId: string; eventName: string; date: number; accuracy: number | null }[]; average: number | null; missed: { word: string; count: number }[]; fixed: string[]; rewards: number }[];
+  students: { id: string; classId: string; className: string; number: number; name: string; attendance: number; sessions: { sessionId: string; eventName: string; date: number; accuracy: number | null }[]; average: number | null; missed: { word: string; count: number }[]; fixed: string[]; rewards: number }[];
   words: { key: string; word: string; meaning: string; attempts: number; accuracy: number; topWrong: string | null }[];
 }
 
-function Stats() {
-  const [data, setData] = useState<StatsData | null>(null);
+function Stats({ classes }: { classes: TeacherView['classes'] }) {
+  const [classId, setClassId] = useClassChoice(classes);
+  const [data, setData] = useState<{ classId: string; stats: StatsData } | null>(null);
   const [mode, setMode] = useState<'students' | 'words'>('students');
   const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
-    fetch('/api/stats').then((r) => r.json()).then(setData).catch(() => undefined);
-  }, []);
-  const student = useMemo(() => data?.students.find((s) => s.id === picked) ?? data?.students[0], [data, picked]);
+    let stop = false;
+    fetch(`/api/stats?class=${encodeURIComponent(classId)}`)
+      .then((r) => r.json())
+      .then((stats: StatsData) => !stop && setData({ classId, stats }))
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [classId]);
+  const stats = data && data.classId === classId ? data.stats : null;
+  const student = useMemo(() => stats?.students.find((s) => s.id === picked) ?? stats?.students[0], [stats, picked]);
   const pct = (v: number | null | undefined) => (v === null || v === undefined ? '-' : `${Math.round(v * 100)}%`);
-  if (!data) return <div className="p-8 text-ink-3">불러오는 중…</div>;
+  if (classes.length === 0) return <div className="p-8 text-ink-3">학생·기기에서 반을 먼저 만들어 주세요.</div>;
+  if (!stats) return <div className="p-8 text-ink-3">불러오는 중…</div>;
   return (
     <div className="flex flex-col gap-5 p-8">
       <div className="flex items-center justify-between">
@@ -608,20 +739,24 @@ function Stats() {
             ))}
           </div>
         </div>
-        <a href="/api/stats?format=csv" className="flex h-10 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-sm font-semibold">엑셀로 내보내기</a>
+        <div className="flex gap-2">
+          <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-10 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-sm font-semibold">이 반 엑셀로</a>
+          <a href="/api/stats?format=csv" className="flex h-10 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-sm font-semibold">전체 엑셀로</a>
+        </div>
       </div>
+      <ClassTabs classes={classes} value={classId} onChange={(id) => { setClassId(id); setPicked(null); }} />
       {mode === 'words' ? (
         <Card className="!p-2">
           <table className="w-full text-left text-[15px]">
             <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">단어</th><th>뜻</th><th>정답률</th><th>푼 횟수</th><th>많이 고른 오답</th></tr></thead>
             <tbody>
-              {data.words.map((w) => (
+              {stats.words.map((w) => (
                 <tr key={w.key} className="border-t border-[#EEF0F3]">
                   <td className="px-4 py-2.5 font-bold">{w.word}</td><td className="text-ink-2">{w.meaning}</td>
                   <td className={`tabular font-extrabold ${w.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(w.accuracy)}</td><td className="tabular">{w.attempts}</td><td className="text-ink-2">{w.topWrong ?? '-'}</td>
                 </tr>
               ))}
-              {data.words.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-ink-3">아직 기록이 없어요.</td></tr>}
+              {stats.words.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-ink-3">아직 기록이 없어요.</td></tr>}
             </tbody>
           </table>
         </Card>
@@ -631,7 +766,7 @@ function Stats() {
             <table className="w-full text-left text-[15px]">
               <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>출석</th><th className="text-right">최근</th><th className="text-center">최근 5회</th><th className="pr-4 text-right">자주 틀림</th></tr></thead>
               <tbody>
-                {data.students.map((s) => {
+                {stats.students.map((s) => {
                   const recent = s.sessions.slice(-5);
                   const last = [...s.sessions].reverse().find((x) => x.accuracy !== null)?.accuracy ?? null;
                   return (
@@ -658,15 +793,15 @@ function Stats() {
               <Card>
                 <h2 className="mb-3 font-bold">이벤트별 정답률</h2>
                 <div className="flex h-44 items-end gap-4 border-b border-line">
-                  {student.sessions.map((x) => (
-                    <div key={x.sessionId} className="flex flex-1 flex-col items-center justify-end gap-1" title={`${x.eventName} ${pct(x.accuracy)}`}>
+                  {student.sessions.slice(-8).map((x) => (
+                    <div key={x.sessionId} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${x.eventName} ${pct(x.accuracy)}`}>
                       <div className="tabular text-xs font-bold">{pct(x.accuracy)}</div>
-                      <div className="w-10 rounded-t" style={{ height: `${(x.accuracy ?? 0) * 140}px`, background: x.accuracy === null ? '#E3E5EA' : '#101218' }} />
+                      <div className="w-full max-w-10 rounded-t" style={{ height: `${(x.accuracy ?? 0) * 140}px`, background: x.accuracy === null ? '#E3E5EA' : '#101218' }} />
                     </div>
                   ))}
                   {student.sessions.length === 0 && <div className="self-center text-ink-3">아직 기록이 없어요</div>}
                 </div>
-                <div className="mt-1.5 flex gap-4 text-center text-xs text-ink-3">{student.sessions.map((x) => <div key={x.sessionId} className="flex-1 truncate">{x.eventName}</div>)}</div>
+                <div className="mt-1.5 flex gap-4 text-center text-xs text-ink-3">{student.sessions.slice(-8).map((x) => <div key={x.sessionId} className="min-w-0 flex-1 truncate">{x.eventName}</div>)}</div>
               </Card>
               <div className="grid grid-cols-2 gap-4">
                 <Card><h2 className="mb-3 font-bold">자주 틀리는 단어</h2><div className="flex flex-wrap gap-2">{student.missed.map((m) => <span key={m.word} className="rounded-full bg-bad-soft px-3 py-1.5 text-sm font-bold">{m.word} <span className="text-bad">×{m.count}</span></span>)}{student.missed.length === 0 && <span className="text-sm text-ink-3">없음</span>}</div></Card>

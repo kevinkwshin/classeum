@@ -6,6 +6,8 @@ export type { WrongNote };
 export interface SessionPublic {
   id: string;
   eventName: string;
+  classId: string;
+  className: string;
   phase: Phase;
   round: Round;
   index: number;
@@ -37,6 +39,7 @@ export interface DisplayView {
 
 export interface TeacherStudent {
   id: string;
+  classId: string;
   number: number;
   name: string;
   hasDevice: boolean;
@@ -79,8 +82,9 @@ export interface TeacherView {
   serverNow: number;
   joinUrl: string;
   qr: string;
+  classes: { id: string; name: string; students: number; devices: number }[];
   students: TeacherStudent[];
-  requests: { id: string; studentId: string; number?: number; name?: string; symbol: string; replace: boolean; createdAt: number }[];
+  requests: { id: string; studentId: string; className: string; number?: number; name?: string; symbol: string; replace: boolean; createdAt: number }[];
   events: TeacherEvent[];
   live: TeacherLive | null;
   items: ItemDef[];
@@ -90,17 +94,22 @@ export interface TeacherView {
 export interface StudentView {
   role: 'student';
   serverNow: number;
-  me: { id: string; number: number; name: string; look: AvatarLook | null; inventory: string[]; stamps: number } | null;
-  request?: { status: 'pending' | 'approved' | 'rejected' | 'expired'; symbol: string; number: number | null; name: string } | null;
+  me: { id: string; className: string; number: number; name: string; look: AvatarLook | null; inventory: string[]; stamps: number } | null;
+  request?: { status: 'pending' | 'approved' | 'rejected' | 'expired'; symbol: string; className: string; number: number | null; name: string } | null;
   /** Set when the server turned this phone away for now; it tries again on its own. */
   refused?: string;
   /** Names come masked (김*윤) and only while the teacher or projector screen is open. */
-  roster?: { id: string; number: number; name: string }[];
+  roster?: { id: string; classId: string; number: number; name: string }[];
+  /** Classes to pick from before the name list; only today's class while a lobby or quiz is on. */
+  classes?: { id: string; name: string }[];
   registrationOpen?: boolean;
+  /** Set when another class is having its quiz right now. */
+  elsewhere?: string | null;
   session?: SessionPublic | null;
   joined?: boolean;
   myPoint?: { x: number; y: number } | null;
   myText?: string | null;
+  myTextFinal?: boolean;
   result?: {
     choice: number;
     correct: boolean;

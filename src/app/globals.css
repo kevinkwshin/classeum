@@ -47,6 +47,11 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The closed-eye overlay only shows during its blink keyframes; with motion off, eyes stay open. */
+.cls-blink {
+  opacity: 0;
+}
+
 /* Zone colours: the same four on the projector and on every phone, so ① always looks like ①. */
 .zone-0 { --zone: #2f6feb; --zone-soft: #eaf1ff; --zone-ink: #1a4fb5; }
 .zone-1 { --zone: #e8590c; --zone-soft: #fff1e6; --zone-ink: #a8400a; }
