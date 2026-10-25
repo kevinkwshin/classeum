@@ -74,6 +74,8 @@ export interface TeacherLive extends SessionPublic {
   unsettled: { number: number; name: string }[];
   reveal: RevealInfo | null;
   accuracySoFar: number | null;
+  mainDone: number;
+  mainPlanned: number;
   remainingSec: number;
 }
 

@@ -212,10 +212,13 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
                   </div>
                   <div className="text-2xl font-semibold text-ink-2">안개 속에서 자리 잡는 중</div>
                 </div>
-              ) : reveal.topWrong ? (
-                <div className="cls-slide-up max-w-[40vw] rounded-3xl bg-ink px-8 py-5 text-center text-white" style={{ animationDelay: '1.2s' }}>
-                  <div className="text-xl font-semibold text-[#A3A8B4]">많이 고른 오답</div>
-                  <div className="mt-1 text-3xl font-bold">{reveal.topWrong.feedback ?? reveal.topWrong.label}</div>
+              ) : null
+            }
+            footer={
+              reveal?.topWrong ? (
+                <div className="cls-slide-up max-w-[40vw] rounded-3xl bg-ink px-7 py-3 text-center text-white" style={{ animationDelay: '1.2s' }}>
+                  <div className="text-base font-semibold text-[#A3A8B4]">많이 고른 오답</div>
+                  <div className="text-2xl font-bold">{reveal.topWrong.feedback ?? reveal.topWrong.label}</div>
                 </div>
               ) : null
             }

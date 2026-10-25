@@ -3,7 +3,7 @@
 import { createHash, randomInt } from 'node:crypto';
 import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
-import { ATTENDANCE_UNLOCKS, ITEMS, itemById } from '@/lib/items';
+import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { db, flush, newId, save, type EventRec, type RequestRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
@@ -466,6 +466,10 @@ class Hub {
         unsettled,
         reveal: live.reveal,
         accuracySoFar: answered.t ? answered.c / answered.t : null,
+        // For the 종료 confirmation: word questions finished (counting one being answered now) and planned.
+        // (종료 during 'moving' locks the current question, so it counts; in intro it doesn't.)
+        mainDone: live.mainStats.size + (live.round === 'main' && live.phase === 'moving' && q?.wordKey ? 1 : 0),
+        mainPlanned: db().events[live.eventId]?.questions.filter((x) => x.wordKey).length ?? 0,
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + Math.min(x.seconds, 9) + 4, 0)),
       };
     }
@@ -852,12 +856,12 @@ class Hub {
     if (days.includes(today)) return false;
     days.push(today);
     const s = d.students[studentId];
-    if (s && days.length % 10 === 0) {
-      const unlock = ATTENDANCE_UNLOCKS[days.length / 10 - 1];
-      if (unlock && !s.inventory.includes(unlock)) {
-        s.inventory.push(unlock);
-        d.rewards.push({ sessionId: this.live?.id ?? '', eventId: this.live?.eventId ?? '', studentId, itemId: unlock, reason: 'attendance', at: Date.now() });
-      }
+    // One item per 5 footprints; anything already earned but missing (the rule used to be every 10) is caught up too.
+    const earned = ATTENDANCE_UNLOCKS.slice(0, Math.floor(days.length / STAMPS_PER_UNLOCK));
+    for (const unlock of earned) {
+      if (!s || s.inventory.includes(unlock)) continue;
+      s.inventory.push(unlock);
+      d.rewards.push({ sessionId: this.live?.id ?? '', eventId: this.live?.eventId ?? '', studentId, itemId: unlock, reason: 'attendance', at: Date.now() });
     }
     save();
     return true;
@@ -933,7 +937,7 @@ class Hub {
       let name = g.name;
       for (let k = 2; existing.has(name); k++) name = `${g.name} (${k})`;
       // Rotate through the catalog so the teacher only has to change the reward, not pick one.
-      const nextItem = ITEMS[Object.keys(d.events).length % ITEMS.length];
+      const nextItem = QUIZ_REWARD_ITEMS[Object.keys(d.events).length % QUIZ_REWARD_ITEMS.length];
       d.events[id] = {
         id,
         name,
@@ -1004,7 +1008,8 @@ class Hub {
       paused: null,
       pausedByBlank: false,
       blank: false,
-      nameLabels: false,
+      // Names under the avatars at the reveal; the teacher can switch them off for a gentler reveal.
+      nameLabels: true,
       autoAdvance: true,
       joined: new Set(),
       positions: new Map(),
@@ -1174,7 +1179,8 @@ class Hub {
       accuracy,
       topWrong,
       explanation: q.explanation,
-      avatars: this.avatarsOnField(),
+      // Only students who took part in this question; someone whose phone died isn't shown asleep.
+      avatars: this.avatarsOnField().filter((a) => counted.includes(a.studentId)),
       // Only answers several students gave, so nobody's own typo ends up on the projector.
       textWrong: q.mode === 'CUSTOM_TEXT' ? [...textWrong].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t]) => t) : undefined,
       long,
@@ -1250,6 +1256,9 @@ class Hub {
     const d = db();
     const event = d.events[live.eventId];
     const mainCount = live.mainStats.size;
+    // Ended early (종료) before half the word questions: answers are kept, but nobody is judged for rewards.
+    const planned = db().events[live.eventId]?.questions.filter((q) => q.wordKey).length ?? mainCount;
+    const shortQuiz = mainCount < Math.ceil(planned / 2);
     const history = new Map<string, number[]>();
     for (const s of d.sessions) {
       for (const p of s.perStudent) {
@@ -1270,7 +1279,7 @@ class Hub {
       const r = live.perStudent.get(id) ?? { connected: 0, correct: 0 };
       totalCorrect += r.correct;
       totalConnected += r.connected;
-      const judged = mainCount > 0 && r.connected >= Math.ceil(mainCount / 2);
+      const judged = !shortQuiz && mainCount > 0 && r.connected >= Math.ceil(mainCount / 2);
       perStudent.push({ studentId: id, connected: r.connected, correct: r.correct, judged });
       let reward: StudentSummary['reward'] = null;
       if (judged) {
@@ -1295,6 +1304,7 @@ class Hub {
         judged,
         reward,
         stampAdded: live.stamped.has(id),
+        shortQuiz,
         unlocked: d.rewards.filter((x) => x.sessionId === live.id && x.studentId === id && x.reason === 'attendance').map((x) => x.itemId),
         ...this.wrongNotes(id, event),
       };

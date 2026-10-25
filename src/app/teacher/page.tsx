@@ -6,7 +6,7 @@ import { Field } from '@/components/Field';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
-import { ITEMS, itemById, previewLook } from '@/lib/items';
+import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
 
 type Send = (a: Record<string, unknown>) => Promise<unknown>;
 type Tab = 'arena' | 'students' | 'stats';
@@ -349,13 +349,25 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
             <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={150} />}</div>
             <div className="text-lg font-bold">{item?.name}</div>
           </div>
-          <div className="grid flex-1 auto-rows-min grid-cols-4 gap-2">
-            {view.items.map((it) => (
-              <button key={it.id} type="button" aria-pressed={itemId === it.id} onClick={() => setItemId(it.id)} className={`flex flex-col items-center gap-1.5 rounded-2xl p-3 ${itemId === it.id ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
-                <PixelAvatar look={previewLook(it, DEFAULT_LOOK)} size={56} />
-                <span className="text-xs font-semibold">{it.name}</span>
-              </button>
-            ))}
+          {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. */}
+          <div className="flex max-h-[420px] flex-1 flex-col gap-4 overflow-y-auto pr-1">
+            {THEMES.map((th) => {
+              const list = view.items.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
+              if (list.length === 0) return null;
+              return (
+                <div key={th.id}>
+                  <div className="mb-1.5 text-xs font-bold text-ink-3">{th.name}</div>
+                  <div className="grid grid-cols-5 gap-2">
+                    {list.map((it) => (
+                      <button key={it.id} type="button" aria-pressed={itemId === it.id} onClick={() => setItemId(it.id)} className={`flex flex-col items-center gap-1 rounded-2xl p-2 ${itemId === it.id ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
+                        <PixelAvatar look={previewLook(it, DEFAULT_LOOK)} size={48} />
+                        <span className="text-[11px] font-semibold leading-tight">{it.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -504,7 +516,21 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>화면 가리기 B</button>
-          <button type="button" onClick={() => { if (confirm('지금 퀴즈를 끝내고 결과로 갈까요?')) control('end'); }} className="h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold">종료</button>
+          <button
+            type="button"
+            onClick={() => {
+              // Hold the quiz while the dialog is open, so the count it shows is what gets saved.
+              const wasPaused = !!live.paused;
+              if (!wasPaused) control('pause');
+              const short = live.round === 'main' && live.mainDone < Math.ceil(live.mainPlanned / 2);
+              const message = `지금까지 푼 ${live.mainDone}문제로 결과를 저장하고 끝낼까요?${short ? `\n절반(${Math.ceil(live.mainPlanned / 2)}문제)이 안 돼서 오늘은 보상 판정이 없어요.` : ''}`;
+              if (confirm(message)) control('end');
+              else if (!wasPaused) control('resume');
+            }}
+            className="h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold"
+          >
+            종료
+          </button>
         </div>
       </div>
 
@@ -538,7 +564,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           )}
           <div className="flex flex-wrap gap-2">
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.autoAdvance} onChange={(e) => { control('auto'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />자동 진행</label>
-            <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />번호표</label>
+            <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
           </div>
         </div>
 

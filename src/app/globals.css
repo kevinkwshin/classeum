@@ -93,6 +93,8 @@ body {
 @keyframes clsCount { 0% { opacity: 0; transform: scale(2.4); } 25% { opacity: 1; transform: scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: scale(0.8); } }
 @keyframes clsGrow { 0% { transform: scaleX(0); } 100% { transform: scaleX(1); } }
 
+/* Electric and fire effects: quick uneven flicker. */
+@keyframes clsZap { 0%, 100% { opacity: 1; } 18% { opacity: 0.15; } 30% { opacity: 1; } 55% { opacity: 0; } 62% { opacity: 1; } 80% { opacity: 0.4; } }
 @keyframes clsBlink { 0%, 93%, 100% { opacity: 0; } 95%, 98% { opacity: 1; } }
 @keyframes clsCheer {
   0% { transform: translateY(0) scale(1, 1); }
@@ -174,6 +176,7 @@ body {
   .cls-fog-base { transition: opacity 0.7s ease 0.15s; }
   .cls-bar { transition: width 0.35s ease; }
   .cls-blink { animation: clsBlink 5s linear infinite; }
+  .cls-zap { animation: clsZap 0.9s steps(1, end) infinite; }
   .cls-cheer { animation: clsCheer 0.9s ease-out both; }
   .cls-dance { animation: clsDance 0.45s ease-in-out infinite alternate both; }
   .cls-heart { animation: clsHeart 1.4s ease-out both; }

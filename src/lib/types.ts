@@ -65,25 +65,33 @@ export interface Question {
   exampleMeaning?: string;
 }
 
+export type ItemTheme = 'rome' | 'school' | 'idol' | 'fantasy' | 'modern' | 'cute';
+
 export interface ItemDef {
   id: string;
   name: string;
   slot: AvatarSlot;
   value: string;
+  theme: ItemTheme;
 }
 
-export type AvatarSlot = 'helmet' | 'cape' | 'shield' | 'armor' | 'tunic' | 'effect';
+export type AvatarSlot = 'helmet' | 'face' | 'tunic' | 'armor' | 'shoes' | 'hand' | 'shield' | 'cape' | 'effect';
 
 export interface AvatarLook {
   skin: 'light' | 'medium' | 'tan';
   hair: 'brown' | 'black' | 'blond';
-  hairStyle: 'short' | 'long' | 'ponytail';
-  tunic: 'white' | 'sky' | 'olive';
-  helmet: 'none' | 'galea' | 'laurel';
-  armor: 'none' | 'lorica';
-  cape: 'none' | 'red' | 'blue';
-  shield: 'none' | 'round';
-  effect: 'none' | 'sparkle' | 'dust' | 'gold';
+  /** Free to choose; not an item. */
+  hairStyle: 'short' | 'long' | 'ponytail' | 'pigtails' | 'curly' | 'bob';
+  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit';
+  helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones';
+  face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses';
+  armor: 'none' | 'lorica' | 'gold';
+  /** Worn on the back: capes, wings or a bag. */
+  cape: 'none' | 'red' | 'blue' | 'star' | 'dragon' | 'fairy' | 'backpack';
+  shield: 'none' | 'round' | 'book' | 'star';
+  shoes: 'none' | 'sandal' | 'boots' | 'sneakers' | 'winged' | 'skates';
+  hand: 'none' | 'sword' | 'spear' | 'wand' | 'pencil' | 'flag' | 'mic' | 'lightstick' | 'phone' | 'staff' | 'icecream';
+  effect: 'none' | 'sparkle' | 'dust' | 'gold' | 'hearts' | 'notes' | 'electric' | 'fire';
 }
 
 export interface RewardSetting {
@@ -158,6 +166,8 @@ export interface StudentSummary {
   judged: boolean;
   reward: { itemId: string; reason: 'challenge' | 'growth'; alreadyOwned: boolean } | null;
   stampAdded: boolean;
+  /** The teacher ended the quiz before half the words; answers count, rewards weren't judged. */
+  shortQuiz?: boolean;
   unlocked: string[];
   wrong: WrongNote[];
   practice: Question[];

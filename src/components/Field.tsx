@@ -30,34 +30,45 @@ function zoneOf(x: number, y: number, n: number): number {
 }
 
 /**
- * Lines each zone's avatars up in a tidy block instead of where they stopped, so the
- * reveal doesn't single out exact spots. Wrong zones with one or two people show only
- * the number, and students left on the start line aren't drawn at all.
+ * Lines each zone's avatars up in a tidy block (exact spots would pile up where everyone
+ * tapped the zone's centre). With `showAll` (name tags on) everyone is drawn, including
+ * students left on the start line (zone -1, drawn in the start box). Without it, wrong
+ * zones with one or two people show only the number and the start line stays empty, so
+ * nobody stands out alone.
  */
-function formation(avatars: AvatarOnField[], n: number, correct: number | undefined) {
+function formation(avatars: AvatarOnField[], n: number, correct: number | undefined, showAll: boolean, reserveFooter: boolean) {
   const groups = new Map<number, AvatarOnField[]>();
   for (const a of avatars) {
     const z = zoneOf(a.point.x, a.point.y, n);
-    if (z < 0) continue;
+    if (z < 0 && !showAll) continue;
     groups.set(z, [...(groups.get(z) ?? []), a]);
   }
-  const placed: { a: AvatarOnField; x: number; y: number; zone: number; rank: number }[] = [];
+  const placed: { a: AvatarOnField; x: number; y: number; zone: number; rank: number; row: number }[] = [];
   const aspect = 2.1;
   for (const [z, list] of groups) {
-    if (correct !== undefined && z !== correct && list.length <= 2) continue;
-    const left = n === 2 ? z === 0 : z % 2 === 0;
-    const top = n === 2 ? null : z < 2;
-    const x0 = left ? 0.05 : 0.6;
-    const w = 0.35;
-    const y0 = top === null ? 0.15 : top ? 0.15 : 0.55;
-    const h = top === null ? 0.73 : 0.3;
+    if (!showAll && correct !== undefined && z !== correct && list.length <= 2) continue;
+    let x0: number, y0: number, w: number, h: number;
     const sorted = [...list].sort((p, q) => p.studentId.localeCompare(q.studentId));
-    const cols = Math.max(1, Math.min(sorted.length, Math.ceil(Math.sqrt((sorted.length * w * aspect) / h))));
+    let cols: number;
+    if (z < 0) {
+      // A band across the middle (wider than the start box) in at most two rows, so names stay readable.
+      [x0, y0, w, h] = [0.36, 0.38, 0.28, 0.2];
+      cols = Math.max(1, Math.ceil(sorted.length / 2));
+    } else {
+      const left = n === 2 ? z === 0 : z % 2 === 0;
+      const top = n === 2 ? null : z < 2;
+      x0 = left ? 0.05 : 0.6;
+      w = 0.35;
+      y0 = top === null ? 0.15 : top ? 0.15 : 0.55;
+      // Leave the bottom centre free for the 많이 고른 오답 card.
+      h = top === null ? (reserveFooter ? 0.62 : 0.73) : top ? 0.3 : reserveFooter ? 0.24 : 0.3;
+      cols = Math.max(1, Math.min(sorted.length, Math.ceil(Math.sqrt((sorted.length * w * aspect) / h))));
+    }
     const rows = Math.ceil(sorted.length / cols);
     sorted.forEach((a, i) => {
       const c = i % cols;
       const r = Math.floor(i / cols);
-      placed.push({ a, x: x0 + ((c + 0.5) * w) / cols, y: y0 + ((r + 0.5) * h) / rows + 0.04, zone: z, rank: i });
+      placed.push({ a, x: x0 + ((c + 0.5) * w) / cols, y: y0 + ((r + 0.5) * h) / rows + 0.04, zone: z, rank: i, row: r });
     });
   }
   return placed;
@@ -75,6 +86,7 @@ export function Field({
   avatars,
   nameLabels,
   center,
+  footer,
   compact = false,
   seed = '',
 }: {
@@ -84,6 +96,8 @@ export function Field({
   avatars?: AvatarOnField[];
   nameLabels?: boolean;
   center?: React.ReactNode;
+  /** Shown at the bottom centre, clear of the start box where sleepers stand at the reveal. */
+  footer?: React.ReactNode;
   compact?: boolean;
   /** Changes per question, so the funny one-liners land on different students each time. */
   seed?: string;
@@ -165,10 +179,11 @@ export function Field({
       />
 
       {avatars &&
-        formation(avatars, options.length, reveal?.correctIndex).map(({ a, x, y, zone, rank }, i) => {
+        formation(avatars, options.length, reveal?.correctIndex, !!nameLabels && !compact, !!footer).map(({ a, x, y, zone, rank, row }, i) => {
           const happy = !!reveal && zone === reveal.correctIndex;
-          // Two students per zone get a speech bubble; the rest just react.
-          const talk = !compact && (hashString(a.studentId + seed) % 7 === 0 || rank === hashString(seed + zone) % 6);
+          const kind = happy ? 'happy' : zone < 0 ? 'sleep' : 'pop';
+          // A few students per zone get a speech bubble; with name tags only the top row, so no bubble hides a name.
+          const talk = !compact && (!nameLabels || row === 0) && (hashString(a.studentId + seed) % 7 === 0 || rank === hashString(seed + zone) % 6);
           return (
             <div
               key={a.studentId}
@@ -180,16 +195,16 @@ export function Field({
                   <PixelAvatar look={a.look} size={avatarSize} />
                 ) : (
                   <Reaction
-                    kind={happy ? 'happy' : 'pop'}
+                    kind={kind}
                     look={a.look}
                     size={avatarSize}
                     delay={happy ? 750 + (rank % 8) * 70 : 750 + Math.min(rank, 10) * 140}
                     bang={rank % 2 === 0}
-                    bubble={talk ? reactionLine(happy ? 'happy' : 'pop', a.studentId + seed) : undefined}
+                    bubble={talk && kind !== 'sleep' ? reactionLine(kind, a.studentId + seed) : undefined}
                   />
                 )}
                 {nameLabels && !compact && (
-                  <div className="mt-0.5 whitespace-nowrap rounded-md bg-white/90 px-1.5 text-[13px] font-bold">{a.number}</div>
+                  <div className="mt-0.5 max-w-[5.5em] truncate whitespace-nowrap rounded-md bg-white/90 px-1.5 text-[13px] font-bold leading-snug">{a.name}</div>
                 )}
               </div>
             </div>
@@ -224,6 +239,7 @@ export function Field({
       </div>
 
       {center && <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" style={{ zIndex: 4 }}>{center}</div>}
+      {footer && <div className="absolute bottom-4 left-1/2 -translate-x-1/2" style={{ zIndex: 4 }}>{footer}</div>}
     </div>
   );
 }

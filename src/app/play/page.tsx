@@ -6,8 +6,8 @@ import { CountUp } from '@/components/CountUp';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
-import { ITEMS, itemById, previewLook } from '@/lib/items';
-import type { AvatarLook, FieldPoint, Question } from '@/lib/types';
+import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
+import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
 
 const STEP = 0.07;
 // Must match START_HALF_W / START_HALF_H in src/server/hub.ts.
@@ -292,7 +292,8 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
 
 function CharacterPick({ send, name }: { send: Send; name: string }) {
   const [look, setLook] = useState<AvatarLook>({ ...DEFAULT_LOOK });
-  const styles: AvatarLook['hairStyle'][] = ['short', 'long', 'ponytail'];
+  const styles: AvatarLook['hairStyle'][] = ['short', 'long', 'ponytail', 'pigtails', 'curly', 'bob'];
+  const styleNames: Record<AvatarLook['hairStyle'], string> = { short: '짧은 머리', long: '긴 머리', ponytail: '묶은 머리', pigtails: '양갈래', curly: '뽀글 머리', bob: '단발' };
   const skins: AvatarLook['skin'][] = ['light', 'medium', 'tan'];
   const hairs: AvatarLook['hair'][] = ['black', 'brown', 'blond'];
   const swatch = { light: '#F1C9A5', medium: '#E0AC82', tan: '#B97E56', black: '#1F1B18', brown: '#5A3B26', blond: '#C9A15A' };
@@ -305,8 +306,8 @@ function CharacterPick({ send, name }: { send: Send; name: string }) {
       <div className="mx-auto flex h-52 w-44 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><PixelAvatar look={look} size={140} blink={2} /></div>
       <div className="grid grid-cols-3 gap-2">
         {styles.map((st) => (
-          <button key={st} type="button" aria-pressed={look.hairStyle === st} onClick={() => setLook({ ...look, hairStyle: st })} className={`flex h-24 items-end justify-center rounded-2xl pb-2 ${look.hairStyle === st ? 'bg-[#24272F] ring-2 ring-accent' : 'bg-[#24272F]'}`}>
-            <PixelAvatar look={{ ...look, hairStyle: st }} size={64} title={st === 'short' ? '짧은 머리' : st === 'long' ? '긴 머리' : '묶은 머리'} />
+          <button key={st} type="button" aria-pressed={look.hairStyle === st} onClick={() => setLook({ ...look, hairStyle: st })} className={`flex h-20 items-end justify-center rounded-2xl pb-1.5 ${look.hairStyle === st ? 'bg-[#24272F] ring-2 ring-accent' : 'bg-[#24272F]'}`}>
+            <PixelAvatar look={{ ...look, hairStyle: st }} size={64} title={styleNames[st]} />
           </button>
         ))}
       </div>
@@ -381,7 +382,9 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
   const me = view.me!;
   const look = normalizeLook(me.look ?? undefined);
   const s = view.session;
-  const stamps = me.stamps % 10;
+  // A gift every 5 footprints: show this round of 5 and what comes next.
+  const stamps = me.stamps % STAMPS_PER_UNLOCK;
+  const nextGift = itemById(ATTENDANCE_UNLOCKS[Math.floor(me.stamps / STAMPS_PER_UNLOCK)] ?? '');
   return (
     <div className="flex flex-1 flex-col gap-4 bg-bg px-5 pb-6 pt-10">
       <div className="flex items-center justify-between">
@@ -412,14 +415,20 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
           <span>출석 발자국</span>
           <span className="tabular text-ink-3">총 {me.stamps}개</span>
         </div>
-        <div className="grid grid-cols-5 gap-2">
-          {Array.from({ length: 10 }, (_, i) => (
+        <div className="grid grid-cols-6 items-center gap-2">
+          {Array.from({ length: STAMPS_PER_UNLOCK }, (_, i) => (
             <div key={i} className={`flex aspect-square items-center justify-center gap-0.5 rounded-xl ${i < stamps ? 'bg-[#FFF6DE]' : 'border-2 border-dashed border-[#D5D8DF]'}`}>
               <span className="mt-1.5 h-3 w-2 rounded" style={{ background: i < stamps ? '#B86F50' : '#E3E5EA' }} />
               <span className="mb-1.5 h-3 w-2 rounded" style={{ background: i < stamps ? '#B86F50' : '#E3E5EA' }} />
             </div>
           ))}
+          {nextGift && (
+            <div className="flex aspect-square items-end justify-center rounded-xl bg-gold/30" title={`다음 선물: ${nextGift.name}`}>
+              <PixelAvatar look={previewLook(nextGift, look)} size={40} />
+            </div>
+          )}
         </div>
+        {nextGift && <div className="mt-2 text-right text-xs text-ink-3">발자국 {STAMPS_PER_UNLOCK - stamps}개 더 모으면 {nextGift.name}</div>}
       </div>
       {onNotes && view.lastNotes && (
         <button type="button" onClick={onNotes} className="flex items-center justify-between rounded-3xl bg-white p-4 text-left">
@@ -890,7 +899,7 @@ function Summary({ view, onLocker, onNotes }: { view: StudentView; onLocker: () 
         <div className="cls-unbox flex items-center gap-4 rounded-3xl bg-gold p-4 text-ink" style={{ animationDelay: '1.1s' }}>
           <div className="flex h-28 w-24 items-end justify-center rounded-t-full rounded-b-xl bg-[#FFE29A] pb-2">
             <div className="cls-float">
-              <PixelAvatar look={{ ...look, [item.slot]: item.value, effect: 'sparkle' } as AvatarLook} size={80} />
+              <PixelAvatar look={{ ...look, effect: 'sparkle', [item.slot]: item.value } as AvatarLook} size={80} />
             </div>
           </div>
           <div>
@@ -900,7 +909,7 @@ function Summary({ view, onLocker, onNotes }: { view: StudentView; onLocker: () 
           </div>
         </div>
       ) : (
-        <div className="cls-slide-up rounded-3xl bg-[#24272F] p-4 text-sm text-[#D5D8DF]" style={{ animationDelay: '0.9s' }}>{sum.judged ? '이번엔 보상을 못 받았어요. 다음에 다시 도전!' : '오늘은 참여한 문제가 적어서 보상 판정이 없어요.'}</div>
+        <div className="cls-slide-up rounded-3xl bg-[#24272F] p-4 text-sm text-[#D5D8DF]" style={{ animationDelay: '0.9s' }}>{sum.judged ? '이번엔 보상을 못 받았어요. 다음에 다시 도전!' : sum.shortQuiz ? '퀴즈가 일찍 끝나서 오늘은 보상 판정이 없어요.' : '오늘은 참여한 문제가 적어서 보상 판정이 없어요.'}</div>
       )}
       {sum.unlocked.length > 0 && <div className="rounded-2xl bg-[#24272F] p-4 text-sm font-semibold">발자국 보상: {sum.unlocked.map((id) => itemById(id)?.name).join(', ')}</div>}
       {sum.wrong.length > 0 && (
@@ -989,49 +998,56 @@ function Practice({ questions, send, onDone }: { questions: Question[]; send: Se
 function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; send: Send; onClose: () => void }) {
   const look = normalizeLook(me.look ?? undefined);
   const owned = useMemo(() => new Set(me.inventory), [me.inventory]);
-  const slots: { key: keyof AvatarLook; label: string }[] = [
-    { key: 'helmet', label: '투구' },
-    { key: 'cape', label: '망토' },
-    { key: 'shield', label: '방패' },
-    { key: 'armor', label: '갑옷' },
-    { key: 'tunic', label: '옷' },
-    { key: 'effect', label: '이펙트' },
-  ];
+  const [slot, setSlot] = useState<AvatarSlot>('helmet');
+  const [theme, setTheme] = useState<ItemTheme | null>(null);
+  const items = ITEMS.filter((i) => i.slot === slot && (!theme || i.theme === theme));
+  const ownedCount = ITEMS.filter((i) => owned.has(i.id)).length;
   return (
     <div className="flex flex-1 flex-col bg-bg">
-      <div className="flex flex-col gap-4 rounded-b-[32px] bg-ink px-5 pb-6 pt-10 text-white">
+      <div className="flex flex-col gap-4 rounded-b-[32px] bg-ink px-5 pb-5 pt-10 text-white">
         <div className="flex items-center justify-between">
-          <div className="text-2xl font-bold">보관함</div>
+          <div className="text-2xl font-bold">
+            보관함 <span className="tabular text-base font-semibold text-[#A3A8B4]">{ownedCount}/{ITEMS.length}</span>
+          </div>
           <button type="button" onClick={onClose} className="rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">닫기</button>
         </div>
-        <div className="mx-auto flex h-52 w-44 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><PixelAvatar look={look} size={140} blink={2} /></div>
+        <div className="mx-auto flex h-48 w-40 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><PixelAvatar look={look} size={128} blink={2} /></div>
       </div>
-      <div className="flex flex-col gap-4 overflow-y-auto px-4 py-5">
-        {slots.map((slot) => {
-          const items = ITEMS.filter((i) => i.slot === slot.key);
+      {/* Which part to change, then optionally narrow to one theme. */}
+      <div className="flex gap-1.5 overflow-x-auto px-4 pt-4">
+        {SLOTS.map((sl) => (
+          <button key={sl.id} type="button" aria-pressed={slot === sl.id} onClick={() => setSlot(sl.id)} className={`h-10 shrink-0 rounded-full px-4 text-sm font-bold ${slot === sl.id ? 'bg-ink text-white' : 'bg-white text-ink-2'}`}>
+            {sl.name}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-1.5 overflow-x-auto px-4 pt-2">
+        {[{ id: null, name: '모든 테마' } as { id: ItemTheme | null; name: string }, ...THEMES].map((th) => (
+          <button key={th.id ?? 'all'} type="button" aria-pressed={theme === th.id} onClick={() => setTheme(th.id)} className={`h-8 shrink-0 rounded-full px-3 text-xs font-bold ${theme === th.id ? 'bg-accent text-ink' : 'bg-white text-ink-3'}`}>
+            {th.name}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-2 overflow-y-auto px-4 py-4">
+        <button type="button" onClick={() => send({ type: 'look', look: { [slot]: DEFAULT_LOOK[slot] } })} className={`flex h-28 items-center justify-center rounded-2xl text-sm font-bold ${look[slot] === DEFAULT_LOOK[slot] ? 'bg-white ring-2 ring-accent' : 'bg-white'}`}>
+          {slot === 'tunic' ? '기본 옷' : '없음'}
+        </button>
+        {items.map((item) => {
+          const has = owned.has(item.id);
+          const on = look[slot] === item.value;
+          const stampsNeeded = attendanceStamps(item.id);
           return (
-            <div key={slot.key}>
-              <div className="mb-2 text-sm font-bold text-ink-2">{slot.label}</div>
-              <div className="grid grid-cols-3 gap-2">
-                <button type="button" onClick={() => send({ type: 'look', look: { [slot.key]: DEFAULT_LOOK[slot.key] } })} className={`flex h-24 items-center justify-center rounded-2xl text-sm font-bold ${look[slot.key] === DEFAULT_LOOK[slot.key] ? 'bg-white ring-2 ring-accent' : 'bg-white'}`}>기본</button>
-                {items.map((item) => {
-                  const has = owned.has(item.id);
-                  const on = look[slot.key] === item.value;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      disabled={!has}
-                      onClick={() => send({ type: 'look', look: { [slot.key]: item.value } })}
-                      className={`flex h-24 flex-col items-center justify-center gap-1 rounded-2xl ${on ? 'bg-white ring-2 ring-accent' : has ? 'bg-white' : 'border-2 border-dashed border-[#D5D8DF] bg-[#ECEEF1]'}`}
-                    >
-                      <div className={has ? '' : 'opacity-30'}><PixelAvatar look={previewLook(item, look)} size={48} /></div>
-                      <span className="text-xs font-bold">{item.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <button
+              key={item.id}
+              type="button"
+              disabled={!has}
+              onClick={() => send({ type: 'look', look: { [slot]: item.value } })}
+              className={`flex h-28 flex-col items-center justify-center gap-0.5 rounded-2xl ${on ? 'bg-white ring-2 ring-accent' : has ? 'bg-white' : 'border-2 border-dashed border-[#D5D8DF] bg-[#ECEEF1]'}`}
+            >
+              <div className={has ? '' : 'opacity-30'}><PixelAvatar look={previewLook(item, look)} size={52} /></div>
+              <span className="text-xs font-bold">{item.name}</span>
+              {!has && <span className="text-[10px] font-semibold text-ink-3">{stampsNeeded ? `출석 ${stampsNeeded}회` : '퀴즈 보상'}</span>}
+            </button>
           );
         })}
       </div>
