@@ -10,14 +10,14 @@ export const THEMES: { id: ItemTheme; name: string }[] = [
   { id: 'cute', name: '귀여움' },
 ];
 
+// Named by where on the body it goes: hats, ears and headphones are all 머리; shields and the book are 팔.
 export const SLOTS: { id: AvatarSlot; name: string }[] = [
-  { id: 'helmet', name: '모자' },
+  { id: 'helmet', name: '머리' },
   { id: 'face', name: '얼굴' },
-  { id: 'tunic', name: '옷' },
-  { id: 'armor', name: '갑옷' },
-  { id: 'shoes', name: '신발' },
+  { id: 'tunic', name: '몸' },
+  { id: 'shoes', name: '발' },
   { id: 'hand', name: '손' },
-  { id: 'shield', name: '방패' },
+  { id: 'shield', name: '팔' },
   { id: 'cape', name: '등' },
   { id: 'effect', name: '효과' },
 ];
@@ -29,14 +29,14 @@ export const ITEMS: ItemDef[] = [
   { id: 'cape-red', name: '붉은 망토', slot: 'cape', value: 'red', theme: 'rome' },
   { id: 'cape-blue', name: '푸른 망토', slot: 'cape', value: 'blue', theme: 'rome' },
   { id: 'shield', name: '둥근 방패', slot: 'shield', value: 'round', theme: 'rome' },
-  { id: 'lorica', name: '강철 갑옷', slot: 'armor', value: 'lorica', theme: 'rome' },
+  { id: 'lorica', name: '강철 갑옷', slot: 'tunic', value: 'lorica', theme: 'rome' },
   { id: 'tunic-sky', name: '하늘 튜닉', slot: 'tunic', value: 'sky', theme: 'cute' },
   { id: 'tunic-olive', name: '올리브 튜닉', slot: 'tunic', value: 'olive', theme: 'cute' },
   { id: 'fx-sparkle', name: '반짝임', slot: 'effect', value: 'sparkle', theme: 'idol' },
   { id: 'fx-dust', name: '착지 먼지', slot: 'effect', value: 'dust', theme: 'cute' },
   { id: 'fx-gold', name: '황금 테두리', slot: 'effect', value: 'gold', theme: 'rome' },
 
-  { id: 'armor-gold', name: '금빛 갑옷', slot: 'armor', value: 'gold', theme: 'rome' },
+  { id: 'armor-gold', name: '금빛 갑옷', slot: 'tunic', value: 'gold', theme: 'rome' },
   { id: 'shoes-sandal', name: '샌들', slot: 'shoes', value: 'sandal', theme: 'rome' },
   { id: 'hand-sword', name: '목검', slot: 'hand', value: 'sword', theme: 'rome' },
   { id: 'hand-spear', name: '창', slot: 'hand', value: 'spear', theme: 'rome' },
@@ -127,7 +127,6 @@ export function previewLook(item: ItemDef, base: AvatarLook): AvatarLook {
     ...base,
     helmet: DEFAULT_LOOK.helmet,
     face: DEFAULT_LOOK.face,
-    armor: DEFAULT_LOOK.armor,
     cape: DEFAULT_LOOK.cape,
     shield: DEFAULT_LOOK.shield,
     shoes: DEFAULT_LOOK.shoes,

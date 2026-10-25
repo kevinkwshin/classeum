@@ -1,3 +1,5 @@
+'use client';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { AvatarOnField, RevealInfo } from '@/lib/types';
 import { CountUp } from './CountUp';
 import { PixelAvatar } from './PixelAvatar';
@@ -29,21 +31,66 @@ function zoneOf(x: number, y: number, n: number): number {
   return z < n ? z : -1;
 }
 
+type Tag = { h: number; w: number; small: boolean };
+// Name tag under an avatar: its height (with the 2px gap) and the width a three-syllable name needs.
+const TAG: Tag = { h: 20, w: 52, small: false };
+const TAG_SM: Tag = { h: 16, w: 42, small: true };
+// Zone labels sit 28px in from the edge and are 56px tall.
+const LABEL_EDGE = 84;
+const LABEL_STRIP = 92;
+// Room the 많이 고른 오답 card takes at the bottom centre.
+const FOOTER_STRIP = 120;
+
+/** The field's size in px and where the footer card sits in it. */
+type Box = { w: number; h: number; foot: { left: number; right: number; top: number } | null };
+
+type Slot = { a: AvatarOnField; x: number; y: number; zone: number; rank: number; row: number; size: number; tag: Tag | null; tagW?: number; tight: boolean };
+
+/** Biggest avatars (up to `base`) for `count` slots in a w×h px box: tries every column count, then smaller tags, then none. */
+function pack(count: number, w: number, h: number, base: number, names: boolean, onlyCols?: number) {
+  const fit = (tag: Tag | null) => {
+    let best = { cols: onlyCols ?? 1, size: -Infinity, tag };
+    for (let cols = onlyCols ?? 1; cols <= (onlyCols ?? count); cols++) {
+      if (tag && w / cols < tag.w) break;
+      const size = Math.min(base, w / cols - 4, h / Math.ceil(count / cols) - (tag?.h ?? 0));
+      if (size > best.size) best = { cols, size, tag };
+    }
+    return best;
+  };
+  let best = fit(names ? TAG : null);
+  if (names) {
+    const small = fit(TAG_SM);
+    if (small.size >= best.size + 2) best = small;
+    // Too tight even for small tags: drop the names rather than shrink everyone to dots.
+    if (best.size < 18) best = fit(null);
+  }
+  return { ...best, size: Math.max(16, Math.floor(best.size)) };
+}
+
 /**
  * Lines each zone's avatars up in a tidy block (exact spots would pile up where everyone
  * tapped the zone's centre). With `showAll` (name tags on) everyone is drawn, including
  * students left on the start line (zone -1, drawn in the start box). Without it, wrong
  * zones with one or two people show only the number and the start line stays empty, so
- * nobody stands out alone.
+ * nobody stands out alone. Given the field's px `box`, a block that would bury name tags
+ * under the next row or run into the zone label is re-packed to fit (`tight`).
  */
-function formation(avatars: AvatarOnField[], n: number, correct: number | undefined, showAll: boolean, reserveFooter: boolean) {
+function formation(
+  avatars: AvatarOnField[],
+  n: number,
+  correct: number | undefined,
+  showAll: boolean,
+  reserveFooter: boolean,
+  box: Box | null = null,
+  base = 56,
+) {
   const groups = new Map<number, AvatarOnField[]>();
   for (const a of avatars) {
     const z = zoneOf(a.point.x, a.point.y, n);
     if (z < 0 && !showAll) continue;
     groups.set(z, [...(groups.get(z) ?? []), a]);
   }
-  const placed: { a: AvatarOnField; x: number; y: number; zone: number; rank: number; row: number }[] = [];
+  const placed: Slot[] = [];
   const aspect = 2.1;
   for (const [z, list] of groups) {
     if (!showAll && correct !== undefined && z !== correct && list.length <= 2) continue;
@@ -65,10 +112,68 @@ function formation(avatars: AvatarOnField[], n: number, correct: number | undefi
       cols = Math.max(1, Math.min(sorted.length, Math.ceil(Math.sqrt((sorted.length * w * aspect) / h))));
     }
     const rows = Math.ceil(sorted.length / cols);
+    const tag = showAll ? TAG : null;
+    const labelTop = z >= 0 && (n === 2 || z < 2);
+    let tight = false;
+    if (box) {
+      // Avatars are anchored 70% down their slot (avatar plus tag).
+      const S = base + (tag?.h ?? 0);
+      const firstY = (y0 + h / rows / 2 + 0.04) * box.h;
+      const lastY = (y0 + h - h / rows / 2 + 0.04) * box.h;
+      // Without tags a little overlap between rows is fine.
+      tight =
+        (h * box.h) / rows < S - (tag ? 0 : 6) ||
+        (!!tag && (w * box.w) / cols < tag.w) ||
+        (z >= 0 && (labelTop ? firstY - 0.7 * S < LABEL_EDGE : lastY + 0.3 * S > box.h - LABEL_EDGE));
+    }
+    if (!box || !tight) {
+      sorted.forEach((a, i) => {
+        const c = i % cols;
+        const r = Math.floor(i / cols);
+        placed.push({ a, x: x0 + ((c + 0.5) * w) / cols, y: y0 + ((r + 0.5) * h) / rows + 0.04, zone: z, rank: i, row: r, size: base, tag, tight: false });
+      });
+      continue;
+    }
+    // Re-pack into the part of the zone clear of its label strip, a little further out from
+    // the start box so sleepers' names don't touch the block's inner column.
+    const { w: W, h: H } = box;
+    let top = y0 * H;
+    let bottom = (y0 + h) * H;
+    let left = x0 * W;
+    let width = w * W;
+    if (z >= 0) {
+      top = labelTop ? LABEL_STRIP : H / 2 + 6;
+      bottom = labelTop && n !== 2 ? H / 2 - 6 : H - (labelTop ? 16 : LABEL_STRIP);
+      left = (x0 < 0.5 ? x0 - 0.02 : x0 + 0.02) * W;
+    }
+    let fit = pack(sorted.length, width, bottom - top, base, !!tag, z < 0 ? cols : undefined);
+    // Keep clear of the 많이 고른 오답 card: stop above it or beside it, whichever packs better.
+    if (z >= 0 && reserveFooter && bottom > H / 2) {
+      const f = box.foot ?? { left: 0.29 * W, right: 0.71 * W, top: H - FOOTER_STRIP };
+      if (left < f.right + 8 && left + width > f.left - 8 && bottom > f.top - 8) {
+        const above = pack(sorted.length, width, f.top - 8 - top, base, !!tag);
+        const sideW = x0 < 0.5 ? f.left - 8 - left : left + width - (f.right + 8);
+        const beside = sideW > 0 ? pack(sorted.length, sideW, bottom - top, base, !!tag) : null;
+        // Keeping the names counts for more than a few px of avatar.
+        if (beside && (!!beside.tag !== !!above.tag ? !!beside.tag : beside.size > above.size)) {
+          fit = beside;
+          if (x0 >= 0.5) left = f.right + 8;
+          width = sideW;
+        } else {
+          fit = above;
+          bottom = f.top - 8;
+        }
+      }
+    }
+    const colPx = width / fit.cols;
+    const rowPx = (bottom - top) / Math.ceil(sorted.length / fit.cols);
+    const S = fit.size + (fit.tag?.h ?? 0);
     sorted.forEach((a, i) => {
-      const c = i % cols;
-      const r = Math.floor(i / cols);
-      placed.push({ a, x: x0 + ((c + 0.5) * w) / cols, y: y0 + ((r + 0.5) * h) / rows + 0.04, zone: z, rank: i, row: r });
+      const c = i % fit.cols;
+      const r = Math.floor(i / fit.cols);
+      const x = (left + (c + 0.5) * colPx) / W;
+      const y = (top + (r + 0.5) * rowPx + 0.2 * S) / H;
+      placed.push({ a, x, y, zone: z, rank: i, row: r, size: fit.size, tag: fit.tag, tagW: colPx - 2, tight: true });
     });
   }
   return placed;
@@ -107,8 +212,30 @@ export function Field({
   const labelSize = compact ? 'text-sm' : 'text-[34px]';
   const badgeSize = compact ? 'h-6 w-6 text-xs' : 'h-14 w-14 text-[26px]';
 
+  // The projector's real size decides how tightly a crowded zone can be packed.
+  const ref = useRef<HTMLDivElement>(null);
+  const footRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<Box | null>(null);
+  const hasFooter = !!footer;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (compact || !el) return;
+    const measure = () => {
+      const f = footRef.current;
+      // Offsets skip the card's centring and slide-in transforms.
+      const foot = f ? { left: f.offsetLeft - f.offsetWidth / 2, right: f.offsetLeft + f.offsetWidth / 2, top: f.offsetTop } : null;
+      const next = { w: el.clientWidth, h: el.clientHeight, foot };
+      setBox((b) => (b && JSON.stringify(b) === JSON.stringify(next) ? b : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (footRef.current) ro.observe(footRef.current);
+    return () => ro.disconnect();
+  }, [compact, hasFooter]);
+
   return (
-    <div className={`relative h-full w-full overflow-hidden bg-white ${compact ? 'rounded-xl' : 'rounded-[36px]'}`}>
+    <div ref={ref} className={`relative h-full w-full overflow-hidden bg-white ${compact ? 'rounded-xl' : 'rounded-[36px]'}`}>
       <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
         {cells.map((z) => {
           const label = options[z];
@@ -179,11 +306,12 @@ export function Field({
       />
 
       {avatars &&
-        formation(avatars, options.length, reveal?.correctIndex, !!nameLabels && !compact, !!footer).map(({ a, x, y, zone, rank, row }, i) => {
+        formation(avatars, options.length, reveal?.correctIndex, !!nameLabels && !compact, !!footer, compact ? null : box, avatarSize).map(({ a, x, y, zone, rank, row, size, tag, tagW, tight }, i) => {
           const happy = !!reveal && zone === reveal.correctIndex;
           const kind = happy ? 'happy' : zone < 0 ? 'sleep' : 'pop';
           // A few students per zone get a speech bubble; with name tags only the top row, so no bubble hides a name.
-          const talk = !compact && (!nameLabels || row === 0) && (hashString(a.studentId + seed) % 7 === 0 || rank === hashString(seed + zone) % 6);
+          // A tightly packed zone has no room above its top row either.
+          const talk = !compact && !tight && (!nameLabels || row === 0) && (hashString(a.studentId + seed) % 7 === 0 || rank === hashString(seed + zone) % 6);
           return (
             <div
               key={a.studentId}
@@ -192,19 +320,24 @@ export function Field({
             >
               <div className="flex flex-col items-center">
                 {compact || !reveal ? (
-                  <PixelAvatar look={a.look} size={avatarSize} />
+                  <PixelAvatar look={a.look} size={size} />
                 ) : (
                   <Reaction
                     kind={kind}
                     look={a.look}
-                    size={avatarSize}
+                    size={size}
                     delay={happy ? 750 + (rank % 8) * 70 : 750 + Math.min(rank, 10) * 140}
                     bang={rank % 2 === 0}
                     bubble={talk && kind !== 'sleep' ? reactionLine(kind, a.studentId + seed) : undefined}
                   />
                 )}
-                {nameLabels && !compact && (
-                  <div className="mt-0.5 max-w-[5.5em] truncate whitespace-nowrap rounded-md bg-white/90 px-1.5 text-[13px] font-bold leading-snug">{a.name}</div>
+                {tag && (
+                  <div
+                    className={`mt-0.5 truncate whitespace-nowrap rounded-md bg-white/90 font-bold ${tag.small ? 'px-1 text-[11px] leading-tight' : 'max-w-[5.5em] px-1.5 text-[13px] leading-snug'}`}
+                    style={tagW ? { maxWidth: `min(5.5em, ${tagW}px)` } : undefined}
+                  >
+                    {a.name}
+                  </div>
                 )}
               </div>
             </div>
@@ -239,7 +372,7 @@ export function Field({
       </div>
 
       {center && <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" style={{ zIndex: 4 }}>{center}</div>}
-      {footer && <div className="absolute bottom-4 left-1/2 -translate-x-1/2" style={{ zIndex: 4 }}>{footer}</div>}
+      {footer && <div ref={footRef} className="absolute bottom-4 left-1/2 -translate-x-1/2" style={{ zIndex: 4 }}>{footer}</div>}
     </div>
   );
 }

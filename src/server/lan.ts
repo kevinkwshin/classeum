@@ -1,16 +1,21 @@
 import { networkInterfaces } from 'node:os';
 import QRCode from 'qrcode';
 
-/** The laptop's Wi-Fi address, so phones on the same network can reach the dev server. */
+// Adapters phones can't reach: VirtualBox/VMware/Hyper-V/WSL/Docker networks, VPN tunnels, Bluetooth.
+const VIRTUAL = /vEthernet|VirtualBox|VMware|Hyper-V|WSL|Docker|Loopback|Bluetooth|utun|bridge|vmnet|tailscale|zerotier/i;
+
+/** The laptop's Wi-Fi address, so phones on the same network can reach the server (and the QR shows it). */
 export function lanAddress(): string {
-  const candidates: string[] = [];
-  for (const list of Object.values(networkInterfaces())) {
+  const candidates: { address: string; name: string }[] = [];
+  for (const [name, list] of Object.entries(networkInterfaces())) {
     for (const net of list ?? []) {
-      if (net.family === 'IPv4' && !net.internal) candidates.push(net.address);
+      if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254.')) candidates.push({ address: net.address, name });
     }
   }
-  const privateFirst = candidates.sort((a, b) => score(b) - score(a));
-  return privateFirst[0] ?? 'localhost';
+  // 192.168.56.x is VirtualBox's host-only network, which Windows laptops often have; used only if nothing else is there.
+  const virtual = (c: { address: string; name: string }) => Number(VIRTUAL.test(c.name) || c.address.startsWith('192.168.56.'));
+  const ranked = candidates.sort((a, b) => virtual(a) - virtual(b) || score(b.address) - score(a.address));
+  return ranked[0]?.address ?? 'localhost';
 }
 
 function score(ip: string): number {

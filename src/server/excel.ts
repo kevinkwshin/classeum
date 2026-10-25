@@ -1,7 +1,7 @@
 // Reads the Classeum Excel template (단어장 / 문항 / 명단 sheets) and validates it.
 import readExcelFile from 'read-excel-file/node';
 import type { Confusable, CustomQuestion, Pos, Word, WordStatus } from '@/lib/types';
-import { normalizeAnswer, wordKey } from '@/lib/text';
+import { MAX_TEXT_ANSWER, normalizeAnswer, wordKey } from '@/lib/text';
 import { clozeOf } from './generate';
 
 export interface ImportIssue {
@@ -306,6 +306,10 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
     } else {
       // Kept as typed ('Seoul', 'I am a student.') for display; grading normalizes both sides.
       answers = answerRaw.split('|').map((a) => a.trim().replace(/\s+/g, ' ')).filter((a) => normalizeAnswer(a));
+      if (answers.some((a) => a.length > MAX_TEXT_ANSWER)) {
+        issues.push({ level: 'error', sheet, row: r, column: '정답', message: `쓰기 정답은 ${MAX_TEXT_ANSWER}자까지예요. 폰에서 그보다 길게는 쓸 수 없어요.` });
+        return;
+      }
     }
     out.push({
       id,

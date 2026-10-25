@@ -75,17 +75,18 @@ export interface ItemDef {
   theme: ItemTheme;
 }
 
-export type AvatarSlot = 'helmet' | 'face' | 'tunic' | 'armor' | 'shoes' | 'hand' | 'shield' | 'cape' | 'effect';
+/** Item slots, shown as 머리·얼굴·몸·발·손·팔·등·효과 (see SLOTS in src/lib/items.ts). */
+export type AvatarSlot = 'helmet' | 'face' | 'tunic' | 'shoes' | 'hand' | 'shield' | 'cape' | 'effect';
 
 export interface AvatarLook {
   skin: 'light' | 'medium' | 'tan';
   hair: 'brown' | 'black' | 'blond';
   /** Free to choose; not an item. */
   hairStyle: 'short' | 'long' | 'ponytail' | 'pigtails' | 'curly' | 'bob';
-  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit';
+  /** What the body wears, armour included (it used to be a separate slot on top). */
+  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold';
   helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones';
   face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses';
-  armor: 'none' | 'lorica' | 'gold';
   /** Worn on the back: capes, wings or a bag. */
   cape: 'none' | 'red' | 'blue' | 'star' | 'dragon' | 'fairy' | 'backpack';
   shield: 'none' | 'round' | 'book' | 'star';

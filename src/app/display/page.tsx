@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
@@ -79,8 +79,9 @@ function RewardCard({ s }: { s: SessionPublic }) {
   if (!s.reward) return null;
   const item = itemById(s.reward.itemId);
   return (
-    <div className="flex items-center gap-10 rounded-[32px] bg-ink p-10 text-white">
-      <div className="flex h-[16vw] w-[14vw] shrink-0 items-end justify-center rounded-t-full rounded-b-3xl bg-gold pb-6">
+    // Spacing is capped by the screen height too, so the card leaves room for the class at 1280×720.
+    <div className="flex items-center gap-[min(2.5rem,3.7vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white">
+      <div className="flex h-[min(16vw,28.4vh)] w-[min(14vw,24.9vh)] shrink-0 items-end justify-center rounded-t-full rounded-b-3xl bg-gold pb-6">
         {item && (
           <div className="cls-float">
             <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={168} />
@@ -99,10 +100,38 @@ function RewardCard({ s }: { s: SessionPublic }) {
   );
 }
 
+/** Largest lobby avatar (up to 52px, 8px gaps) that fits everyone in the w×h area. */
+function lobbyAvatarSize(count: number, w: number, h: number) {
+  if (!count || !w || !h) return 52;
+  for (let size = 52; size > 20; size -= 2) {
+    const perRow = Math.max(1, Math.floor((w + 8) / (size + 8)));
+    if (Math.ceil(count / perRow) * (size + 8) - 8 <= h) return size;
+  }
+  return 20;
+}
+
 function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
   const avatars = view.lobby?.avatars ?? [];
+  const area = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = area.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      setBox((b) => (b.w === w && b.h === h ? b : { w, h }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const size = lobbyAvatarSize(avatars.length, box.w, box.h);
   return (
-    <div className="flex flex-1 gap-[3vw]">
+    // min-h-0: a lobby opened with the class already connected must not stretch past the screen before it is measured.
+    <div className="flex min-h-0 flex-1 gap-[3vw]">
       <div className="flex w-[34vw] shrink-0 flex-col items-center justify-center gap-6">
         <div className="flex aspect-[0.92] w-full items-end justify-center rounded-t-full rounded-b-[32px] bg-white pb-[3vw]">
           <div className="w-[62%]" dangerouslySetInnerHTML={{ __html: view.qr }} />
@@ -119,17 +148,20 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
           </div>
           <div key={avatars.length} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{avatars.length}</div>
         </div>
-        <div className="flex min-h-[18vh] flex-wrap content-start gap-2">
-          {avatars.map((a, i) => (
-            <div key={a.studentId} className="cls-drop-in">
-              <div className="cls-float" style={{ animationDelay: `-${(i * 0.37) % 2.4}s` }}>
-                {/* Now and then someone hops or spins while the class waits. */}
-                <div className="cls-antic origin-bottom" style={{ animationDuration: `${7 + (i % 6)}s`, animationDelay: `-${(i * 2.3) % 9}s` }}>
-                  <PixelAvatar look={a.look} size={52} blink={i} />
+        {/* Takes whatever height the header and card leave; avatars shrink to fit, and the top padding (over the gap) gives hops room. */}
+        <div ref={area} className="-mt-6 flex min-h-0 flex-1 flex-col justify-center overflow-y-clip pt-6">
+          <div className="flex min-h-[min(18vh,100%)] flex-wrap content-start gap-2">
+            {avatars.map((a, i) => (
+              <div key={a.studentId} className="cls-drop-in">
+                <div className="cls-float" style={{ animationDelay: `-${(i * 0.37) % 2.4}s` }}>
+                  {/* Now and then someone hops or spins while the class waits. */}
+                  <div className="cls-antic origin-bottom" style={{ animationDuration: `${7 + (i % 6)}s`, animationDelay: `-${(i * 2.3) % 9}s` }}>
+                    <PixelAvatar look={a.look} size={size} blink={i} />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
         <RewardCard s={s} />
       </div>
@@ -148,8 +180,9 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
   return (
     <div className="relative flex flex-1 flex-col gap-[1.6vw]">
       {countdown && <StartCountdown ms={ms} />}
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-6">
-        <div className="flex items-center gap-4">
+      {/* The side cells keep their width; a long prompt wraps instead. */}
+      <div className="grid grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)] items-center gap-6">
+        <div className="flex items-center gap-4 whitespace-nowrap">
           <div className="tabular text-3xl font-extrabold">{s.index + 1}<span className="text-[#A3A8B4]"> / {total}</span></div>
           <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">{s.round === 'retry' ? '다시 도전' : q.modeLabel}</div>
         </div>
@@ -162,7 +195,7 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
           </div>
           {reveal && q.mode !== 'CUSTOM_TEXT' && q.mode !== 'CUSTOM_OX' && <div className="cls-slide-up text-[3vw] font-bold text-good">{reveal.correctLabel}</div>}
         </div>
-        <div className="flex justify-end">
+        <div className="flex justify-end whitespace-nowrap">
           {reveal ? (
             <div className="cls-pop tabular rounded-full bg-good px-7 py-3 text-3xl font-extrabold text-white">
               정답 <CountUp value={Math.round(reveal.accuracy * 100)} delay={300} suffix="%" />

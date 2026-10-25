@@ -1,5 +1,8 @@
 // String helpers shared by the Excel importer, the generator and answer checking.
 
+/** Longest 단답형 answer a phone can send; the importer refuses accepted answers longer than this. */
+export const MAX_TEXT_ANSWER = 200;
+
 /** Lowercase, trim, single spaces, straight apostrophes, no trailing period. */
 export function normalizeAnswer(s: string): string {
   return s

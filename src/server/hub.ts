@@ -4,7 +4,7 @@ import { createHash, randomInt } from 'node:crypto';
 import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
-import { hashString, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
+import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { db, flush, newId, save, type EventRec, type RequestRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
 import type { ImportIssue } from './excel';
@@ -32,8 +32,12 @@ const REVEAL_LONG_MS = 6000;
 const CHECKPOINT_MS = 6000;
 const RETRY_INTRO_MS = 3000;
 const BLOCK = 10;
+/** A request lapses 2 minutes after its phone stops waiting (left the page, screen off), or after 15 minutes at most. */
 const REQUEST_TTL_MS = 2 * 60 * 1000;
+const REQUEST_MAX_MS = 15 * 60 * 1000;
 const MAX_PRACTICE_PER_QUESTION = 5;
+/** A teacher click or key within this long after a phase change is taken as meant for the phase before. */
+const CLICK_GUARD_MS = 1000;
 /** Friends' characters per phone result: one row on a small phone. */
 const FRIENDS_SHOWN = 9;
 /** Two tabs on one phone are fine; a third replaces the oldest. */
@@ -88,7 +92,9 @@ interface Live {
   lastMoveAt: number;
   /** When 건너뛰기 last worked, so a double click or a quick second S can't skip the next question too. */
   lastSkipAt: number;
-  /** When the current question began; a skip racing an auto-advance must not hit the new one. */
+  /** When the current phase began; a click or key meant for the phase before must not act on this one. */
+  phaseAt: number;
+  /** When the current question began (its intro); 건너뛰기 counts from here, since intro and moving are one question. */
   questionAt: number;
   reveal: RevealInfo | null;
   /** This question's answers; `streak` is the student's run of right answers after it, `broke` the run it just ended. */
@@ -173,6 +179,8 @@ function publicQuestion(q: Question, seq: number): PublicQuestion {
 
 class Hub {
   clients = new Set<Client>();
+  /** When each pending request's phone was last seen waiting, for expireRequests. */
+  private requestSeen = new Map<string, number>();
   live: Live | null = null;
   drafts = new Map<string, Draft>();
   joinUrl = '';
@@ -269,7 +277,8 @@ class Hub {
     if (db().students[studentId]?.classId !== live.classId) return;
     if (!live.joined.has(studentId)) {
       live.joined.add(studentId);
-      if (this.stampAttendance(studentId)) live.stamped.add(studentId);
+      // The day's footprint comes with the quiz itself, so a lobby closed before 퀴즈 시작 stamps nothing.
+      if (live.phase !== 'lobby' && this.stampAttendance(studentId)) live.stamped.add(studentId);
     }
   }
 
@@ -418,6 +427,7 @@ class Hub {
           look: s.look,
         };
       });
+    const auto = this.autoApprovable();
     const requests = Object.values(d.requests)
       .filter((r) => r.status === 'pending')
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -427,6 +437,7 @@ class Hub {
         number: r.number,
         name: r.name,
         ...(({ kind, note, bound, records, at }) => ({ kind, note, bound, records, holder: kind === 'conflict' ? at?.name ?? '' : '' }))(this.classify(r)),
+        auto: auto.has(r.id),
         symbol: r.symbol,
         createdAt: r.createdAt,
       }));
@@ -704,20 +715,43 @@ class Hub {
    * else asked for. Phone changes, number clashes and look-alike wrong numbers wait for the
    * teacher, and during a lobby or quiz only today's class is approved.
    */
-  approveAllSimple(): number {
-    const d = db();
-    const pending = Object.values(d.requests).filter((r) => r.status === 'pending');
+  /**
+   * Requests [모두 승인] takes, with the kind they were taken as: roster matches and new students, one per seat,
+   * today's class during a session, and nothing with a note (a same name at another number may be a student
+   * who already has a seat). The rest wait for the teacher one by one.
+   */
+  private autoApprovable(): Map<string, 'match' | 'new'> {
+    const pending = Object.values(db().requests).filter((r) => r.status === 'pending');
+    const count = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
     const perSeat = new Map<string, number>();
-    for (const r of pending) perSeat.set(`${r.classId}:${r.number}`, (perSeat.get(`${r.classId}:${r.number}`) ?? 0) + 1);
-    let n = 0;
+    // Two phones asking with one name at two numbers: one of them is likely a typo, like a same name already on the roster.
+    const perName = new Map<string, number>();
+    for (const r of pending) {
+      count(perSeat, `${r.classId}:${r.number}`);
+      count(perName, `${r.classId}:${nameKey(r.name)}`);
+    }
+    const out = new Map<string, 'match' | 'new'>();
     for (const r of pending) {
       const { kind, note } = this.classify(r);
       if (kind !== 'match' && kind !== 'new') continue;
-      if (perSeat.get(`${r.classId}:${r.number}`) !== 1) continue;
+      if (perSeat.get(`${r.classId}:${r.number}`) !== 1 || perName.get(`${r.classId}:${nameKey(r.name)}`) !== 1) continue;
       if (this.live && r.classId !== this.live.classId) continue;
       if (note) continue;
+      out.set(r.id, kind);
+    }
+    return out;
+  }
+
+  approveAllSimple(): number {
+    let n = 0;
+    for (const [id, kind] of this.autoApprovable()) {
+      // Each approval can change the roster the next one is judged against.
+      const r = db().requests[id];
+      if (!r || r.status !== 'pending') continue;
+      const now = this.classify(r);
+      if (now.kind !== kind || now.note) continue;
       try {
-        this.decideRequest(r.id, true, kind);
+        this.decideRequest(id, true, kind);
         n++;
       } catch {
         // The roster changed under it; leave it for the teacher.
@@ -815,7 +849,12 @@ class Hub {
   }
 
   /** Adds or renames students of one class from lines like "3 김하윤"; other classes are untouched. */
-  setRoster(classId: string, lines: string) {
+  /**
+   * Adds roster lines to a class. The paste box renames a seat whose name differs ('같은 번호는 이름을 바꿔요');
+   * an Excel 명단 sheet passes rename: false, so a weekly file can't quietly hand a registered student's
+   * phone, character and stamps to another name (rosterConflicts warns about those rows instead).
+   */
+  setRoster(classId: string, lines: string, { rename = true }: { rename?: boolean } = {}) {
     const d = db();
     if (!own(d.classes, classId)) throw new Error('반을 먼저 골라 주세요.');
     const byNumber = new Map(Object.values(d.students).filter((s) => s.classId === classId).map((s) => [s.number, s]));
@@ -828,8 +867,9 @@ class Hub {
       // Students can only type 1-99 when they register, so other numbers could never be matched.
       if (number < 1 || number > 99) continue;
       const existing = byNumber.get(number);
-      if (existing) existing.name = name;
-      else {
+      if (existing) {
+        if (rename) existing.name = name;
+      } else {
         const id = newId('stu');
         d.students[id] = { id, classId, number, name, look: null, inventory: [], createdAt: Date.now() };
         byNumber.set(number, d.students[id]);
@@ -942,6 +982,20 @@ class Hub {
     return set;
   }
 
+  /** 명단 rows whose seat already holds someone else; they are left as they are, and the upload preview says so. */
+  rosterConflicts(roster: { className: string; number: number; name: string }[]): string[] {
+    const d = db();
+    const out: string[] = [];
+    for (const r of roster) {
+      const cls = Object.values(d.classes).find((c) => sameClassName(c.name, r.className));
+      const at = cls && Object.values(d.students).find((x) => x.classId === cls.id && x.number === r.number);
+      if (at && nameKey(at.name) !== nameKey(r.name)) {
+        out.push(`${cls.name} ${r.number}번에 이미 ${at.name} 학생이 있어서 ${r.name}(으)로 바꾸지 않아요. 바꾸려면 학생 탭의 명단 칸에 붙여 넣으세요.`);
+      }
+    }
+    return out;
+  }
+
   createEvents(draftId: string): string[] {
     const draft = this.drafts.get(draftId);
     if (!draft) throw new Error('업로드한 파일을 다시 올려 주세요.');
@@ -975,7 +1029,7 @@ class Hub {
     for (const r of draft.roster) byClass.set(r.className, [...(byClass.get(r.className) ?? []), `${r.number} ${r.name}`]);
     for (const [name, lines] of byClass) {
       const existing = Object.values(d.classes).find((c) => sameClassName(c.name, name));
-      this.setRoster(existing ? existing.id : this.addClass(/^\d+$/.test(name) ? `${name}반` : name), lines.join('\n'));
+      this.setRoster(existing ? existing.id : this.addClass(/^\d+$/.test(name) ? `${name}반` : name), lines.join('\n'), { rename: false });
     }
     this.drafts.delete(draftId);
     save();
@@ -1039,6 +1093,7 @@ class Hub {
       textCounter: new Map(),
       lastMoveAt: 0,
       lastSkipAt: 0,
+      phaseAt: 0,
       questionAt: 0,
       reveal: null,
       choices: new Map(),
@@ -1076,6 +1131,7 @@ class Hub {
   start() {
     const live = this.live;
     if (!live || live.phase !== 'lobby') return;
+    for (const id of live.joined) if (this.stampAttendance(id)) live.stamped.add(id);
     live.round = 'main';
     live.index = 0;
     this.beginQuestion();
@@ -1090,7 +1146,7 @@ class Hub {
     live.texts = new Map();
     live.textFinal = new Set();
     live.textCounter = new Map();
-    live.questionAt = Date.now();
+    live.phaseAt = live.questionAt = Date.now();
     live.choices = new Map();
     live.correctOrder = [];
     live.reveal = null;
@@ -1126,6 +1182,7 @@ class Hub {
     if (live.phase === 'intro') {
       const q = this.currentQuestion()!;
       live.phase = 'moving';
+      live.phaseAt = now;
       live.movingStartedAt = now;
       live.lastMoveAt = now;
       live.phaseEndsAt = now + q.seconds * 1000;
@@ -1219,6 +1276,7 @@ class Hub {
       long,
     };
     live.phase = 'reveal';
+    live.phaseAt = now;
     live.phaseEndsAt = live.autoAdvance ? now + (long ? REVEAL_LONG_MS : REVEAL_MS) : null;
     void event;
     save();
@@ -1235,6 +1293,7 @@ class Hub {
         const c = stats.reduce((a, s) => a + s.correct, 0);
         const t = stats.reduce((a, s) => a + s.total, 0);
         live.phase = 'checkpoint';
+        live.phaseAt = Date.now();
         live.checkpoint = { kind: 'block', accuracy: t ? c / t : 0, done, total: live.list.length };
         live.phaseEndsAt = live.autoAdvance ? Date.now() + CHECKPOINT_MS : null;
         this.schedulePush(true);
@@ -1261,6 +1320,7 @@ class Hub {
         live.list = retry;
         live.index = -1;
         live.phase = 'checkpoint';
+        live.phaseAt = Date.now();
         live.checkpoint = { kind: 'retry', accuracy: 0, done: 0, total: retry.length };
         live.phaseEndsAt = live.autoAdvance ? Date.now() + RETRY_INTRO_MS : null;
         this.schedulePush(true);
@@ -1348,6 +1408,9 @@ class Hub {
     // A run stopped before anyone answered a word question leaves no empty column in the stats.
     if (mainCount > 0 && tookPart.size > 0) d.sessions.push({ id: live.id, eventId: live.eventId, classId: live.classId, startedAt: live.startedAt, endedAt: Date.now(), mainCount, perStudent });
     live.summary = { accuracy: totalConnected ? totalCorrect / totalConnected : 0, rewarded, judged: judgedCount };
+    // A screen covered with B would otherwise hide the class summary, and the summary has no cover button.
+    live.blank = false;
+    live.pausedByBlank = false;
     live.phase = 'summary';
     live.phaseEndsAt = null;
     live.index = -1;
@@ -1380,7 +1443,7 @@ class Hub {
         meaning: word?.meaning,
         prompt: q.prompt,
         correctLabel: q.mode === 'CUSTOM_TEXT' ? (q.answers ?? [])[0] ?? '' : q.options[q.answerIndex]?.label ?? '',
-        mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? '(못 골랐어요)',
+        mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? (q.mode === 'CUSTOM_TEXT' ? '(못 썼어요)' : '(못 골랐어요)'),
         feedback: r.choice >= 0 ? shown.options[r.choice]?.feedback : undefined,
         example: word?.example?.replace(/[[\]]/g, ''),
         exampleMeaning: word?.exampleMeaning,
@@ -1416,7 +1479,7 @@ class Hub {
       if (n <= (live.textCounter.get(s.id) ?? -1)) return false;
       live.textCounter.set(s.id, n);
     }
-    const text = value.slice(0, 60);
+    const text = value.slice(0, MAX_TEXT_ANSWER);
     const prev = live.texts.get(s.id);
     live.texts.set(s.id, text);
     // A draft of the very same text (an autosave landing after 제출) keeps the answer submitted.
@@ -1466,7 +1529,7 @@ class Hub {
         this.resume(now);
         break;
       case 'close-now':
-        if (live.phase === 'moving') {
+        if (live.phase === 'moving' && now - live.phaseAt >= CLICK_GUARD_MS) {
           live.paused = null;
           this.lock();
           return;
@@ -1481,7 +1544,7 @@ class Hub {
       case 'skip':
         // A double click or a quick second S would land on the question that just began; ignore it.
         if (now - live.lastSkipAt < 800) break;
-        if (live.phase === 'intro' && now - live.questionAt < 800) break;
+        if (now - (live.phase === 'moving' ? live.questionAt : live.phaseAt) < CLICK_GUARD_MS) break;
         if (live.phase === 'intro' || live.phase === 'moving' || live.phase === 'reveal' || live.phase === 'checkpoint') live.lastSkipAt = now;
         if (live.phase === 'intro' || live.phase === 'moving') {
           live.paused = null;
@@ -1497,7 +1560,8 @@ class Hub {
         }
         break;
       case 'next':
-        if (live.phase === 'reveal' || live.phase === 'checkpoint') {
+        // The 다음 button takes the place of 지금 정답 공개, so a double click must not skip the reveal.
+        if ((live.phase === 'reveal' || live.phase === 'checkpoint') && now - live.phaseAt >= CLICK_GUARD_MS) {
           live.paused = null;
           this.advance();
           return;
@@ -1562,7 +1626,8 @@ class Hub {
     } else if (live.phase === 'intro' || rem > 0) {
       live.phaseEndsAt = now + rem;
     } else {
-      live.phaseEndsAt = live.autoAdvance ? now : null;
+      // Paused with no countdown left (자동 진행 was off, or just ran out): show the reveal again before moving on.
+      live.phaseEndsAt = live.autoAdvance ? now + (live.phase === 'checkpoint' ? CHECKPOINT_MS : REVEAL_MS) : null;
     }
     live.paused = null;
   }
@@ -1571,8 +1636,13 @@ class Hub {
     const now = Date.now();
     const d = db();
     let changed = false;
+    // A student still looking at the waiting screen keeps their request alive while the teacher gets to it.
+    const waiting = new Set([...this.clients].filter((c) => c.role === 'student' && c.tokenHash).map((c) => c.tokenHash));
     for (const [id, r] of Object.entries(d.requests)) {
-      if (r.status === 'pending' && now - r.createdAt > REQUEST_TTL_MS) {
+      if (r.status === 'pending' && waiting.has(r.tokenHash)) this.requestSeen.set(id, now);
+      const seen = this.requestSeen.get(id) ?? r.createdAt;
+      if (r.status !== 'pending') this.requestSeen.delete(id);
+      if (r.status === 'pending' && (now - seen > REQUEST_TTL_MS || now - r.createdAt > REQUEST_MAX_MS)) {
         r.status = 'expired';
         r.reason = 'timeout';
         changed = true;

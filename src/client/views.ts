@@ -88,7 +88,7 @@ export interface TeacherView {
   students: TeacherStudent[];
   /** kind: match = on the roster · replace = new phone for a registered student · new = not on the roster yet · conflict = that number belongs to someone else. */
   /** bound: the seat's student has a phone · records: they already have a character, items, attendance or notes. */
-  requests: { id: string; className: string; number: number; name: string; kind: 'match' | 'replace' | 'new' | 'conflict'; note: string; bound: boolean; records: boolean; holder: string; symbol: string; createdAt: number }[];
+  requests: { id: string; className: string; number: number; name: string; kind: 'match' | 'replace' | 'new' | 'conflict'; note: string; bound: boolean; records: boolean; holder: string; /** [모두 승인] takes it; otherwise the teacher checks it alone. */ auto: boolean; symbol: string; createdAt: number }[];
   events: TeacherEvent[];
   live: TeacherLive | null;
   items: ItemDef[];

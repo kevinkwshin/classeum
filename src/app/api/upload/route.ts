@@ -13,10 +13,12 @@ export async function POST(request: NextRequest) {
   const result = await importWorkbook(Buffer.from(await file.arrayBuffer()));
   const h = hub();
   const draft = h.makeDraft(result);
+  // Rows that would rename someone already on the roster are skipped; say so before 만들기.
+  const kept = h.rosterConflicts(result.roster).map((message) => ({ level: 'warning' as const, sheet: '명단', message }));
   return Response.json({
     ok: true,
     draftId: draft.id,
-    issues: result.issues,
+    issues: [...result.issues, ...kept],
     hasErrors: result.issues.some((i) => i.level === 'error'),
     rosterCount: result.roster.length,
     groups: h.previewDraft(draft),

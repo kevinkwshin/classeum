@@ -8,7 +8,6 @@ export const DEFAULT_LOOK: AvatarLook = {
   hairStyle: 'short',
   tunic: 'white',
   helmet: 'none',
-  armor: 'none',
   cape: 'none',
   shield: 'none',
   shoes: 'none',
@@ -87,9 +86,7 @@ const TUNIC: Record<string, string[]> = {
   suit: rows(10, ['...knnWRRWnnk...', '..ksnnnRRnnnsk..', '..ksnnnnnnnnsk..', '...knnnnnnnnk...']),
   robe: rows(10, ['...kuuuuuuuuk...', '..ksuuuyuuuusk..', '..ksuuuuuuyusk..', '...kuyuuuuuuk...', '....kuuuuuuk....']),
   tracksuit: rows(10, ['...kxxxxxxxxk...', '..ksWxxxxxxWsk..', '..ksxxxxxxxxsk..', '...kxxxxxxxxk...', '....kxxkkxxk....']),
-};
-
-const ARMOR: Record<string, string[]> = {
+  // Armour is worn as the top too; its hem shows a little of the white tunic.
   lorica: rows(10, ['...kaaaaaaaak...', '..ksaAaaaaAask..', '..ksabbbbbbask..', '...kAwAwAwAwk...']),
   gold: rows(10, ['...kyyyyyyyyk...', '..ksyGyyyyGysk..', '..ksyGGGGGGysk..', '...kGwGwGwGwk...']),
 };
@@ -176,7 +173,7 @@ const TUNICS: Record<string, [string, string]> = { white: ['#EFE9DC', '#CFC6B4']
 const CAPES: Record<string, string> = { red: '#C2412D', blue: '#2F5DA8', star: '#34446B' };
 
 /** Every layer in drawing order, for checking that each row is exactly 16 pixels. */
-export const ALL_LAYERS = { HAIR, TUNIC, ARMOR, HELMET, FACE, SHOES, HAND, SHIELD, CAPE };
+export const ALL_LAYERS = { HAIR, TUNIC, HELMET, FACE, SHOES, HAND, SHIELD, CAPE };
 
 /** Shades and heart glasses hide the eyes, so blinking and reaction faces skip the eyes. */
 export function eyesCovered(look: AvatarLook): boolean {
@@ -199,13 +196,12 @@ export function avatarRuns(look: AvatarLook): PixelRun[] {
         if (ch !== '.') grid[y][x] = ch;
       }),
     );
-  // Back to front: hair, top, shoes, back (cape, wings, bag), armour, hat, face, shield, then the hand.
+  // Back to front: hair, top (armour too), shoes, back (cape, wings, bag), hat, face, shield, then the hand.
   for (const [table, value] of [
     [HAIR, look.hairStyle],
     [TUNIC, look.tunic],
     [SHOES, look.shoes],
     [CAPE, look.cape],
-    [ARMOR, look.armor],
     [HELMET, look.helmet],
     [FACE, look.face],
     [SHIELD, look.shield],

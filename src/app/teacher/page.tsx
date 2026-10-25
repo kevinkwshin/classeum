@@ -35,6 +35,13 @@ function TeacherApp() {
       }),
     [send, notify],
   );
+  // A quiz started from another window brings this one to the arena, where it stays through the summary.
+  const quizOn = !!view?.live && view.live.phase !== 'lobby' && view.live.phase !== 'summary';
+  const [wasQuizOn, setWasQuizOn] = useState(quizOn);
+  if (quizOn !== wasQuizOn) {
+    setWasQuizOn(quizOn);
+    if (quizOn) setTab('arena');
+  }
 
   if (!view) {
     return (
@@ -75,16 +82,17 @@ function TeacherApp() {
       )}
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
-        {tab === 'arena' && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} />)}
+        {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
+        {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} />)}
         {tab === 'students' && !running && <Students view={view} act={act} />}
         {tab === 'stats' && !running && <Stats classes={view.classes} />}
       </main>
-      {/* During a quiz it floats over the console; otherwise it gets its own column so it covers no buttons. */}
+      {/* During a quiz it floats over the console; otherwise it gets its own column on wide screens so it covers no buttons. */}
       {view.requests.length > 0 &&
         (view.live ? (
           <Requests view={view} act={act} />
         ) : (
-          <div className="w-80 shrink-0 pr-5 pt-6">
+          <div className="shrink-0 min-[1500px]:pr-5 min-[1500px]:pt-6">
             <Requests view={view} act={act} inline />
           </div>
         ))}
@@ -152,10 +160,12 @@ const REQUEST_KIND: Record<TeacherView['requests'][number]['kind'], { label: str
 
 function Requests({ view, act, inline = false }: { view: TeacherView; act: Send; inline?: boolean }) {
   // Floating, it sits below the top bars (so 퀴즈 시작 / 종료 stay clickable) and folds away to a pill.
+  // Inline it is a column only on wide screens; on laptops it floats bottom-right, clear of the page's top buttons (대기실 열기).
   const [open, setOpen] = useState(true);
+  const autoCount = view.requests.filter((r) => r.auto).length;
   return (
     <aside
-      className={`cls-slide-up rounded-[20px] bg-white shadow-[0_8px_30px_rgba(16,18,24,0.12)] ${inline ? 'sticky top-6' : 'fixed right-5 top-24 z-40'} ${open || inline ? 'w-80 p-5' : 'px-4 py-2.5'}`}
+      className={`cls-slide-up rounded-[20px] bg-white shadow-[0_8px_30px_rgba(16,18,24,0.12)] ${inline ? 'fixed bottom-5 right-5 z-40 min-[1500px]:sticky min-[1500px]:bottom-auto min-[1500px]:right-auto min-[1500px]:top-6' : 'fixed right-5 top-24 z-40'} ${open ? 'w-80 p-5' : 'px-4 py-2.5'}`}
     >
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className={`flex w-full items-center justify-between gap-3 ${open ? 'mb-3' : ''}`}>
         <h2 className={`font-bold ${open ? 'text-lg' : 'text-sm'}`}>기기 등록 요청</h2>
@@ -166,12 +176,13 @@ function Requests({ view, act, inline = false }: { view: TeacherView; act: Send;
       </button>
       {open && (
         <>
-          {view.requests.length > 1 && (
-            <Btn kind="ghost" className="mb-2 w-full text-sm" onClick={() => act({ type: 'approve-all' }).catch(() => undefined)} title="명단과 맞거나 새로 온 학생을 한 번에 승인해요. 기기 교체와 번호 겹침은 하나씩 확인하세요.">
-              모두 승인 (교체·겹침 빼고)
+          {view.requests.length > 1 && autoCount > 0 && (
+            <Btn kind="ghost" className="mb-2 w-full text-sm" onClick={() => act({ type: 'approve-all' }).catch(() => undefined)} title="명단과 맞거나 새로 온 학생을 한 번에 승인해요. '따로 확인' 표시가 있는 요청은 하나씩 보고 승인하세요.">
+              {autoCount === view.requests.length ? `모두 승인 (${autoCount}명)` : `${autoCount}명 한 번에 승인 · ${view.requests.length - autoCount}명은 따로 확인`}
             </Btn>
           )}
-          <div className="flex max-h-[60vh] flex-col overflow-y-auto">
+          {/* During a quiz the panel must end above the console's bottom bar (지금 정답 공개 / 다음). */}
+          <div className={`flex flex-col overflow-y-auto ${inline ? 'max-h-[40vh] min-[1500px]:max-h-[60vh]' : 'max-h-[min(60vh,calc(100vh-22rem))]'}`}>
             {view.requests.map((r) => (
               <div key={r.id} className="flex items-center gap-3 border-t border-[#EEF0F3] py-3">
                 <div className="min-w-0 flex-1">
@@ -179,6 +190,8 @@ function Requests({ view, act, inline = false }: { view: TeacherView; act: Send;
                     <span className="text-ink-3">{r.className}</span> {r.number} {r.name}
                   </div>
                   <div className={`text-[13px] ${REQUEST_KIND[r.kind].tone}`}>
+                    {/* 모두 승인 leaves these alone: a device swap, a taken number, or a same name at another number. */}
+                    {!r.auto && view.requests.length > 1 && <span className="mr-1 rounded bg-[#FFF1E6] px-1.5 py-px text-[12px] font-bold text-[#C2410C]">따로 확인</span>}
                     {REQUEST_KIND[r.kind].label}
                     {r.note && ` · ${r.note}`} · <b className="text-ink">{r.symbol}</b>
                   </div>
@@ -315,12 +328,12 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5">
-      <Card className="flex items-center justify-between">
-        <div>
+      <Card className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0">
           <div className="text-2xl font-bold">{event.name}</div>
           <div className="text-ink-3">{event.count}문항 · 기본 15초 · 약 {Math.round(event.estimateSec / 60)}분</div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
           <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요?`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
           {view.classes.length === 0 ? (
             <span className="text-sm font-semibold text-ink-3">학생·기기에서 반을 먼저 만들어 주세요</span>
@@ -357,7 +370,8 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
               return (
                 <div key={th.id}>
                   <div className="mb-1.5 text-xs font-bold text-ink-3">{th.name}</div>
-                  <div className="grid grid-cols-5 gap-2">
+                  {/* Five per row when there's room, fewer (at least 72px each) in a narrow column. */}
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(max(72px,calc(20%_-_0.5rem)),1fr))] gap-2">
                     {list.map((it) => (
                       <button key={it.id} type="button" aria-pressed={itemId === it.id} onClick={() => setItemId(it.id)} className={`flex flex-col items-center gap-1 rounded-2xl p-2 ${itemId === it.id ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
                         <PixelAvatar look={previewLook(it, DEFAULT_LOOK)} size={48} />
@@ -501,6 +515,10 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
   ];
   const counts = live.phase === 'reveal' ? live.reveal?.zoneCounts ?? [] : live.counts ?? [];
   const maxCount = Math.max(1, ...counts, live.participants);
+  const text = q?.mode === 'CUSTOM_TEXT';
+  // On a short laptop window the preview shrinks so the whole console fits above the bottom bar
+  // (424px = the bars, paddings and the rows under the preview; one more line when the explanation shows).
+  const previewMax = `max(320px, calc((100vh - ${showAnswer && q?.explanation ? 456 : 424}px) * 2))`;
   return (
     <div className="flex min-h-screen flex-col">
       <div className="flex h-[76px] items-center justify-between gap-5 bg-ink px-7 text-white">
@@ -540,10 +558,10 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
             <div className="flex items-center justify-between text-sm font-semibold text-ink-3">
               <span>프로젝터</span>
               <span className="text-xl font-extrabold text-ink">{q?.prompt}</span>
-              <span>{live.phase === 'moving' ? '안개' : live.phase === 'reveal' ? '공개' : ''}</span>
+              <span>{live.phase === 'moving' && !text ? '안개' : live.phase === 'reveal' ? '공개' : ''}</span>
             </div>
-            <div className="aspect-[16/8]">
-              {q && q.mode !== 'CUSTOM_TEXT' ? (
+            <div className="mx-auto aspect-[16/8] w-full" style={{ maxWidth: previewMax }}>
+              {q && !text ? (
                 <Field compact options={q.options.map((o) => o.label)} fog={live.phase !== 'reveal'} reveal={live.phase === 'reveal' ? live.reveal : null} avatars={live.phase === 'reveal' ? live.reveal?.avatars : undefined} />              ) : (
                 <div className="flex h-full items-center justify-center rounded-xl bg-bg text-ink-3">{q ? '쓰기 문제 (폰에 입력)' : live.phase === 'checkpoint' ? '쉬는 화면' : ''}</div>
               )}
@@ -570,12 +588,12 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
 
         <Card className="flex min-w-0 flex-1 flex-col gap-5">
           <div className="flex items-end justify-between">
-            <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'reveal' ? '결과' : '자리 잡음'}</div>
+            <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'reveal' ? '결과' : text ? '제출' : '자리 잡음'}</div>
             <div className="tabular text-5xl font-extrabold leading-none tracking-tight">
               {live.phase === 'reveal' ? `${Math.round((live.reveal?.accuracy ?? 0) * 100)}%` : <>{live.settled}<span className="text-2xl text-[#A3A8B4]">/{live.participants}</span></>}
             </div>
           </div>
-          {q && q.mode !== 'CUSTOM_TEXT' && (
+          {q && !text && (
             <div className="flex flex-col gap-3">
               {q.options.map((o, i) => (
                 <div key={i} className={`zone-${i} flex items-center gap-3`}>
@@ -594,9 +612,10 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
               ))}
             </div>
           )}
+          {/* Takes only the height left beside the preview and scrolls, so a long list never pushes the card down. */}
           {live.phase === 'moving' && live.unsettled.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[13px] font-semibold text-ink-3">가운데 남음</span>
+            <div className="flex min-h-12 flex-[1_1_0px] flex-wrap content-start items-center gap-1.5 overflow-y-auto">
+              <span className="mr-1 text-[13px] font-semibold text-ink-3">{text ? '아직 제출 안 함' : '가운데 남음'}</span>
               {live.unsettled.map((u) => <span key={u.number} className="rounded-full bg-bg px-2.5 py-1 text-[13px] font-semibold">{u.number} {u.name}</span>)}
             </div>
           )}
@@ -608,17 +627,18 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
         </Card>
       </div>
 
-      <div className="flex h-[88px] items-center justify-between border-t border-line bg-white px-7">
+      <div className="sticky bottom-0 z-10 flex h-[88px] items-center justify-between border-t border-line bg-white px-7">
         <div className="flex gap-2">
           <Btn kind="ghost" onClick={() => control(live.paused ? 'resume' : 'pause')}>{live.paused ? '다시 시작' : '멈춤'} <span className="text-xs text-ink-3">Space</span></Btn>
           <Btn kind="ghost" disabled={live.phase !== 'moving'} onClick={() => control('add-time')}>+5초 <span className="text-xs text-ink-3">↑</span></Btn>
           <Btn kind="ghost" onClick={() => control('skip')}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
           {live.round === 'retry' && <Btn kind="ghost" onClick={() => control('skip-retry')}>다시 도전 건너뛰기</Btn>}
         </div>
+        {/* Separate keys: a fresh button each time, so a double click can't carry over to the other action. */}
         {live.phase === 'moving' ? (
-          <Btn onClick={() => control('close-now')} className="h-14 px-8 text-lg">지금 정답 공개 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">Enter</span></Btn>
+          <Btn key="close-now" onClick={() => control('close-now')} className="h-14 px-8 text-lg">지금 정답 공개 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">Enter</span></Btn>
         ) : (
-          <Btn onClick={() => control('next')} disabled={live.phase !== 'reveal' && live.phase !== 'checkpoint'} className="h-14 px-8 text-lg">다음 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">→</span></Btn>
+          <Btn key="next" onClick={() => control('next')} disabled={live.phase !== 'reveal' && live.phase !== 'checkpoint'} className="h-14 px-8 text-lg">다음 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">→</span></Btn>
         )}
       </div>
     </div>

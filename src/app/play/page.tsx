@@ -6,10 +6,10 @@ import { CountUp } from '@/components/CountUp';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
+import { MAX_TEXT_ANSWER } from '@/lib/text';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
 import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
 
-const STEP = 0.07;
 // Must match START_HALF_W / START_HALF_H in src/server/hub.ts.
 const START_HALF_W = 0.09;
 const START_HALF_H = 0.13;
@@ -477,7 +477,6 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
   const n = q.options.length;
   const look = normalizeLook(view.me?.look ?? undefined);
   const [point, setPoint] = useState<FieldPoint>(view.myPoint ?? { x: 0.5, y: 0.5 });
-  const pointRef = useRef(point);
   const lastSent = useRef(0);
   const pending = useRef<NodeJS.Timeout | null>(null);
   const retry = useRef<NodeJS.Timeout | null>(null);
@@ -485,25 +484,7 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
   const latest = useRef<FieldPoint | null>(null);
   const acked = useRef(true);
   const active = s.phase === 'moving' && !s.paused;
-  const [walking, setWalking] = useState(false);
-  const [facingLeft, setFacingLeft] = useState(false);
-  const walkTimer = useRef<NodeJS.Timeout | null>(null);
   const lastZone = useRef(zoneOf(view.myPoint ?? { x: 0.5, y: 0.5 }, n));
-  const step = useCallback(
-    (next: FieldPoint, dx: number) => {
-      if (dx) setFacingLeft(dx < 0);
-      setWalking(true);
-      if (walkTimer.current) clearTimeout(walkTimer.current);
-      walkTimer.current = setTimeout(() => setWalking(false), 340);
-      const z = zoneOf(next, n);
-      buzz(z !== lastZone.current && z >= 0 ? 25 : 6);
-      lastZone.current = z;
-    },
-    [n],
-  );
-  useEffect(() => () => {
-    if (walkTimer.current) clearTimeout(walkTimer.current);
-  }, []);
 
   const fire = useCallback(() => {
     const attempt = () => {
@@ -548,75 +529,34 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
     [],
   );
 
-  const moveBy = useCallback(
-    (dx: number, dy: number) => {
+  // Tapping a box sends the character to the middle of that box; tapping another one changes the answer.
+  const moveTo = useCallback(
+    (z: number) => {
       if (!active) return;
-      // A ref, not a state updater, so the hold-to-walk interval always starts from the latest spot.
-      const prev = pointRef.current;
-      const next = { x: Math.min(0.97, Math.max(0.03, prev.x + dx)), y: Math.min(0.97, Math.max(0.03, prev.y + dy)) };
-      pointRef.current = next;
-      setPoint(next);
-      push(next);
-      step(next, dx);
+      if (z !== lastZone.current) buzz(25);
+      lastZone.current = z;
+      const c = zoneCenter(z, n);
+      setPoint(c);
+      push(c);
     },
-    [active, push, step],
+    [active, n, push],
   );
 
-  const moveTo = (z: number) => {
-    if (!active) return;
-    const c = zoneCenter(z, n);
-    step(c, c.x - pointRef.current.x);
-    pointRef.current = c;
-    setPoint(c);
-    push(c);
-  };
-
+  // On a laptop the number keys pick a box too.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const map: Record<string, [number, number]> = { ArrowUp: [0, -STEP], ArrowDown: [0, STEP], ArrowLeft: [-STEP, 0], ArrowRight: [STEP, 0] };
-      const d = map[e.key];
-      if (d) {
-        e.preventDefault();
-        moveBy(d[0], d[1]);
-      }
+      const z = Number(e.key) - 1;
+      if (Number.isInteger(z) && z >= 0 && z < n) moveTo(z);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [moveBy]);
+  }, [moveTo, n]);
 
   const zone = zoneOf(point, n);
   const cells = n === 2 ? [0, 1] : [0, 1, 2, 3];
-  const hold = useRef<NodeJS.Timeout | null>(null);
-  const release = () => {
-    if (hold.current) clearInterval(hold.current);
-    hold.current = null;
-  };
-  useEffect(() => release, []);
-  const pad = (label: string, dx: number, dy: number, glyph: string) => (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={!active}
-      onPointerDown={(e) => {
-        e.preventDefault();
-        moveBy(dx, dy);
-        release();
-        // Holding the button keeps walking.
-        hold.current = setInterval(() => moveBy(dx, dy), 160);
-      }}
-      onPointerUp={release}
-      onPointerLeave={release}
-      onPointerCancel={release}
-      onContextMenu={(e) => e.preventDefault()}
-      style={{ touchAction: 'none' }}
-      className="rounded-[20px] bg-ink text-[26px] text-white active:scale-95 disabled:opacity-40"
-    >
-      {glyph}
-    </button>
-  );
 
   return (
-    // Fits one screen (about 650 px tall phones too): the field gives up height so the ▼ button is never cut off.
+    // One screen on any phone: the answer boxes take whatever height is left under the question.
     <div className="flex h-[100dvh] select-none flex-col gap-3 px-5 pb-5 pt-5" style={{ WebkitTouchCallout: 'none', overscrollBehavior: 'none' }}>
       <QuestionHeader view={view} serverNow={serverNow} />
       <div className="flex flex-col items-center gap-1 rounded-3xl bg-bg px-4 py-4">
@@ -627,57 +567,52 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
           {q.prompt}
         </div>
       </div>
-      <div className="relative aspect-[16/11] min-h-[132px] w-full shrink overflow-hidden rounded-2xl bg-bg">
-        <div className="absolute inset-0 grid gap-1.5 p-1.5" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: n === 2 ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}>
+      <div className="relative min-h-[220px] flex-1 overflow-hidden rounded-3xl bg-bg">
+        <div className="absolute inset-0 grid gap-2 p-2" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: n === 2 ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}>
           {cells.map((z) => {
             const label = q.options[z];
+            const mine = zone === z;
             return (
               <button
                 key={z}
                 type="button"
                 disabled={!active || label === undefined}
                 onClick={() => moveTo(z)}
-                className={`zone-${z} flex flex-col items-start gap-1 rounded-xl p-2 text-left transition-[background-color,box-shadow] duration-200`}
+                className={`zone-${z} relative flex flex-col items-center justify-center overflow-hidden rounded-2xl px-3 pb-3 pt-9 text-center transition-[background-color,box-shadow,transform] duration-200 active:scale-[0.97]`}
                 style={
                   label === undefined
                     ? { background: '#ECEEF1' }
-                    : { background: zone === z ? 'var(--zone-soft)' : '#FFFFFF', boxShadow: zone === z ? 'inset 0 0 0 3px var(--zone)' : undefined }
+                    : { background: mine ? 'var(--zone-soft)' : '#FFFFFF', boxShadow: mine ? 'inset 0 0 0 4px var(--zone)' : 'inset 0 -3px 0 rgba(16,18,24,0.06)' }
                 }
               >
                 {label !== undefined && (
                   <>
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-extrabold text-white" style={{ background: 'var(--zone)' }}>
+                    <span className="absolute left-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-extrabold text-white" style={{ background: 'var(--zone)' }}>
                       {z + 1}
                     </span>
-                    <span className="text-[15px] font-bold leading-tight" style={{ color: 'var(--zone-ink)' }}>{label}</span>
+                    <span className={`font-extrabold leading-tight [overflow-wrap:anywhere] ${label.length > 20 ? 'text-base' : label.length > 10 ? 'text-lg' : 'text-2xl'}`} style={{ color: 'var(--zone-ink)' }}>
+                      {label}
+                    </span>
+                    {/* My character hops into the box I picked, in a corner so the label doesn't move. */}
+                    {mine && (
+                      <span key={`${q.seq}-${z}`} className="cls-pop absolute bottom-1.5 right-1.5">
+                        <PixelAvatar look={look} size={40} blink={3} />
+                      </span>
+                    )}
                   </>
                 )}
               </button>
             );
           })}
         </div>
-        <div className="pointer-events-none absolute rounded-full border-2 border-dashed border-[#C9CDD6]" style={{ left: `${50 - START_HALF_W * 100}%`, top: `${50 - START_HALF_H * 100}%`, width: `${START_HALF_W * 200}%`, height: `${START_HALF_H * 200}%` }} />
-        <div
-          className={`pointer-events-none absolute transition-[left,top] duration-150 ${walking ? 'cls-walk' : ''}`}
-          style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%`, transform: 'translate(-50%, -60%)' }}
-        >
-          <div style={{ transform: facingLeft ? 'scaleX(-1)' : undefined }}>
+        {/* Until a box is picked the character waits on the start line in the middle. */}
+        {zone < 0 && (
+          // With two boxes side by side the labels sit in the middle row, so the start line moves to the bottom edge.
+          <div className={`pointer-events-none absolute left-1/2 -translate-x-1/2 rounded-full border-2 border-dashed border-[#C9CDD6] bg-bg/90 p-2 ${n === 2 ? 'bottom-2' : 'top-1/2 -translate-y-1/2'}`}>
             <PixelAvatar look={look} size={44} blink={3} />
           </div>
-        </div>
+        )}
         {s.phase === 'intro' && <IntroOverlay view={view} serverNow={serverNow} />}
-      </div>
-      <div className="flex items-center justify-center gap-1.5 text-[13px] font-semibold text-ink-3 [@media(max-height:620px)]:hidden">큰 화면은 안개 · 내 위치는 나만</div>
-      <div className="mx-auto grid shrink-0 grid-cols-[84px_84px_84px] grid-rows-[repeat(3,64px)] gap-2 [@media(max-height:620px)]:grid-rows-[repeat(3,50px)]">
-        <div />
-        {pad('위로', 0, -STEP, '▲')}
-        <div />
-        {pad('왼쪽으로', -STEP, 0, '◀')}
-        <div className="m-2 rounded-full bg-bg" />
-        {pad('오른쪽으로', STEP, 0, '▶')}
-        <div />
-        {pad('아래로', 0, STEP, '▼')}
-        <div />
       </div>
     </div>
   );
@@ -770,6 +705,7 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
         lang="en"
         inputMode="text"
         enterKeyHint="send"
+        maxLength={MAX_TEXT_ANSWER}
         disabled={!active}
         aria-label="답 쓰기"
         className="h-16 rounded-2xl border-2 border-ink px-4 text-2xl font-bold outline-none"
@@ -796,6 +732,8 @@ function Result({ view }: { view: StudentView }) {
   if (!r || !r.counted) return <Message title="이번 문제는 쉬어요" body={r ? `정답: ${r.correctLabel}` : undefined} />;
   const kind = r.correct ? 'happy' : r.choice < 0 && !r.mineLabel ? 'sleep' : 'pop';
   const look = normalizeLook(view.me?.look ?? undefined);
+  // A writing question has no start line or zones to talk about.
+  const writing = s.question?.kind === 'text';
   return (
     // Short phones tighten the spacing so the friends row still fits on screen.
     <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-8 [@media(max-height:700px)]:gap-3 [@media(max-height:700px)]:pb-4 [@media(max-height:700px)]:pt-5">
@@ -831,7 +769,7 @@ function Result({ view }: { view: StudentView }) {
       <div className={`flex items-center justify-between rounded-3xl px-5 py-4 ${r.correct ? 'bg-good-soft' : 'cls-shake bg-bad-soft'}`} style={{ animationDelay: '0.25s' }}>
         <div>
           <div className="text-xs font-bold text-ink-3">내 답</div>
-          <div className="text-xl font-extrabold">{r.mineLabel ?? '못 골랐어요'}</div>
+          <div className="text-xl font-extrabold">{r.mineLabel ?? (writing ? '못 썼어요' : '못 골랐어요')}</div>
         </div>
         <div
           className={`cls-pop flex h-11 w-11 items-center justify-center rounded-full text-xl font-extrabold text-white ${r.correct ? 'bg-good' : 'bg-[#E5484D]'}`}
@@ -842,7 +780,7 @@ function Result({ view }: { view: StudentView }) {
       </div>
       {/* Right under my answer, so it stays on screen on a small phone even when the notes below run long. */}
       <CorrectFriends friends={r.friends} me={r.correct ? look : null} />
-      {kind === 'sleep' && <div className="px-1 text-base leading-relaxed text-ink-2">출발선에서 졸았어요. 다음엔 칸으로 쏙!</div>}
+      {kind === 'sleep' && <div className="px-1 text-base leading-relaxed text-ink-2">{writing ? '다음엔 꼭 써 봐요!' : '출발선에서 졸았어요. 다음엔 칸으로 쏙!'}</div>}
       {!r.correct && r.feedback && <div className="px-1 text-base leading-relaxed text-ink-2">네가 고른 {r.feedback}</div>}
       {!r.correct && r.explanation && <div className="px-1 text-sm leading-relaxed text-ink-3">{r.explanation}</div>}
       <div className="mt-auto text-center text-sm text-ink-3 [@media(max-height:700px)]:hidden">다음 문제를 기다려요</div>

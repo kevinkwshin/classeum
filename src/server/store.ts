@@ -133,6 +133,13 @@ function migrate(d: DB): DB {
   }
   // Requests from before self-registration have no typed details; they can't be approved anymore.
   for (const [id, r] of Object.entries(d.requests)) if (!r.kind) delete d.requests[id];
+  // Armour was its own slot over the top; it is worn as the top (몸) now.
+  for (const s of Object.values(d.students)) {
+    const look = s.look as (AvatarLook & { armor?: string }) | null;
+    if (!look || look.armor === undefined) continue;
+    if (look.armor === 'lorica' || look.armor === 'gold') look.tunic = look.armor;
+    delete look.armor;
+  }
   return d;
 }
 
@@ -163,10 +170,19 @@ export function save(): void {
 }
 
 export function flush(): void {
-  mkdirSync(DIR, { recursive: true });
-  const tmp = `${FILE}.tmp`;
-  writeFileSync(tmp, JSON.stringify(db()));
-  renameSync(tmp, FILE);
+  try {
+    mkdirSync(DIR, { recursive: true });
+    const tmp = `${FILE}.tmp`;
+    writeFileSync(tmp, JSON.stringify(db()));
+    renameSync(tmp, FILE);
+  } catch (e) {
+    // On Windows an antivirus scan or a sync app can hold the file for a moment; try again instead of stopping the class.
+    console.error('Classeum: 저장하지 못해서 1초 뒤 다시 저장해요.', e);
+    if (!g.__classeumSaveTimer) g.__classeumSaveTimer = setTimeout(() => {
+      g.__classeumSaveTimer = undefined;
+      flush();
+    }, 1000);
+  }
 }
 
 export function newId(prefix: string): string {
