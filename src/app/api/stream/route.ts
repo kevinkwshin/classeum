@@ -42,6 +42,14 @@ export async function GET(request: NextRequest) {
           cleanup();
         }
       };
+      const end = () => {
+        cleanup();
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      };
       client = {
         id: crypto.randomUUID(),
         role,
@@ -50,25 +58,14 @@ export async function GET(request: NextRequest) {
         // Replaced by a newer stream from the same phone: that tab stops until the student looks at it again.
         close: () => {
           write('event: replaced\ndata: 1\n\n');
-          cleanup();
-          try {
-            controller.close();
-          } catch {
-            // already closed
-          }
+          end();
         },
+        end,
       };
       write('retry: 1500\n\n');
       h.addClient(client);
       keepAlive = setInterval(() => write(': ping\n\n'), 15000);
-      request.signal.addEventListener('abort', () => {
-        cleanup();
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
-      });
+      request.signal.addEventListener('abort', end);
     },
     cancel() {
       cleanup();

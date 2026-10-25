@@ -19,6 +19,8 @@ export interface Client {
   send: (payload: unknown) => void;
   /** Ends the stream from the server side (an older duplicate of the same phone). */
   close?: () => void;
+  /** Ends the stream quietly when the server is stopping; the screen reconnects once it is back. */
+  end?: () => void;
 }
 
 export const START_HALF_W = 0.09;
@@ -246,6 +248,11 @@ class Hub {
     // or it opened registration for the phones still waiting to pick a name.
     const joinedNow = sid !== undefined && !joinedBefore && !!this.live?.joined.has(sid);
     this.schedulePush(joinedNow || openBefore !== this.registrationOpen());
+  }
+
+  /** Ends every open stream, so a stopping server doesn't wait for phones and screens to hang up. */
+  closeAll() {
+    for (const c of [...this.clients]) c.end?.();
   }
 
   removeClient(c: Client) {
@@ -1717,6 +1724,19 @@ export function hub(): Hub {
   if (!g.__classeumHub) {
     g.__classeumHub = new Hub();
     setInterval(() => g.__classeumHub?.expireRequests(), 10_000);
+    // Ctrl+C (or the next \`npm run class\`) saves and ends every phone, projector and teacher stream, so the
+    // server stops at once; left alone, Next waits for those connections to drop and the terminal looks stuck.
+    const stop = () => {
+      try {
+        flush();
+      } catch {
+        // Nothing more to save than what the store already wrote.
+      }
+      g.__classeumHub?.closeAll();
+      setTimeout(() => process.exit(0), 1500).unref();
+    };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
   }
   return g.__classeumHub;
 }
