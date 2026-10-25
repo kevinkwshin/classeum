@@ -293,23 +293,26 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
     <div className="flex flex-col gap-5 p-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">이벤트</h1>
-        <div className="flex gap-2">
-          {/* Saved under a name that also becomes the event's name when it comes back filled in. */}
-          <a href="/templates/week7.xlsx" download="7주차_영단어.xlsx" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">템플릿 받기</a>
-          <button type="button" onClick={() => setWriting(true)} className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">직접 작성하기</button>
-          <label className={`flex h-11 cursor-pointer items-center rounded-xl bg-ink px-4 text-[15px] font-bold text-white ${busy ? 'opacity-50' : ''}`}>
-            {busy ? '읽는 중…' : '엑셀 올리기'}
-            <input
-              type="file"
-              accept=".xlsx"
-              className="sr-only"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onFile(f);
-                e.target.value = '';
-              }}
-            />
-          </label>
+        {/* One width for all three; the template sits next to the upload it is for. */}
+        <div className="flex gap-4">
+          <button type="button" onClick={() => setWriting(true)} className="flex h-11 w-32 items-center justify-center rounded-xl border border-[#D5D8DF] bg-white text-[15px] font-bold">직접 작성하기</button>
+          <div className="flex gap-2">
+            {/* Saved under a name that also becomes the event's name when it comes back filled in. */}
+            <a href="/templates/week7.xlsx" download="7주차_영단어.xlsx" className="flex h-11 w-32 items-center justify-center rounded-xl border border-[#D5D8DF] bg-white text-[15px] font-bold">템플릿 받기</a>
+            <label className={`flex h-11 w-32 cursor-pointer items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white ${busy ? 'opacity-50' : ''}`}>
+              {busy ? '읽는 중…' : '엑셀 올리기'}
+              <input
+                type="file"
+                accept=".xlsx"
+                className="sr-only"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onFile(f);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
         </div>
       </div>
 
