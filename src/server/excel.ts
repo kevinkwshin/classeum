@@ -1,0 +1,324 @@
+// Reads the Classeum Excel template (단어장 / 문항 / 명단 sheets) and validates it.
+import readExcelFile from 'read-excel-file/node';
+import type { Confusable, CustomQuestion, Pos, Word, WordStatus } from '@/lib/types';
+import { normalizeAnswer, wordKey } from '@/lib/text';
+import { clozeOf } from './generate';
+
+export interface ImportIssue {
+  level: 'error' | 'warning';
+  sheet: string;
+  row?: number;
+  column?: string;
+  message: string;
+}
+
+export interface ImportResult {
+  words: Word[];
+  questions: CustomQuestion[];
+  roster: { number: number; name: string }[];
+  issues: ImportIssue[];
+}
+
+type Cell = string | number | boolean | Date | null;
+
+const POS_VALUES: Pos[] = ['명', '동', '형', '부', '대', '전', '접', '감', '구'];
+const POS_ALIASES: Record<string, Pos> = {
+  명사: '명', 동사: '동', 형용사: '형', 부사: '부', 대명사: '대', 전치사: '전', 접속사: '접', 감탄사: '감', 구동사: '구',
+};
+const STATUS_VALUES: WordStatus[] = ['사용', '검토', '보관'];
+
+// Header aliases → canonical header, so small differences don't lose data.
+const WORD_HEADERS: Record<string, string> = {
+  단어: '단어', 영어: '단어', 영단어: '단어', word: '단어',
+  뜻: '뜻', 의미: '뜻', 한국어: '뜻', meaning: '뜻',
+  품사: '품사',
+  헷갈리는단어: '헷갈리는 단어', 헷갈리는: '헷갈리는 단어',
+  예문: '예문', 예문뜻: '예문 뜻',
+  '시간(초)': '시간(초)', 시간: '시간(초)', 초: '시간(초)',
+  세트: '세트', 단원: '단원', 상태: '상태', 단어id: '단어ID',
+};
+const QUESTION_HEADERS: Record<string, string> = {
+  문항id: '문항ID', id: '문항ID', 유형: '유형', 문제: '문제',
+  보기1: '보기1', 보기2: '보기2', 보기3: '보기3', 보기4: '보기4',
+  정답: '정답', 해설: '해설',
+  피드백1: '피드백1', 피드백2: '피드백2', 피드백3: '피드백3', 피드백4: '피드백4',
+  '시간(초)': '시간(초)', 시간: '시간(초)', 세트: '세트', 상태: '상태',
+};
+
+function text(v: Cell | undefined): string {
+  if (v === null || v === undefined) return '';
+  // Excel turns labels like "10-29" or "1-1" into dates; give back what the teacher typed.
+  if (v instanceof Date) return `${v.getUTCMonth() + 1}-${v.getUTCDate()}`;
+  return String(v).trim();
+}
+
+function headerKey(h: string): string {
+  return h.replace(/\s+/g, '').toLowerCase();
+}
+
+function mapHeaders(row: Cell[], aliases: Record<string, string>, sheet: string, issues: ImportIssue[]) {
+  const map = new Map<string, number>();
+  row.forEach((cell, i) => {
+    const raw = text(cell);
+    if (!raw) return;
+    const canonical = aliases[headerKey(raw)] ?? aliases[raw];
+    if (canonical) {
+      if (!map.has(canonical)) map.set(canonical, i);
+    } else {
+      issues.push({ level: 'warning', sheet, row: 1, column: raw, message: `알 수 없는 머리글 '${raw}'은 건너뛰었어요.` });
+    }
+  });
+  return map;
+}
+
+function seconds(raw: string, sheet: string, row: number, issues: ImportIssue[]): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 5 || n > 60) {
+    issues.push({ level: 'warning', sheet, row, column: '시간(초)', message: `시간 '${raw}'은 5~60 사이가 아니라서 기본 15초로 둡니다.` });
+    return undefined;
+  }
+  return Math.round(n);
+}
+
+function status(raw: string, sheet: string, row: number, issues: ImportIssue[]): WordStatus {
+  if (!raw) return '사용';
+  if ((STATUS_VALUES as string[]).includes(raw)) return raw as WordStatus;
+  issues.push({ level: 'warning', sheet, row, column: '상태', message: `상태 '${raw}'을 몰라서 '사용'으로 둡니다.` });
+  return '사용';
+}
+
+const SPELLING_RE = /^[A-Za-z][A-Za-z '\-.’]*$/;
+
+/** Splits "lend; quite(꽤), there(거기에)" on ; or , outside parentheses and drops entries that aren't English words. */
+function parseConfusables(raw: string, sheet: string, row: number, issues: ImportIssue[]): Confusable[] {
+  const normalized = raw.replace(/（/g, '(').replace(/）/g, ')');
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of normalized) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && /[;；,，]/.test(ch)) {
+      parts.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  parts.push(cur);
+  const out: Confusable[] = [];
+  for (const part of parts.map((p) => p.trim()).filter(Boolean)) {
+    const m = part.match(/^(.+?)\s*\((.+)\)\s*$/);
+    const word = (m ? m[1] : part).trim();
+    if (!SPELLING_RE.test(word) || word.length > 40) {
+      issues.push({ level: 'warning', sheet, row, column: '헷갈리는 단어', message: `'${part}'는 영어 단어가 아니라서 뺐어요.` });
+      continue;
+    }
+    out.push(m ? { word, meaning: m[2].trim() } : { word });
+  }
+  return out;
+}
+
+/** Accepts 1, ①, 1), (1); anything with more than one answer mark is invalid. */
+function parseAnswerIndex(raw: string): number {
+  if (/^[①-④]$/.test(raw)) return '①②③④'.indexOf(raw);
+  const digits = raw.replace(/[()\s.)]/g, '');
+  if (!/^\d+$/.test(digits)) return -1;
+  return Number(digits) - 1;
+}
+
+function parseWords(data: Cell[][], issues: ImportIssue[]): Word[] {
+  const sheet = '단어장';
+  if (data.length === 0) return [];
+  const h = mapHeaders(data[0], WORD_HEADERS, sheet, issues);
+  if (!h.has('단어') || !h.has('뜻')) {
+    issues.push({ level: 'error', sheet, row: 1, message: "'단어'와 '뜻' 머리글이 있어야 해요." });
+    return [];
+  }
+  const get = (row: Cell[], col: string) => (h.has(col) ? text(row[h.get(col)!]) : '');
+  const words: Word[] = [];
+  const seen = new Map<string, number>();
+  data.slice(1).forEach((row, i) => {
+    const r = i + 2;
+    const spellingRaw = get(row, '단어');
+    const meaning = get(row, '뜻');
+    if (!spellingRaw && !meaning) return;
+    if (!spellingRaw) {
+      issues.push({ level: 'error', sheet, row: r, column: '단어', message: '단어가 비어 있어요.' });
+      return;
+    }
+    if (!meaning) {
+      issues.push({ level: 'error', sheet, row: r, column: '뜻', message: `'${spellingRaw}'의 뜻이 비어 있어요.` });
+      return;
+    }
+    const spellings = spellingRaw.split('|').map((s) => s.trim()).filter(Boolean);
+    if (spellings.some((s) => !SPELLING_RE.test(s) || s.length > 40)) {
+      issues.push({ level: 'error', sheet, row: r, column: '단어', message: `'${spellingRaw}'에는 영어, 띄어쓰기, ' - . 만 쓸 수 있어요.` });
+      return;
+    }
+    const id = get(row, '단어ID');
+    const key = id ? `id:${id}` : wordKey(spellingRaw);
+    if (seen.has(key)) {
+      issues.push({ level: 'warning', sheet, row: r, column: '단어', message: `'${spellingRaw}'는 ${seen.get(key)}행과 같은 단어라서 건너뛰었어요.` });
+      return;
+    }
+    seen.set(key, r);
+    const posRaw = get(row, '품사');
+    let pos: Pos | undefined;
+    if (posRaw) {
+      pos = (POS_VALUES as string[]).includes(posRaw) ? (posRaw as Pos) : POS_ALIASES[posRaw];
+      if (!pos) issues.push({ level: 'warning', sheet, row: r, column: '품사', message: `품사 '${posRaw}'를 몰라서 비워 둡니다.` });
+    }
+    const example = get(row, '예문');
+    const word: Word = {
+      key,
+      spelling: spellings[0],
+      altSpellings: spellings.slice(1),
+      meaning,
+      pos,
+      confusables: parseConfusables(get(row, '헷갈리는 단어'), sheet, r, issues),
+      example: example || undefined,
+      exampleMeaning: get(row, '예문 뜻') || undefined,
+      seconds: seconds(get(row, '시간(초)'), sheet, r, issues),
+      set: get(row, '세트') || undefined,
+      unit: get(row, '단원') || undefined,
+      status: status(get(row, '상태'), sheet, r, issues),
+    };
+    if (example && !clozeOf(word)) {
+      const brackets = (example.match(/\[/g) ?? []).length;
+      const why =
+        brackets > 1
+          ? '[ ]는 한 번만 써 주세요.'
+          : brackets === 1
+            ? `[ ] 안의 글자가 '${spellings[0]}'과 똑같아야 해요 (cooks처럼 바뀐 형태는 쓰지 않아요).`
+            : `'${spellings[0]}' 자리를 [ ]로 감싸 주세요.`;
+      issues.push({ level: 'warning', sheet, row: r, column: '예문', message: `예문 빈칸 문제를 만들지 못했어요. ${why}` });
+    }
+    words.push(word);
+  });
+  return words;
+}
+
+function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[] {
+  const sheet = '문항';
+  if (data.length === 0) return [];
+  const h = mapHeaders(data[0], QUESTION_HEADERS, sheet, issues);
+  const get = (row: Cell[], col: string) => (h.has(col) ? text(row[h.get(col)!]) : '');
+  const out: CustomQuestion[] = [];
+  const ids = new Set<string>();
+  data.slice(1).forEach((row, i) => {
+    const r = i + 2;
+    const id = get(row, '문항ID');
+    const prompt = get(row, '문제');
+    if (!id && !prompt) return;
+    if (!id) {
+      issues.push({ level: 'error', sheet, row: r, column: '문항ID', message: '문항ID가 비어 있어요.' });
+      return;
+    }
+    if (ids.has(id)) {
+      issues.push({ level: 'error', sheet, row: r, column: '문항ID', message: `문항ID '${id}'가 두 번 나와요.` });
+      return;
+    }
+    ids.add(id);
+    const kind = get(row, '유형');
+    if (kind !== '객관식' && kind !== 'OX' && kind !== '단답형') {
+      issues.push({ level: 'error', sheet, row: r, column: '유형', message: `유형 '${kind}'는 객관식, OX, 단답형 중 하나여야 해요.` });
+      return;
+    }
+    if (!prompt) {
+      issues.push({ level: 'error', sheet, row: r, column: '문제', message: '문제가 비어 있어요.' });
+      return;
+    }
+    const answerRaw = get(row, '정답');
+    if (!answerRaw) {
+      issues.push({ level: 'error', sheet, row: r, column: '정답', message: '정답이 비어 있어요.' });
+      return;
+    }
+    let options: string[] = [];
+    let answerIndex = 0;
+    let answers: string[] = [];
+    let feedback = ['피드백1', '피드백2', '피드백3', '피드백4'].map((c) => get(row, c));
+    if (kind === '객관식') {
+      // Keep each option tied to its own column so a blank 보기2 doesn't shift the answer or feedback.
+      const cols = [1, 2, 3, 4].map((n) => ({ label: get(row, `보기${n}`), feedback: get(row, `피드백${n}`), col: n - 1 }));
+      const kept = cols.filter((c) => c.label);
+      if (kept.length < 2) {
+        issues.push({ level: 'error', sheet, row: r, column: '보기1', message: '객관식은 보기가 2개 이상 있어야 해요.' });
+        return;
+      }
+      const colIdx = parseAnswerIndex(answerRaw);
+      if (colIdx < 0 || colIdx > 3 || !cols[colIdx].label) {
+        issues.push({ level: 'error', sheet, row: r, column: '정답', message: colIdx >= 0 && colIdx <= 3 ? `정답이 가리키는 보기${colIdx + 1}이 비어 있어요.` : `정답 '${answerRaw}'는 1~4 중 하나여야 해요.` });
+        return;
+      }
+      options = kept.map((c) => c.label);
+      feedback = kept.map((c) => c.feedback);
+      answerIndex = kept.findIndex((c) => c.col === colIdx);
+    } else if (kind === 'OX') {
+      const a = answerRaw.toUpperCase().replace('○', 'O').replace('×', 'X');
+      if (a !== 'O' && a !== 'X') {
+        issues.push({ level: 'error', sheet, row: r, column: '정답', message: 'OX 정답은 O 또는 X여야 해요.' });
+        return;
+      }
+      options = ['O', 'X'];
+      answerIndex = a === 'O' ? 0 : 1;
+    } else {
+      answers = answerRaw.split('|').map((a) => normalizeAnswer(a)).filter(Boolean);
+    }
+    out.push({
+      id,
+      kind,
+      prompt,
+      options,
+      answerIndex,
+      answers,
+      explanation: get(row, '해설') || undefined,
+      feedback,
+      seconds: seconds(get(row, '시간(초)'), sheet, r, issues),
+      set: get(row, '세트') || undefined,
+      status: status(get(row, '상태'), sheet, r, issues),
+    });
+  });
+  return out;
+}
+
+function parseRoster(data: Cell[][], issues: ImportIssue[]) {
+  const sheet = '명단';
+  if (data.length === 0) return [];
+  const header = data[0].map((c) => headerKey(text(c)));
+  const numCol = header.indexOf('번호');
+  const nameCol = header.indexOf('이름');
+  if (numCol < 0 || nameCol < 0) {
+    issues.push({ level: 'warning', sheet, row: 1, message: "명단 시트에 '번호'와 '이름' 머리글이 없어서 건너뛰었어요." });
+    return [];
+  }
+  const out: { number: number; name: string }[] = [];
+  data.slice(1).forEach((row, i) => {
+    const num = Number(text(row[numCol]));
+    const name = text(row[nameCol]);
+    if (!name && !text(row[numCol])) return;
+    if (!Number.isInteger(num) || num <= 0 || !name) {
+      issues.push({ level: 'warning', sheet, row: i + 2, message: '번호나 이름이 비어 있어 건너뛰었어요.' });
+      return;
+    }
+    out.push({ number: num, name });
+  });
+  return out;
+}
+
+export async function importWorkbook(buffer: Buffer): Promise<ImportResult> {
+  const issues: ImportIssue[] = [];
+  let sheets: { sheet: string; data: Cell[][] }[];
+  try {
+    sheets = (await readExcelFile(buffer)) as { sheet: string; data: Cell[][] }[];
+  } catch {
+    return { words: [], questions: [], roster: [], issues: [{ level: 'error', sheet: '파일', message: '엑셀(.xlsx) 파일을 읽지 못했어요.' }] };
+  }
+  const find = (name: string) => sheets.find((s) => s.sheet.replace(/\s+/g, '') === name)?.data ?? [];
+  const words = parseWords(find('단어장'), issues);
+  const questions = parseQuestions(find('문항'), issues);
+  const roster = parseRoster(find('명단'), issues);
+  if (words.length === 0 && questions.length === 0 && !issues.some((i) => i.level === 'error')) {
+    issues.push({ level: 'error', sheet: '파일', message: "'단어장'이나 '문항' 시트에 내용이 없어요." });
+  }
+  return { words, questions, roster, issues };
+}

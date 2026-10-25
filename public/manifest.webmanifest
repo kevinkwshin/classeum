@@ -1,0 +1,9 @@
+{
+  "name": "Classeum",
+  "short_name": "Classeum",
+  "start_url": "/play",
+  "display": "browser",
+  "background_color": "#ffffff",
+  "theme_color": "#101218",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
