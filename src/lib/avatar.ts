@@ -1062,8 +1062,10 @@ const CAPE: Record<string, string[]> = {
 
 /** Hats that cover the top of the head hide hair that would stick up through them (the helmet hides curls too). */
 function hidesHair(look: AvatarLook): boolean {
+  // The space helmet is sealed glass: no hair outside it (the short hair in BASE still shows inside).
+  if (look.helmet === 'space') return true;
   const tall = ['bun', 'twinbun', 'spiky'].includes(look.hairStyle);
-  const full = ['galea', 'space', 'knight'].includes(look.helmet);
+  const full = ['galea', 'knight'].includes(look.helmet);
   return (full && (tall || look.hairStyle === 'curly')) || (['wizard', 'straw', 'cap', 'grad', 'hardhat', 'hennin', 'capybara'].includes(look.helmet) && tall);
 }
 
