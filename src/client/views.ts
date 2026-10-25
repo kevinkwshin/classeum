@@ -64,6 +64,8 @@ export interface TeacherEvent {
   retryRound: boolean;
   /** The Excel file it was made from; null for events made before this was kept. */
   fileName: string | null;
+  /** Typed in the teacher screen ([직접 작성하기]) instead of uploaded. */
+  typed: boolean;
   /** Classes that have played it: latest run's day and accuracy, number of runs, and whether it was cut short. */
   classRuns: { classId: string; last: number; runs: number; accuracy: number; partial: boolean }[];
   played: number;

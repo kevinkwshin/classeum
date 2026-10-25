@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
@@ -235,9 +235,36 @@ interface UploadResult {
   groups?: { name: string; wordCount: number; reviewCount: number; customCount: number; warnings: string[]; questions: { prompt: string; modeLabel: string; options: string[]; answerIndex: number; answers?: string[] }[] }[];
 }
 
+type TypedRow = { spelling: string; meaning: string; example: string };
+type TypedDraft = { title: string; rows: TypedRow[] };
+const TYPED_KEY = 'classeum.typed';
+const blankRows = (n: number): TypedRow[] => Array.from({ length: n }, () => ({ spelling: '', meaning: '', example: '' }));
+
+/** What was being typed in [직접 작성하기] survives closing the window or reloading the page, on this laptop only. */
+function loadTyped(): TypedDraft {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TYPED_KEY) ?? 'null') as TypedDraft | null;
+    if (saved && typeof saved.title === 'string' && Array.isArray(saved.rows) && saved.rows.length) return saved;
+  } catch {
+    // Storage blocked or broken: start empty.
+  }
+  return { title: '', rows: blankRows(10) };
+}
+
 function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (message: string) => void }) {
   const [upload, setUpload] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [writing, setWriting] = useState(false);
+  // Whether the open preview came from [직접 작성하기], so 고치기 goes back to the editor.
+  const [typedPreview, setTypedPreview] = useState(false);
+  const [typed, setTyped] = useState<TypedDraft>(loadTyped);
+  useEffect(() => {
+    try {
+      localStorage.setItem(TYPED_KEY, JSON.stringify(typed));
+    } catch {
+      // Not saved; the editor still works.
+    }
+  }, [typed]);
   const [selected, setSelected] = useState<string | null>(null);
   const event = view.events.find((e) => e.id === selected) ?? view.events[0] ?? null;
 
@@ -247,7 +274,19 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
     form.append('file', file);
     const res = (await fetch('/api/upload', { method: 'POST', body: form }).then((r) => r.json()).catch(() => ({ ok: false, error: '업로드에 실패했어요.' }))) as UploadResult;
     setUpload(res);
+    setTypedPreview(false);
     setBusy(false);
+  };
+
+  const previewTyped = async () => {
+    setBusy(true);
+    const res = (await fetch('/api/words', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: typed.title, words: typed.rows }) })
+      .then((r) => r.json())
+      .catch(() => ({ ok: false, error: '미리보기를 만들지 못했어요.' }))) as UploadResult;
+    setBusy(false);
+    setWriting(false);
+    setTypedPreview(true);
+    setUpload(res);
   };
 
   return (
@@ -257,6 +296,7 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
         <div className="flex gap-2">
           {/* Saved under a name that also becomes the event's name when it comes back filled in. */}
           <a href="/templates/week7.xlsx" download="7주차_영단어.xlsx" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">템플릿 받기</a>
+          <button type="button" onClick={() => setWriting(true)} className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">직접 작성하기</button>
           <label className={`flex h-11 cursor-pointer items-center rounded-xl bg-ink px-4 text-[15px] font-bold text-white ${busy ? 'opacity-50' : ''}`}>
             {busy ? '읽는 중…' : '엑셀 올리기'}
             <input
@@ -276,7 +316,7 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
       {view.events.length === 0 && !upload && (
         <Card className="flex flex-col items-center gap-3 py-16 text-center">
           <div className="text-xl font-bold">아직 이벤트가 없어요</div>
-          <div className="text-ink-3">단어장 엑셀을 올리면 문제가 자동으로 만들어져요.</div>
+          <div className="text-ink-3">단어장 엑셀을 올리거나 [직접 작성하기]로 단어와 뜻을 쓰면 문제가 자동으로 만들어져요.</div>
         </Card>
       )}
 
@@ -313,9 +353,14 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
         </div>
       )}
 
-      {upload && <UploadPreview result={upload} onClose={() => setUpload(null)} onCreate={async () => {
+      {writing && <WordEditor draft={typed} setDraft={setTyped} busy={busy} onClose={() => setWriting(false)} onPreview={previewTyped} />}
+      {upload && <UploadPreview result={upload} typed={typedPreview} onClose={() => {
+        setUpload(null);
+        if (typedPreview) setWriting(true);
+      }} onCreate={async () => {
         const res = (await act({ type: 'create-event', draftId: upload.draftId })) as { eventIds?: string[] };
         setUpload(null);
+        if (typedPreview) setTyped({ title: '', rows: blankRows(10) });
         if (res.eventIds?.[0]) setSelected(res.eventIds[0]);
         else notify('단어만 저장했어요 (만들 문제가 없어요)');
       }} />}
@@ -387,6 +432,7 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
               📄 {event.fileName} · {new Date(event.createdAt).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })} 올림
             </div>
           )}
+          {event.typed && <div className="mt-0.5 text-sm text-ink-3">✏️ 직접 작성 · {new Date(event.createdAt).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}</div>}
         </div>
         <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
           <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요?`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
@@ -467,14 +513,124 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
   );
 }
 
-function UploadPreview({ result, onClose, onCreate }: { result: UploadResult; onClose: () => void; onCreate: () => void }) {
+/**
+ * [직접 작성하기]: a title and a table of word / meaning / example. Pasting several lines copied from Excel or a
+ * Hangul table fills the rows from there (columns split by tabs); Enter moves down a row.
+ */
+function WordEditor({ draft, setDraft, busy, onClose, onPreview }: { draft: TypedDraft; setDraft: (f: (d: TypedDraft) => TypedDraft) => void; busy: boolean; onClose: () => void; onPreview: () => void }) {
+  const cells = useRef<(HTMLInputElement | null)[][]>([]);
+  const keys = ['spelling', 'meaning', 'example'] as const;
+  const filled = draft.rows.filter((r) => r.spelling.trim() && r.meaning.trim()).length;
+  const setCell = (row: number, col: number, value: string) => setDraft((d) => ({ ...d, rows: d.rows.map((r, i) => (i === row ? { ...r, [keys[col]]: value } : r)) }));
+  const focus = (row: number, col: number) => requestAnimationFrame(() => cells.current[row]?.[col]?.focus());
+  const paste = (row: number, col: number) => (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text').replace(/\r/g, '');
+    if (!/[\t\n]/.test(text.trim())) return;
+    e.preventDefault();
+    const lines = text.split('\n').filter((l) => l.trim());
+    setDraft((d) => {
+      const rows = [...d.rows];
+      lines.forEach((line, k) => {
+        while (rows.length <= row + k) rows.push(...blankRows(1));
+        const next = { ...rows[row + k] };
+        line.split('\t').slice(0, 3 - col).forEach((value, j) => (next[keys[col + j]] = value.trim()));
+        rows[row + k] = next;
+      });
+      return { ...d, rows };
+    });
+  };
+  const down = (row: number, col: number) => (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    if (row + 1 >= draft.rows.length) setDraft((d) => ({ ...d, rows: [...d.rows, ...blankRows(5)] }));
+    focus(row + 1, col);
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8">
+      <div className="flex max-h-full w-full max-w-5xl flex-col gap-4 overflow-hidden rounded-[24px] bg-white p-7">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">직접 작성하기</h2>
+          <span className="rounded-full bg-good-soft px-3 py-1 text-sm font-bold text-good">단어 {filled}</span>
+        </div>
+        <input
+          value={draft.title}
+          onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+          placeholder="제목 (예: 8주차 영단어)"
+          maxLength={40}
+          autoFocus
+          aria-label="제목"
+          className="h-12 rounded-xl border border-[#D5D8DF] px-4 text-lg font-bold outline-none focus:border-ink"
+        />
+        <p className="text-sm text-ink-3">
+          단어와 뜻만 쓰면 문제가 자동으로 만들어져요. 엑셀이나 한글 표에서 여러 줄을 복사해 붙여 넣어도 돼요. 예문은 빈칸 자리를 [ ]로 감싸면 빈칸 문제도 생겨요. (예: Can I [borrow] your pen?)
+        </p>
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-[#EEF0F3]">
+          <table className="w-full text-[15px]">
+            <thead className="sticky top-0 bg-bg text-left text-sm text-ink-3">
+              <tr>
+                <th className="w-10 py-2 pl-3 font-semibold">#</th>
+                <th className="w-[26%] py-2 font-semibold">단어 (영어)</th>
+                <th className="w-[26%] py-2 font-semibold">뜻</th>
+                <th className="py-2 font-semibold">예문 (선택)</th>
+                <th className="w-10" />
+              </tr>
+            </thead>
+            <tbody>
+              {draft.rows.map((r, i) => (
+                <tr key={i} className="border-t border-[#EEF0F3]">
+                  <td className="tabular pl-3 text-sm text-ink-3">{i + 1}</td>
+                  {keys.map((k, c) => (
+                    <td key={k} className="py-1 pr-2">
+                      <input
+                        ref={(el) => {
+                          (cells.current[i] ??= [])[c] = el;
+                        }}
+                        value={r[k]}
+                        onChange={(e) => setCell(i, c, e.target.value)}
+                        onPaste={paste(i, c)}
+                        onKeyDown={down(i, c)}
+                        lang={k === 'meaning' ? 'ko' : 'en'}
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        aria-label={`${i + 1}번 ${k === 'spelling' ? '단어' : k === 'meaning' ? '뜻' : '예문'}`}
+                        className="h-10 w-full rounded-lg bg-bg px-3 outline-none focus:bg-white focus:ring-2 focus:ring-ink/20"
+                      />
+                    </td>
+                  ))}
+                  <td>
+                    <button type="button" aria-label={`${i + 1}번 줄 지우기`} onClick={() => setDraft((d) => ({ ...d, rows: d.rows.length > 1 ? d.rows.filter((_, k) => k !== i) : blankRows(1) }))} className="h-8 w-8 rounded-lg text-ink-3 hover:bg-bg">
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex gap-2">
+            <Btn kind="ghost" onClick={() => setDraft((d) => ({ ...d, rows: [...d.rows, ...blankRows(10)] }))}>10줄 추가</Btn>
+            <Btn kind="ghost" onClick={() => { if (confirm('쓴 내용을 모두 지울까요?')) setDraft(() => ({ title: '', rows: blankRows(10) })); }}>비우기</Btn>
+          </div>
+          <div className="flex items-center gap-3">
+            {filled > 0 && filled < 4 && <span className="text-sm text-ink-3">단어가 4개 이상이면 보기를 잘 만들 수 있어요</span>}
+            <Btn kind="ghost" onClick={onClose}>닫기</Btn>
+            <Btn disabled={busy || filled === 0} onClick={onPreview}>{busy ? '만드는 중…' : '미리보기'}</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UploadPreview({ result, typed = false, onClose, onCreate }: { result: UploadResult; typed?: boolean; onClose: () => void; onCreate: () => void }) {
   const errors = result.issues?.filter((i) => i.level === 'error') ?? [];
   const warnings = result.issues?.filter((i) => i.level === 'warning') ?? [];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8">
       <div className="flex max-h-full w-full max-w-4xl flex-col gap-4 overflow-hidden rounded-[24px] bg-white p-7">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">파일 확인</h2>
+          <h2 className="text-xl font-bold">{typed ? '직접 작성 확인' : '파일 확인'}</h2>
           <div className="flex gap-2 text-sm font-bold">
             <span className="rounded-full bg-good-soft px-3 py-1 text-good">문제 {result.groups?.reduce((n, g) => n + g.questions.length, 0) ?? 0}</span>
             {warnings.length > 0 && <span className="rounded-full bg-[#FFF8E6] px-3 py-1">경고 {warnings.length}</span>}
@@ -485,11 +641,11 @@ function UploadPreview({ result, onClose, onCreate }: { result: UploadResult; on
         <div className="flex flex-col gap-4 overflow-y-auto">
           {[...errors, ...warnings].length > 0 && (
             <table className="w-full text-left text-sm">
-              <thead className="text-ink-3"><tr><th className="py-1">시트</th><th>행</th><th>칸</th><th>내용</th></tr></thead>
+              <thead className="text-ink-3"><tr>{!typed && <th className="py-1">시트</th>}<th className="py-1">행</th><th>칸</th><th>내용</th></tr></thead>
               <tbody>
                 {[...errors, ...warnings].map((i, k) => (
                   <tr key={k} className="border-t border-[#EEF0F3]">
-                    <td className="py-1.5 pr-3">{i.sheet}</td><td className="tabular pr-3">{i.row ?? ''}</td><td className="pr-3">{i.column ?? ''}</td>
+                    {!typed && <td className="py-1.5 pr-3">{i.sheet}</td>}<td className="tabular py-1.5 pr-3">{i.row ?? ''}</td><td className="pr-3">{i.column ?? ''}</td>
                     <td className={i.level === 'error' ? 'font-semibold text-bad' : ''}>{i.message}</td>
                   </tr>
                 ))}
@@ -519,8 +675,8 @@ function UploadPreview({ result, onClose, onCreate }: { result: UploadResult; on
           ))}
         </div>
         <div className="flex justify-end gap-2">
-          <Btn kind="ghost" onClick={onClose}>취소</Btn>
-          <Btn disabled={!result.ok || result.hasErrors || !result.groups?.length} onClick={onCreate}>{result.hasErrors ? '오류를 고친 뒤 다시 올려 주세요' : '이벤트 만들기'}</Btn>
+          <Btn kind="ghost" onClick={onClose}>{typed ? '고치기' : '취소'}</Btn>
+          <Btn disabled={!result.ok || result.hasErrors || !result.groups?.length} onClick={onCreate}>{result.hasErrors ? (typed ? '고치기를 눌러 오류를 고쳐 주세요' : '오류를 고친 뒤 다시 올려 주세요') : '이벤트 만들기'}</Btn>
         </div>
       </div>
     </div>

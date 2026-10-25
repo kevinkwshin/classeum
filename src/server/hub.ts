@@ -132,6 +132,8 @@ interface Draft {
   issues: ImportIssue[];
   /** The uploaded Excel file's name, kept on the events it makes. */
   fileName?: string;
+  /** Typed in the teacher screen ([직접 작성하기]) rather than uploaded. */
+  typed?: boolean;
 }
 
 /** Names as students type them: Hangul or Latin letters, spaces, '·', '.', '-'; at most 20. */
@@ -476,6 +478,7 @@ class Hub {
         estimateSec: Math.round(e.questions.reduce((sum, q) => sum + Math.min(q.seconds, 9) + 4, 0) + 60 + (e.retryRound ? 60 : 0)),
         seconds: mostCommon(e.questions.map((q) => q.seconds)),
         fileName: e.fileName ?? null,
+        typed: !!e.typed,
         retryRound: !!e.retryRound,
         played: sessionsOf.get(e.id)?.length ?? 0,
         classRuns: classRuns(e, sessionsOf.get(e.id) ?? []),
@@ -953,11 +956,12 @@ class Hub {
 
   // ---------- events ----------
 
-  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }, fileName?: string) {
+  /** `title` is typed in [직접 작성하기]; an upload passes its file name instead. */
+  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }, fileName?: string, title?: string) {
     // Only the name as shown in the teacher's file picker: no folders, no control characters, not too long.
     const cleanFile = fileName?.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined;
     // Rows without a 세트 make an event named after the file ('3주차 단어장'), or after the day if the name is unknown.
-    const defaultName = cleanFile?.replace(/\.xlsx?$/i, '').trim().slice(0, 40) || `${shortDate()} 퀴즈`;
+    const defaultName = title?.trim().slice(0, 40) || cleanFile?.replace(/\.xlsx?$/i, '').trim().slice(0, 40) || `${shortDate()} 퀴즈`;
     const groups = new Map<string, { words: Word[]; custom: CustomQuestion[] }>();
     for (const w of result.words) {
       const name = w.set || defaultName;
@@ -969,7 +973,7 @@ class Hub {
       if (!groups.has(name)) groups.set(name, { words: [], custom: [] });
       groups.get(name)!.custom.push(q);
     }
-    const draft: Draft = { id: newId('draft'), createdAt: Date.now(), groups: [...groups].map(([name, g]) => ({ name, ...g })), generated: new Map(), roster: result.roster, issues: result.issues, fileName: cleanFile };
+    const draft: Draft = { id: newId('draft'), createdAt: Date.now(), groups: [...groups].map(([name, g]) => ({ name, ...g })), generated: new Map(), roster: result.roster, issues: result.issues, fileName: cleanFile, typed: title !== undefined };
     this.drafts.set(draft.id, draft);
     return draft;
   }
@@ -1049,6 +1053,7 @@ class Hub {
         reward: { itemId: nextItem.id, challengePct: 70, growthPp: 10 },
         wordKeys: g.words.map((w) => w.key),
         fileName: draft.fileName,
+        typed: draft.typed,
       };
       ids.push(id);
     }

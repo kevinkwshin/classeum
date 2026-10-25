@@ -61,6 +61,8 @@ export interface EventRec {
   retryRound?: boolean;
   /** The Excel file it was made from (events made before this was kept have none). */
   fileName?: string;
+  /** Typed in the teacher screen instead of uploaded. */
+  typed?: boolean;
 }
 
 export interface ResponseRec {

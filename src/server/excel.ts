@@ -161,8 +161,8 @@ function parseAnswerIndex(raw: string): number {
   return Number(digits) - 1;
 }
 
-function parseWords(data: Cell[][], issues: ImportIssue[]): Word[] {
-  const sheet = '단어장';
+/** `firstRow` is the number of the row after the header, as the teacher sees it. */
+function parseWords(data: Cell[][], issues: ImportIssue[], sheet = '단어장', firstRow = 2): Word[] {
   if (data.length === 0) return [];
   const h = mapHeaders(data[0], WORD_HEADERS, sheet, issues);
   if (!h.has('단어') || !h.has('뜻')) {
@@ -173,7 +173,7 @@ function parseWords(data: Cell[][], issues: ImportIssue[]): Word[] {
   const words: Word[] = [];
   const seen = new Map<string, number>();
   data.slice(1).forEach((row, i) => {
-    const r = i + 2;
+    const r = i + firstRow;
     const get = (cells: Cell[], col: string) => read(cells, col, r);
     const spellingRaw = get(row, '단어');
     const meaning = get(row, '뜻');
@@ -365,6 +365,15 @@ function parseRoster(data: Cell[][], issues: ImportIssue[]) {
     out.push({ className: className.slice(0, 20), number: num, name });
   });
   return out;
+}
+
+/** Words typed in the teacher screen ([직접 작성하기]), checked by the same rules as a 단어장 sheet. */
+export function importTypedWords(rows: { spelling: string; meaning: string; example?: string }[]): ImportResult {
+  const issues: ImportIssue[] = [];
+  // Rows count from 1 as on screen, where there is no header row.
+  const words = parseWords([['단어', '뜻', '예문'], ...rows.map((r) => [r.spelling, r.meaning, r.example ?? ''])], issues, '직접 작성', 1);
+  if (words.length === 0 && !issues.some((i) => i.level === 'error')) issues.push({ level: 'error', sheet: '직접 작성', message: '단어와 뜻을 한 줄 이상 써 주세요.' });
+  return { words, questions: [], roster: [], issues };
 }
 
 export async function importWorkbook(buffer: Buffer): Promise<ImportResult> {
