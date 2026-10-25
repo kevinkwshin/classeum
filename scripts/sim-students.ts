@@ -92,11 +92,14 @@ async function main() {
   for (const r of ((teacher as View).requests ?? []) as { id: string; kind: string }[]) await post({ type: 'approve', requestId: r.id, kind: r.kind });
   await sleep(500);
 
-  const skins = ['light', 'medium', 'tan'];
-  const hairs = ['black', 'brown', 'blond'];
-  const styles = ['short', 'long', 'ponytail'];
+  const skins = ['light', 'medium', 'tan', 'deep'];
+  const hairs = ['black', 'brown', 'blond', 'red', 'pink', 'blue', 'silver'];
+  const styles = ['short', 'long', 'bob', 'ponytail', 'pigtails', 'braid', 'side', 'curly', 'spiky', 'bun', 'twinbun', 'buzz'];
+  const eyes = ['round', 'big', 'smile', 'sharp', 'dot'];
   for (const p of phones) {
-    await post({ type: 'look', token: p.token, look: { skin: skins[p.i % 3], hair: hairs[(p.i * 2) % 3], hairStyle: styles[(p.i * 5) % 3] } });
+    // Mostly natural hair colours, with a few bright ones, so the field looks like a real class.
+    const hair = p.i % 5 === 4 ? hairs[3 + ((p.i / 5) | 0) % 4] : hairs[p.i % 3];
+    await post({ type: 'look', token: p.token, look: { skin: skins[(p.i * 3) % 4], hair, hairStyle: styles[(p.i * 7) % 12], eyes: eyes[(p.i * 2) % 5] } });
   }
   console.log(`${COUNT}명 등록 완료. 선생님 화면에서 대기실을 열고 퀴즈를 시작하세요. (Ctrl+C로 종료)`);
 

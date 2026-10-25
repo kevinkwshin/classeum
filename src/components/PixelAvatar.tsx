@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { AvatarLook } from '@/lib/types';
-import { avatarRuns, eyesCovered, skinTones } from '@/lib/avatar';
+import { avatarRuns, eyesCovered, GRID, skinTones } from '@/lib/avatar';
 
 const SPARKS: [number, number, number][] = [[1, 3, 0], [13, 2, 0.4], [14, 8, 0.8], [0, 10, 1.2], [12, 13, 0.6], [2, 6, 1.0]];
 const PUFFS: [number, number, number][] = [[3, 15, 0], [12, 15, 0.4], [2, 14, 0.8], [13, 14, 0.2]];
@@ -23,52 +23,52 @@ function Shape({ cells, x, y, color, delay, className }: { cells: number[][]; x:
     </g>
   );
 }
-// Eye pixels sit at (6,6) and (9,6), the mouth at (7..8, 8) on every layer combination.
-const EYES = [6, 9];
+// Each eye has a 3x2 box (cols 7-9 and 14-16, rows 10-11); the mouth is on row 13, the chin on row 14.
+const EYE_BOX = [7, 14];
+const EYE_Y = 10;
 const INK = '#1E1A16';
+// The effects were drawn on the old 16-pixel grid; they keep their size relative to the character.
+const FX_SCALE = GRID / 16;
 
 export type Mood = 'normal' | 'happy' | 'dizzy' | 'sleep';
 
 function Face({ look, mood }: { look: AvatarLook; mood: Exclude<Mood, 'normal'> }) {
   const [skin] = skinTones(look);
-  // Behind sunglasses only the mouth (and cheeks) change.
+  // Behind sunglasses only the mouth changes.
   const eyes = !eyesCovered(look);
   return (
     <g>
-      {eyes &&
-        EYES.map((x) => (
-          <rect key={x} x={x} y={6} width={1} height={1} fill={skin} />
-        ))}
+      {eyes && EYE_BOX.map((x) => <rect key={x} x={x} y={EYE_Y} width={3} height={2} fill={skin} />)}
       {mood === 'happy' && (
         <>
-          {/* ^ ^ eyes, pink cheeks, open grin */}
-          {eyes && EYES.map((x) => (
-            <g key={x}>
-              <rect x={x - 0.1} y={6.15} width={0.6} height={0.28} fill={INK} transform={`rotate(-40 ${x + 0.2} ${6.3})`} />
-              <rect x={x + 0.5} y={6.15} width={0.6} height={0.28} fill={INK} transform={`rotate(40 ${x + 0.8} ${6.3})`} />
-            </g>
-          ))}
-          <rect x={5} y={7} width={1} height={1} fill="#F28B9A" opacity={0.75} />
-          <rect x={10} y={7} width={1} height={1} fill="#F28B9A" opacity={0.75} />
-          <rect x={6.5} y={8} width={3} height={1} fill="#7A2A2A" />
-          <rect x={7.25} y={8.5} width={1.5} height={0.5} fill="#E06A6A" />
+          {/* ^ ^ eyes and an open grin */}
+          {eyes &&
+            EYE_BOX.map((x) => (
+              <g key={x} fill={INK}>
+                <rect x={x + 1} y={EYE_Y} width={1} height={1} />
+                <rect x={x} y={EYE_Y + 1} width={1} height={1} />
+                <rect x={x + 2} y={EYE_Y + 1} width={1} height={1} />
+              </g>
+            ))}
+          <rect x={10} y={13} width={4} height={1} fill="#7A2A2A" />
+          <rect x={11} y={14} width={2} height={1} fill="#E06A6A" />
         </>
       )}
       {mood === 'dizzy' && (
         <>
           {/* x x eyes and a wobbly mouth */}
-          {eyes && EYES.map((x) => (
-            <g key={x}>
-              <rect x={x - 0.15} y={6.36} width={1.3} height={0.28} fill={INK} transform={`rotate(45 ${x + 0.5} 6.5)`} />
-              <rect x={x - 0.15} y={6.36} width={1.3} height={0.28} fill={INK} transform={`rotate(-45 ${x + 0.5} 6.5)`} />
-            </g>
-          ))}
-          <rect x={7} y={8.2} width={0.7} height={0.5} fill={INK} />
-          <rect x={7.7} y={8.5} width={0.7} height={0.5} fill={INK} />
+          {eyes &&
+            EYE_BOX.map((x) => (
+              <g key={x}>
+                <rect x={x - 0.1} y={EYE_Y + 0.75} width={3.2} height={0.5} fill={INK} transform={`rotate(35 ${x + 1.5} ${EYE_Y + 1})`} />
+                <rect x={x - 0.1} y={EYE_Y + 0.75} width={3.2} height={0.5} fill={INK} transform={`rotate(-35 ${x + 1.5} ${EYE_Y + 1})`} />
+              </g>
+            ))}
+          <rect x={10} y={13} width={2} height={1} fill="#7A2A2A" />
+          <rect x={12} y={13.5} width={2} height={1} fill="#7A2A2A" />
         </>
       )}
-      {mood === 'sleep' && eyes &&
-        EYES.map((x) => <rect key={x} x={x - 0.1} y={6.5} width={1.2} height={0.28} fill={INK} />)}
+      {mood === 'sleep' && eyes && EYE_BOX.map((x) => <rect key={x} x={x} y={EYE_Y + 1} width={3} height={0.6} fill={INK} />)}
     </g>
   );
 }
@@ -99,8 +99,9 @@ function PixelAvatarImpl({
     <svg
       width={size}
       height={size}
-      viewBox="0 0 16 16"
-      shapeRendering="crispEdges"
+      viewBox={`0 0 ${GRID} ${GRID}`}
+      // Below one CSS pixel per grid pixel, crisp edges would drop whole rows (an eye, the mouth); let them blend instead.
+      shapeRendering={size >= GRID ? 'crispEdges' : 'auto'}
       role={title ? 'img' : undefined}
       aria-label={title}
       aria-hidden={title ? undefined : true}
@@ -112,22 +113,24 @@ function PixelAvatarImpl({
       {mood !== 'normal' && <Face look={look} mood={mood} />}
       {mood === 'normal' && blink !== undefined && !eyesCovered(look) && (
         <g className="cls-blink" style={{ animationDelay: `-${((blink * 1.37) % 5).toFixed(2)}s` }}>
-          {EYES.map((x) => (
+          {EYE_BOX.map((x) => (
             <g key={x}>
-              <rect x={x} y={6} width={1} height={1} fill={skin} />
-              <rect x={x - 0.1} y={6.5} width={1.2} height={0.28} fill={INK} />
+              <rect x={x} y={EYE_Y} width={3} height={2} fill={skin} />
+              <rect x={x} y={EYE_Y + 1} width={3} height={0.6} fill={INK} />
             </g>
           ))}
         </g>
       )}
-      {look.effect === 'sparkle' &&
-        SPARKS.map(([x, y, d], i) => <rect key={`s${i}`} className="cls-spark" x={x} y={y} width={1} height={1} fill="#FFD84D" style={{ animationDelay: `${d}s` }} />)}
-      {look.effect === 'dust' &&
-        PUFFS.map(([x, y, d], i) => <rect key={`p${i}`} className="cls-puff" x={x} y={y} width={1} height={1} fill="#C9C1B3" style={{ animationDelay: `${d}s` }} />)}
-      {look.effect === 'hearts' && HEARTS.map(([x, y, d], i) => <Shape key={`h${i}`} cells={HEART} x={x} y={y} color="#F25C8A" delay={d} className="cls-spark" />)}
-      {look.effect === 'notes' && NOTES.map(([x, y, d], i) => <Shape key={`n${i}`} cells={NOTE} x={x} y={y} color="#5B6CFF" delay={d} className="cls-spark" />)}
-      {look.effect === 'electric' && BOLTS.map(([x, y, d, c], i) => <Shape key={`z${i}`} cells={BOLT} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
-      {look.effect === 'fire' && FLAMES.map(([x, y, d, c], i) => <Shape key={`f${i}`} cells={FLAME} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
+      <g transform={`scale(${FX_SCALE})`}>
+        {look.effect === 'sparkle' &&
+          SPARKS.map(([x, y, d], i) => <rect key={`s${i}`} className="cls-spark" x={x} y={y} width={1} height={1} fill="#FFD84D" style={{ animationDelay: `${d}s` }} />)}
+        {look.effect === 'dust' &&
+          PUFFS.map(([x, y, d], i) => <rect key={`p${i}`} className="cls-puff" x={x} y={y} width={1} height={1} fill="#C9C1B3" style={{ animationDelay: `${d}s` }} />)}
+        {look.effect === 'hearts' && HEARTS.map(([x, y, d], i) => <Shape key={`h${i}`} cells={HEART} x={x} y={y} color="#F25C8A" delay={d} className="cls-spark" />)}
+        {look.effect === 'notes' && NOTES.map(([x, y, d], i) => <Shape key={`n${i}`} cells={NOTE} x={x} y={y} color="#5B6CFF" delay={d} className="cls-spark" />)}
+        {look.effect === 'electric' && BOLTS.map(([x, y, d, c], i) => <Shape key={`z${i}`} cells={BOLT} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
+        {look.effect === 'fire' && FLAMES.map(([x, y, d, c], i) => <Shape key={`f${i}`} cells={FLAME} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
+      </g>
     </svg>
   );
 }

@@ -79,10 +79,11 @@ export interface ItemDef {
 export type AvatarSlot = 'helmet' | 'face' | 'tunic' | 'shoes' | 'hand' | 'shield' | 'cape' | 'effect';
 
 export interface AvatarLook {
-  skin: 'light' | 'medium' | 'tan';
-  hair: 'brown' | 'black' | 'blond';
-  /** Free to choose; not an item. */
-  hairStyle: 'short' | 'long' | 'ponytail' | 'pigtails' | 'curly' | 'bob';
+  // Skin, hair and eyes are free to choose (the lists and names are in src/lib/avatar.ts); the rest are items.
+  skin: 'light' | 'medium' | 'tan' | 'deep';
+  hair: 'brown' | 'black' | 'blond' | 'red' | 'pink' | 'blue' | 'silver';
+  hairStyle: 'short' | 'long' | 'bob' | 'ponytail' | 'pigtails' | 'braid' | 'side' | 'curly' | 'spiky' | 'bun' | 'twinbun' | 'buzz';
+  eyes: 'round' | 'big' | 'smile' | 'sharp' | 'dot';
   /** What the body wears, armour included (it used to be a separate slot on top). */
   tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold';
   helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones';

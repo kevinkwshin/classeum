@@ -5,7 +5,7 @@ import type { StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { Reaction, reactionLine } from '@/components/Reaction';
-import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
+import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { MAX_TEXT_ANSWER } from '@/lib/text';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
 import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
@@ -290,42 +290,72 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
   );
 }
 
-function CharacterPick({ send, name }: { send: Send; name: string }) {
-  const [look, setLook] = useState<AvatarLook>({ ...DEFAULT_LOOK });
-  const styles: AvatarLook['hairStyle'][] = ['short', 'long', 'ponytail', 'pigtails', 'curly', 'bob'];
-  const styleNames: Record<AvatarLook['hairStyle'], string> = { short: '짧은 머리', long: '긴 머리', ponytail: '묶은 머리', pigtails: '양갈래', curly: '뽀글 머리', bob: '단발' };
-  const skins: AvatarLook['skin'][] = ['light', 'medium', 'tan'];
-  const hairs: AvatarLook['hair'][] = ['black', 'brown', 'blond'];
-  const swatch = { light: '#F1C9A5', medium: '#E0AC82', tan: '#B97E56', black: '#1F1B18', brown: '#5A3B26', blond: '#C9A15A' };
+type PickTab = 'style' | 'hair' | 'skin' | 'eyes';
+const PICK_TABS: [PickTab, string][] = [['style', '머리 모양'], ['hair', '머리색'], ['skin', '피부'], ['eyes', '눈']];
+
+/**
+ * First visit: pick the whole character. From the locker (`current` set): change hair, skin and eyes only;
+ * items stay as they are.
+ */
+function CharacterPick({ send, name, current, onClose }: { send: Send; name: string; current?: AvatarLook; onClose?: () => void }) {
+  const [look, setLook] = useState<AvatarLook>(current ?? { ...DEFAULT_LOOK });
+  const [tab, setTab] = useState<PickTab>('style');
+  const editing = current !== undefined;
+  const options: Record<PickTab, { key: keyof AvatarLook; list: { id: string; name: string }[] }> = {
+    style: { key: 'hairStyle', list: HAIR_STYLES },
+    hair: { key: 'hair', list: HAIR_COLORS },
+    skin: { key: 'skin', list: SKIN_TONES },
+    eyes: { key: 'eyes', list: EYE_STYLES },
+  };
+  const { key, list } = options[tab];
+  // While editing, hats and glasses come off in the pictures so every hair style and eye shape can be told apart.
+  const shown: AvatarLook = editing ? { ...look, helmet: 'none', face: 'none' } : look;
+  const save = () => {
+    const { skin, hair, hairStyle, eyes } = look;
+    send({ type: 'look', look: editing ? { skin, hair, hairStyle, eyes } : look })
+      .then(() => onClose?.())
+      .catch(() => undefined);
+  };
   return (
-    <div className="flex flex-1 flex-col gap-5 bg-ink px-5 pb-6 pt-12 text-white">
-      <div>
-        <div className="text-3xl font-bold">반가워요, {name.slice(-2)}</div>
-        <div className="mt-1 text-[#A3A8B4]">내 캐릭터를 골라요</div>
+    <div className="flex h-[100dvh] flex-col gap-4 bg-ink px-5 pb-5 pt-10 text-white">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-3xl font-bold">{editing ? '캐릭터 바꾸기' : `반가워요, ${name.slice(-2)}`}</div>
+          <div className="mt-1 text-[#A3A8B4]">{editing ? '모자·안경은 잠깐 벗어 둬요' : '내 캐릭터를 골라요'}</div>
+        </div>
+        {editing && (
+          <button type="button" onClick={onClose} className="shrink-0 rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">
+            닫기
+          </button>
+        )}
       </div>
-      <div className="mx-auto flex h-52 w-44 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><PixelAvatar look={look} size={140} blink={2} /></div>
-      <div className="grid grid-cols-3 gap-2">
-        {styles.map((st) => (
-          <button key={st} type="button" aria-pressed={look.hairStyle === st} onClick={() => setLook({ ...look, hairStyle: st })} className={`flex h-20 items-end justify-center rounded-2xl pb-1.5 ${look.hairStyle === st ? 'bg-[#24272F] ring-2 ring-accent' : 'bg-[#24272F]'}`}>
-            <PixelAvatar look={{ ...look, hairStyle: st }} size={64} title={styleNames[st]} />
+      <div className="mx-auto flex h-44 w-40 shrink-0 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-3 [@media(max-height:640px)]:h-36 [@media(max-height:640px)]:w-32">
+        <PixelAvatar look={shown} size={132} blink={2} />
+      </div>
+      <div className="flex shrink-0 gap-1 rounded-full bg-[#24272F] p-1" role="tablist">
+        {PICK_TABS.map(([t, label]) => (
+          <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`h-9 flex-1 rounded-full text-sm font-bold ${tab === t ? 'bg-accent text-ink' : 'text-[#A3A8B4]'}`}>
+            {label}
           </button>
         ))}
       </div>
-      <div className="flex items-center justify-between rounded-2xl bg-[#24272F] px-4 py-3">
-        <div className="flex gap-2" aria-label="피부색">
-          {skins.map((v) => (
-            <button key={v} type="button" aria-label={`피부색 ${v}`} aria-pressed={look.skin === v} onClick={() => setLook({ ...look, skin: v })} className={`h-8 w-8 rounded-full ${look.skin === v ? 'ring-2 ring-accent ring-offset-2 ring-offset-[#24272F]' : ''}`} style={{ background: swatch[v] }} />
-          ))}
-        </div>
-        <div className="h-6 w-px bg-[#3D4354]" />
-        <div className="flex gap-2" aria-label="머리색">
-          {hairs.map((v) => (
-            <button key={v} type="button" aria-label={`머리색 ${v}`} aria-pressed={look.hair === v} onClick={() => setLook({ ...look, hair: v })} className={`h-8 w-8 rounded-full border border-[#3D4354] ${look.hair === v ? 'ring-2 ring-accent ring-offset-2 ring-offset-[#24272F]' : ''}`} style={{ background: swatch[v] }} />
-          ))}
-        </div>
+      {/* Each choice is shown on the character itself, so nobody has to guess what a name means. */}
+      {/* A fresh grid per tab starts at the top; the padding keeps the selected ring from being clipped. */}
+      <div key={tab} className="-mx-1 grid min-h-0 flex-1 auto-rows-min grid-cols-4 gap-2 overflow-y-auto p-1">
+        {list.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            aria-pressed={look[key] === o.id}
+            onClick={() => setLook({ ...look, [key]: o.id })}
+            className={`flex flex-col items-center gap-0.5 rounded-2xl bg-[#24272F] pb-1.5 pt-1 ${look[key] === o.id ? 'ring-2 ring-accent' : ''}`}
+          >
+            <PixelAvatar look={{ ...shown, [key]: o.id }} size={56} />
+            <span className="text-[11px] font-semibold text-[#A3A8B4]">{o.name}</span>
+          </button>
+        ))}
       </div>
-      <div className="flex-1" />
-      <Button onClick={() => send({ type: 'look', look })}>이걸로 할래요</Button>
+      <Button onClick={save} className="shrink-0">{editing ? '저장' : '이걸로 할래요'}</Button>
     </div>
   );
 }
@@ -988,8 +1018,10 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
   const owned = useMemo(() => new Set(me.inventory), [me.inventory]);
   const [slot, setSlot] = useState<AvatarSlot>('helmet');
   const [theme, setTheme] = useState<ItemTheme | null>(null);
+  const [editing, setEditing] = useState(false);
   const items = ITEMS.filter((i) => i.slot === slot && (!theme || i.theme === theme));
   const ownedCount = ITEMS.filter((i) => owned.has(i.id)).length;
+  if (editing) return <CharacterPick send={send} name={me.name} current={look} onClose={() => setEditing(false)} />;
   return (
     <div className="flex flex-1 flex-col bg-bg">
       <div className="flex flex-col gap-4 rounded-b-[32px] bg-ink px-5 pb-5 pt-10 text-white">
@@ -997,7 +1029,10 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
           <div className="text-2xl font-bold">
             보관함 <span className="tabular text-base font-semibold text-[#A3A8B4]">{ownedCount}/{ITEMS.length}</span>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">닫기</button>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setEditing(true)} className="rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">머리·눈 바꾸기</button>
+            <button type="button" onClick={onClose} className="rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">닫기</button>
+          </div>
         </div>
         <div className="mx-auto flex h-48 w-40 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><PixelAvatar look={look} size={128} blink={2} /></div>
       </div>

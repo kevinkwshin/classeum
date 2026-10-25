@@ -2,7 +2,7 @@
 // and pushes role-specific views to every connected screen.
 import { createHash, randomInt } from 'node:crypto';
 import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
-import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
+import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { db, flush, newId, save, type EventRec, type RequestRec, type StudentRec } from './store';
@@ -776,12 +776,14 @@ class Hub {
     // Only known fields with known values; item slots only with items this student owns.
     const prev = normalizeLook(s.look ?? undefined) as unknown as Record<string, string>;
     const next: Record<string, string> = { ...prev };
-    const free = new Set(['skin', 'hair', 'hairStyle']);
+    // Free choices only from their lists, so a made-up value can't draw a broken character on everyone's screen.
+    const free: Record<string, { id: string }[]> = { skin: SKIN_TONES, hair: HAIR_COLORS, hairStyle: HAIR_STYLES, eyes: EYE_STYLES };
     for (const key of Object.keys(DEFAULT_LOOK)) {
       const value = (raw as Record<string, unknown>)[key];
       if (typeof value !== 'string' || value.length > 32) continue;
-      if (free.has(key)) next[key] = value;
-      else if (value === (DEFAULT_LOOK as unknown as Record<string, string>)[key]) next[key] = value;
+      if (Object.hasOwn(free, key)) {
+        if (free[key].some((o) => o.id === value)) next[key] = value;
+      } else if (value === (DEFAULT_LOOK as unknown as Record<string, string>)[key]) next[key] = value;
       else if (ITEMS.some((item) => item.slot === key && item.value === value && s.inventory.includes(item.id))) next[key] = value;
     }
     s.look = normalizeLook(next as unknown as Partial<AvatarLook>);
