@@ -190,6 +190,14 @@ def add_seconds_rule(ws, columns):
     dv.add(f"{letter}2:{letter}{LAST_ROW}")
 
 
+def set_text_format(ws, columns, headers):
+    names = [h for h, *_ in columns]
+    for header in headers:
+        col = names.index(header) + 1
+        for r in range(2, LAST_ROW + 1):
+            ws.cell(row=r, column=col).number_format = "@"
+
+
 def build(path, words, questions):
     wb = Workbook()
 
@@ -222,10 +230,10 @@ def build(path, words, questions):
     add_list(qs, QUESTION_COLUMNS, "유형", "객관식,OX,단답형", "객관식, OX, 단답형 중에서 고르세요.")
     add_list(qs, QUESTION_COLUMNS, "상태", "사용,검토,보관", "사용, 검토, 보관 중에서 고르세요.")
     add_seconds_rule(qs, QUESTION_COLUMNS)
-    # 정답 must stay text so "1" is not turned into a number and "O" stays a letter.
-    answer_col = [h for h, *_ in QUESTION_COLUMNS].index("정답") + 1
-    for r in range(2, LAST_ROW + 1):
-        qs.cell(row=r, column=answer_col).number_format = "@"
+    # Text format: 정답 keeps "1" and "O" as typed, and IDs, labels and short options like "3-1" or "7:30"
+    # never become dates or times. (시간(초) stays numeric for its 5-60 rule.)
+    set_text_format(ws, WORD_COLUMNS, ["세트", "단원", "단어ID"])
+    set_text_format(qs, QUESTION_COLUMNS, ["문항ID", "보기1", "보기2", "보기3", "보기4", "정답", "세트"])
 
 
     wb.active = 1

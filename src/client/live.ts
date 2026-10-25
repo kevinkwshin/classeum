@@ -31,6 +31,12 @@ export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'disp
           retry = setTimeout(open, 2000);
         }
       };
+      // Another tab on this phone took over. Stay closed while hidden, so tabs don't keep bumping each other.
+      es.addEventListener('replaced', () => {
+        es?.close();
+        setConn('lost');
+        if (!stopped && document.visibilityState === 'visible') retry = setTimeout(open, 2000);
+      });
       es.onmessage = (e) => {
         const data = JSON.parse(e.data) as T;
         const now = Date.now();
@@ -42,10 +48,11 @@ export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'disp
       };
     };
     open();
-    // Phones that come back from a locked screen reconnect straight away.
+    // Phones that come back from a locked screen or another tab reconnect straight away.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && es?.readyState === EventSource.CLOSED) {
+      if (document.visibilityState === 'visible' && es?.readyState !== EventSource.OPEN) {
         if (retry) clearTimeout(retry);
+        es?.close();
         open();
       }
     };

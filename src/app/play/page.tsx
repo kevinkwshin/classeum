@@ -97,7 +97,7 @@ export default function PlayPage() {
 
   return (
     <Screen>
-      {conn === 'lost' && <div className="fixed inset-x-0 top-0 z-50 bg-bad py-2 text-center text-sm font-bold text-white">연결이 끊겼어요 · 다시 연결 중</div>}
+      {conn === 'lost' && !view.refused && <div className="fixed inset-x-0 top-0 z-50 bg-bad py-2 text-center text-sm font-bold text-white">연결이 끊겼어요 · 다시 연결 중</div>}
       <Router view={view} send={send} serverNow={serverNow} conn={conn} />
     </Screen>
   );
@@ -113,6 +113,7 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   const s = view.session;
   // The locker and notes only show between questions; a starting quiz always wins.
   const between = !s || s.phase === 'lobby' || s.phase === 'summary';
+  if (view.refused) return <Message title="잠시만 기다려 주세요" body={view.refused} />;
   if (!view.me) return <Register view={view} send={send} />;
   if (!view.me.look) return <CharacterPick send={send} name={view.me.name} />;
   if (lockerOpen && between) return <Locker me={view.me} send={send} onClose={() => setLockerOpen(false)} />;
@@ -158,11 +159,36 @@ function Button({ children, onClick, kind = 'primary', disabled, className = '' 
 
 // ---------- registration ----------
 
+/**
+ * Search over masked names: '*' stands for any one letter, so 하윤 or 김하윤 both find 김*윤.
+ * At least one visible letter has to match, so 하 alone doesn't list everyone.
+ */
+function matchesMasked(masked: string, query: string): boolean {
+  const m = [...masked];
+  const q = [...query.replace(/\s+/g, '')];
+  if (q.length === 0) return true;
+  for (let start = 0; start + q.length <= m.length; start++) {
+    let exact = 0;
+    const fits = q.every((ch, i) => {
+      if (m[start + i] === ch) exact++;
+      return m[start + i] === '*' || m[start + i] === ch;
+    });
+    if (fits && exact > 0) return true;
+  }
+  return false;
+}
+
 function Register({ view, send }: { view: StudentView; send: Send }) {
   const [picked, setPicked] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const req = view.request;
+  // An error from before registration closed or reopened no longer applies.
+  const [seenOpen, setSeenOpen] = useState(view.registrationOpen);
+  if (seenOpen !== view.registrationOpen) {
+    setSeenOpen(view.registrationOpen);
+    setError('');
+  }
 
   if (req?.status === 'pending') {
     return (
@@ -171,7 +197,10 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
           <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-bg pb-5"><div className="cls-float"><PixelAvatar look={DEFAULT_LOOK} size={150} blink={1} /></div></div>
           <div className="text-center">
             <div className="text-2xl font-bold">선생님 확인 중</div>
-            <div className="mt-2 text-ink-3">{req.name}</div>
+            <div className="mt-2 text-ink-3">
+              {req.number != null && `${req.number}번 `}
+              {req.name}
+            </div>
           </div>
           <div className="rounded-2xl bg-bg px-7 py-3 text-center">
             <div className="text-xs font-bold text-ink-3">확인 기호</div>
@@ -183,7 +212,10 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
     );
   }
 
-  const roster = (view.roster ?? []).filter((r) => !query || r.name.includes(query) || String(r.number) === query);
+  const q = query.trim();
+  // Digits search by number only; letters search the (masked) names.
+  const roster = (view.roster ?? []).filter((r) => !q || (/^\d+$/.test(q) ? String(r.number) === q : matchesMasked(r.name, q)));
+  const canSend = !!picked && !!view.registrationOpen && (view.roster ?? []).some((r) => r.id === picked);
   return (
     <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-10">
       <div className="flex items-center justify-between">
@@ -193,7 +225,9 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
       {req?.status === 'expired' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">시간이 지나 다시 요청해야 해요.</div>}
       <div className="text-3xl font-bold tracking-tight">내 이름</div>
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="이름 검색" aria-label="이름 검색" className="h-13 rounded-2xl bg-bg px-4 py-3 text-base outline-none" />
-      {(view.roster ?? []).length === 0 && <div className="text-ink-3">아직 명단이 없어요. 선생님께 말씀드려 주세요.</div>}
+      {(view.roster ?? []).length === 0 && (
+        <div className="text-ink-3">{view.registrationOpen ? '아직 명단이 없어요. 선생님께 말씀드려 주세요.' : '선생님 화면이 켜지면 이름을 고를 수 있어요.'}</div>
+      )}
       <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2 overflow-y-auto">
         {roster.map((r) => (
           <button
@@ -211,7 +245,7 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
       <div className="text-center text-sm text-ink-3">내 이름이 없으면 선생님께 말해 주세요</div>
       <Button
         kind="dark"
-        disabled={!picked}
+        disabled={!canSend}
         onClick={() => {
           setError('');
           send({ type: 'register', studentId: picked }).catch((e: Error) => setError(e.message));

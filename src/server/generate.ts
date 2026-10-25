@@ -240,6 +240,18 @@ function answerSlots(counts: number[], rnd: () => number): number[] {
   return slots;
 }
 
+/**
+ * Places each question's right answer so the slots are spread evenly in the given order
+ * and never repeat three times running. OX and written questions keep their layout.
+ * Returns copies; the input questions are not changed.
+ */
+export function spreadAnswers(sequence: Question[], rnd: () => number): Question[] {
+  const placeable = sequence.filter((q) => q.mode !== 'CUSTOM_OX' && q.mode !== 'CUSTOM_TEXT');
+  const slots = answerSlots(placeable.map((q) => q.options.length), rnd);
+  const slotOf = new Map(placeable.map((q, i) => [q, slots[i]]));
+  return sequence.map((q) => (slotOf.has(q) ? placeAnswer(q, slotOf.get(q)!, rnd) : q));
+}
+
 function isConfusablePair(a: Question, b: Question, words: Map<string, Word>): boolean {
   if (!a.wordKey || !b.wordKey) return false;
   const wa = words.get(a.wordKey);
@@ -316,11 +328,7 @@ export function generateEvent(opts: {
 
   // Order first, then place answers, so the no-three-in-a-row rule holds in the order played.
   const customs = opts.custom.filter((c) => c.status === '사용').map((c) => customToQuestion(c, opts.defaultSeconds));
-  const sequence = [...orderQuestions(main, byKey, rnd), ...customs];
-  const placeable = sequence.filter((q) => q.mode !== 'CUSTOM_OX' && q.mode !== 'CUSTOM_TEXT');
-  const slots = answerSlots(placeable.map((q) => q.options.length), rnd);
-  const slotOf = new Map(placeable.map((q, i) => [q, slots[i]]));
-  const questions = sequence.map((q) => (slotOf.has(q) ? placeAnswer(q, slotOf.get(q)!, rnd) : q));
+  const questions = spreadAnswers([...orderQuestions(main, byKey, rnd), ...customs], rnd);
 
   return { questions, retry, warnings };
 }

@@ -4,9 +4,9 @@ import { createHash, randomInt } from 'node:crypto';
 import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, itemById } from '@/lib/items';
-import { hashString, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
-import { db, flush, newId, save, type EventRec, type StudentRec } from './store';
-import { generateEvent } from './generate';
+import { hashString, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
+import { db, flush, newId, save, type EventRec, type RequestRec, type StudentRec } from './store';
+import { generateEvent, spreadAnswers } from './generate';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
 
@@ -17,6 +17,8 @@ export interface Client {
   role: Role;
   tokenHash?: string;
   send: (payload: unknown) => void;
+  /** Ends the stream from the server side (an older duplicate of the same phone). */
+  close?: () => void;
 }
 
 export const START_HALF_W = 0.09;
@@ -32,6 +34,8 @@ const RETRY_INTRO_MS = 3000;
 const BLOCK = 10;
 const REQUEST_TTL_MS = 2 * 60 * 1000;
 const MAX_PRACTICE_PER_QUESTION = 5;
+/** Two tabs on one phone are fine; a third replaces the oldest. */
+const MAX_STREAMS_PER_DEVICE = 2;
 const ANIMALS = ['여우', '부엉이', '사슴', '고래', '펭귄', '다람쥐', '거북', '판다', '수달', '코알라', '호랑이', '토끼'];
 
 export function zoneOf(p: FieldPoint, optionCount: number): number {
@@ -98,6 +102,21 @@ interface Draft {
   issues: ImportIssue[];
 }
 
+/** 김하윤 → 김*윤: phones that aren't registered yet never receive full names. */
+export function maskName(name: string): string {
+  const chars = [...name.trim()];
+  if (chars.length <= 1) return name.trim();
+  if (chars.length === 2) return `${chars[0]}*`;
+  return chars[0] + '*'.repeat(chars.length - 2) + chars[chars.length - 1];
+}
+
+/** What every unregistered phone shares in one push, built once instead of per phone. */
+interface RegistrationContext {
+  open: boolean;
+  latest: Map<string, RequestRec>;
+  roster: { id: string; number: number; name: string }[];
+}
+
 function publicQuestion(q: Question, seq: number): PublicQuestion {
   return {
     seq,
@@ -130,19 +149,55 @@ class Hub {
     }
   }
 
+  /**
+   * Why a new student stream is refused, or null. A phone that already has a stream is
+   * always let in (it replaces its oldest one), so only fresh unregistered phones can be
+   * turned away, once there are far more of them than the class could account for.
+   */
+  admitStudent(tokenHash: string): string | null {
+    const d = db();
+    if (d.devices[tokenHash]) return null;
+    let unregistered = 0;
+    for (const c of this.clients) {
+      if (c.role !== 'student' || !c.tokenHash) continue;
+      if (c.tokenHash === tokenHash) return null;
+      if (!d.devices[c.tokenHash]) unregistered++;
+    }
+    const limit = Math.max(64, 2 * Object.keys(d.students).length + 16);
+    return unregistered >= limit ? '접속이 너무 많아요. 잠시 뒤에 다시 열어 주세요.' : null;
+  }
+
+  /** Students can pick their name only while the teacher or projector screen is open. */
+  registrationOpen(): boolean {
+    for (const c of this.clients) if (c.role === 'teacher' || c.role === 'display') return true;
+    return false;
+  }
+
   addClient(c: Client) {
+    const openBefore = this.registrationOpen();
+    if (c.role === 'student' && c.tokenHash) {
+      // A reconnecting phone often opens its new stream before the old one is noticed as gone.
+      const same = [...this.clients].filter((x) => x.role === 'student' && x.tokenHash === c.tokenHash);
+      for (const old of same.slice(0, Math.max(0, same.length - (MAX_STREAMS_PER_DEVICE - 1)))) {
+        this.clients.delete(old);
+        old.close?.();
+      }
+    }
     this.clients.add(c);
     const sid = c.tokenHash ? db().devices[c.tokenHash]?.studentId : undefined;
     const joinedBefore = sid ? !!this.live?.joined.has(sid) : true;
     if (sid) this.touchStudent(sid);
     this.pushOne(c);
-    // A new connection only changes the teacher's and projector's lists, unless it just joined.
-    this.schedulePush(sid !== undefined && !joinedBefore && !!this.live?.joined.has(sid));
+    // A new connection only changes the teacher's and projector's lists, unless it just joined
+    // or it opened registration for the phones still waiting to pick a name.
+    const joinedNow = sid !== undefined && !joinedBefore && !!this.live?.joined.has(sid);
+    this.schedulePush(joinedNow || openBefore !== this.registrationOpen());
   }
 
   removeClient(c: Client) {
-    this.clients.delete(c);
-    this.schedulePush(false);
+    const openBefore = this.registrationOpen();
+    if (!this.clients.delete(c)) return;
+    this.schedulePush(openBefore !== this.registrationOpen());
   }
 
   studentOf(tokenHash?: string): StudentRec | undefined {
@@ -200,10 +255,12 @@ class Hub {
     this.lastPush = Date.now();
     const teacher = this.teacherView();
     const display = this.displayView();
+    let reg: RegistrationContext | undefined;
+    const getReg = () => (reg ??= this.registrationContext());
     for (const c of this.clients) {
       if (c.role === 'teacher') c.send(teacher);
       else if (c.role === 'display') c.send(display);
-      else if (includeStudents) c.send(this.studentView(c.tokenHash));
+      else if (includeStudents) c.send(this.studentView(c.tokenHash, getReg));
     }
   }
 
@@ -361,19 +418,37 @@ class Hub {
     return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, students, requests, events, live: liveDetail, items: ITEMS };
   }
 
-  studentView(tokenHash?: string) {
+  private registrationContext(): RegistrationContext {
+    const d = db();
+    const open = this.registrationOpen();
+    const latest = new Map<string, RequestRec>();
+    for (const r of Object.values(d.requests)) {
+      const prev = latest.get(r.tokenHash);
+      if (!prev || r.createdAt >= prev.createdAt) latest.set(r.tokenHash, r);
+    }
+    const roster = open
+      ? Object.values(d.students)
+          .sort((a, b) => a.number - b.number)
+          .map((s) => ({ id: s.id, number: s.number, name: maskName(s.name) }))
+      : [];
+    return { open, latest, roster };
+  }
+
+  studentView(tokenHash?: string, getReg: () => RegistrationContext = () => this.registrationContext()) {
     const d = db();
     const base = { role: 'student', serverNow: Date.now() };
     const student = this.studentOf(tokenHash);
     if (!student) {
-      const req = tokenHash ? Object.values(d.requests).filter((r) => r.tokenHash === tokenHash).sort((a, b) => b.createdAt - a.createdAt)[0] : undefined;
+      const reg = getReg();
+      const req = tokenHash ? reg.latest.get(tokenHash) : undefined;
       return {
         ...base,
         me: null,
-        request: req ? { status: req.status, symbol: req.symbol, name: d.students[req.studentId]?.name ?? '' } : null,
-        roster: Object.values(d.students)
-          .sort((a, b) => a.number - b.number)
-          .map((s) => ({ id: s.id, number: s.number, name: s.name })),
+        request: req
+          ? { status: req.status, symbol: req.symbol, number: d.students[req.studentId]?.number ?? null, name: maskName(d.students[req.studentId]?.name ?? '') }
+          : null,
+        registrationOpen: reg.open,
+        roster: reg.roster,
       };
     }
     const live = this.live;
@@ -420,6 +495,7 @@ class Hub {
 
   requestRegistration(tokenHash: string, studentId: string) {
     const d = db();
+    if (!this.registrationOpen()) throw new Error('선생님 화면이 켜져 있을 때 등록할 수 있어요.');
     if (!d.students[studentId]) throw new Error('명단에 없는 학생이에요.');
     if (d.devices[tokenHash]) throw new Error('이 기기는 이미 등록되어 있어요.');
     for (const r of Object.values(d.requests)) {
@@ -485,12 +561,17 @@ class Hub {
 
   /** Approves every pending request that is unambiguous: one device asking for a name nobody else has. */
   approveAllSimple(): number {
-    const pending = Object.values(db().requests).filter((r) => r.status === 'pending');
+    const d = db();
+    const pending = Object.values(d.requests).filter((r) => r.status === 'pending');
     const perStudent = new Map<string, number>();
     for (const r of pending) perStudent.set(r.studentId, (perStudent.get(r.studentId) ?? 0) + 1);
+    // Phones see masked names; two students who look the same there (김*윤) need the teacher's symbol check.
+    const lookalikes = new Map<string, number>();
+    for (const s of Object.values(d.students)) lookalikes.set(maskName(s.name), (lookalikes.get(maskName(s.name)) ?? 0) + 1);
     let n = 0;
     for (const r of pending) {
-      if (r.replace || perStudent.get(r.studentId) !== 1) continue;
+      const s = d.students[r.studentId];
+      if (r.replace || perStudent.get(r.studentId) !== 1 || !s || (lookalikes.get(maskName(s.name)) ?? 0) > 1) continue;
       this.decideRequest(r.id, true);
       n++;
     }
@@ -913,13 +994,14 @@ class Hub {
   private buildRetry(): Question[] {
     const live = this.live!;
     const event = db().events[live.eventId];
-    return [...live.mainStats.entries()]
+    const list = [...live.mainStats.entries()]
       .filter(([, s]) => s.wordKey && s.total > 0 && s.correct / s.total < 0.7)
       .sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total)
       .slice(0, 5)
       .map(([qid, s]) => event.retry[s.wordKey!] ?? live.list.find((q) => q.id === qid)!)
-      .filter(Boolean)
-      .map((q) => ({ ...q, id: `${q.id}#retry` }));
+      .filter(Boolean);
+    // Answers were placed one by one at upload; spread them again in the order played (copies, so the event is untouched).
+    return spreadAnswers(list, mulberry32(hashString(live.id))).map((q) => ({ ...q, id: `${q.id}#retry` }));
   }
 
   private finish() {
@@ -1001,6 +1083,8 @@ class Hub {
       if (r.correct) continue;
       const q = [...event.questions, ...Object.values(event.retry)].find((x) => x.id === r.questionId.replace(/#retry$/, ''));
       if (!q) continue;
+      // Retry copies have their answers re-placed, so read the choice against the copy that was played.
+      const shown = live.list.find((x) => x.id === r.questionId) ?? q;
       const word = r.wordKey ? d.words[r.wordKey] : undefined;
       wrong.push({
         questionId: q.id,
@@ -1009,8 +1093,8 @@ class Hub {
         meaning: word?.meaning,
         prompt: q.prompt,
         correctLabel: q.mode === 'CUSTOM_TEXT' ? (q.answers ?? [])[0] ?? '' : q.options[q.answerIndex]?.label ?? '',
-        mineLabel: r.choice >= 0 ? q.options[r.choice]?.label ?? '' : r.text ?? '(못 골랐어요)',
-        feedback: r.choice >= 0 ? q.options[r.choice]?.feedback : undefined,
+        mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? '(못 골랐어요)',
+        feedback: r.choice >= 0 ? shown.options[r.choice]?.feedback : undefined,
         example: word?.example?.replace(/[[\]]/g, ''),
         exampleMeaning: word?.exampleMeaning,
       });

@@ -47,13 +47,48 @@ const QUESTION_HEADERS: Record<string, string> = {
 
 function text(v: Cell | undefined): string {
   if (v === null || v === undefined) return '';
-  // Excel turns labels like "10-29" or "1-1" into dates; give back what the teacher typed.
-  if (v instanceof Date) return `${v.getUTCMonth() + 1}-${v.getUTCDate()}`;
+  // Excel turns labels like "10-29" or "1-1" into dates, and "7:30" into a time on 1899-12-30;
+  // give back what the teacher most likely typed.
+  if (v instanceof Date) {
+    if (v.getUTCFullYear() < 1900) return `${v.getUTCHours()}:${String(v.getUTCMinutes()).padStart(2, '0')}`;
+    return `${v.getUTCMonth() + 1}-${v.getUTCDate()}`;
+  }
   return String(v).trim();
 }
 
 function headerKey(h: string): string {
   return h.replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * Reads cells as text by header name. Excel quietly turns labels like "3-1" into dates;
+ * those are read back as "3-1", and `done()` adds one warning per affected column.
+ */
+function cellReader(h: Map<string, number>, sheet: string, issues: ImportIssue[]) {
+  const dated = new Map<string, { first: number; count: number; sample: string }>();
+  const get = (row: Cell[], col: string, r: number) => {
+    if (!h.has(col)) return '';
+    const v = row[h.get(col)!];
+    const out = text(v);
+    if (v instanceof Date) {
+      const seen = dated.get(col);
+      if (seen) seen.count++;
+      else dated.set(col, { first: r, count: 1, sample: out });
+    }
+    return out;
+  };
+  const done = () => {
+    for (const [col, { first, count, sample }] of dated) {
+      issues.push({
+        level: 'warning',
+        sheet,
+        row: first,
+        column: col,
+        message: `'${col}' 열의 ${count}칸이 날짜·시간으로 바뀌어 있어서 '${sample}'처럼 읽었어요. 열 서식을 '텍스트'로 바꾼 뒤 값을 다시 입력해 주세요.`,
+      });
+    }
+  };
+  return { get, done };
 }
 
 function mapHeaders(row: Cell[], aliases: Record<string, string>, sheet: string, issues: ImportIssue[]) {
@@ -134,11 +169,12 @@ function parseWords(data: Cell[][], issues: ImportIssue[]): Word[] {
     issues.push({ level: 'error', sheet, row: 1, message: "'단어'와 '뜻' 머리글이 있어야 해요." });
     return [];
   }
-  const get = (row: Cell[], col: string) => (h.has(col) ? text(row[h.get(col)!]) : '');
+  const { get: read, done } = cellReader(h, sheet, issues);
   const words: Word[] = [];
   const seen = new Map<string, number>();
   data.slice(1).forEach((row, i) => {
     const r = i + 2;
+    const get = (cells: Cell[], col: string) => read(cells, col, r);
     const spellingRaw = get(row, '단어');
     const meaning = get(row, '뜻');
     if (!spellingRaw && !meaning) return;
@@ -195,6 +231,7 @@ function parseWords(data: Cell[][], issues: ImportIssue[]): Word[] {
     }
     words.push(word);
   });
+  done();
   return words;
 }
 
@@ -202,11 +239,12 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
   const sheet = '문항';
   if (data.length === 0) return [];
   const h = mapHeaders(data[0], QUESTION_HEADERS, sheet, issues);
-  const get = (row: Cell[], col: string) => (h.has(col) ? text(row[h.get(col)!]) : '');
+  const { get: read, done } = cellReader(h, sheet, issues);
   const out: CustomQuestion[] = [];
   const ids = new Set<string>();
   data.slice(1).forEach((row, i) => {
     const r = i + 2;
+    const get = (cells: Cell[], col: string) => read(cells, col, r);
     const id = get(row, '문항ID');
     const prompt = get(row, '문제');
     if (!id && !prompt) return;
@@ -278,6 +316,7 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
       status: status(get(row, '상태'), sheet, r, issues),
     });
   });
+  done();
   return out;
 }
 

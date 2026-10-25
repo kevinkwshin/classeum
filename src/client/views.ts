@@ -91,8 +91,12 @@ export interface StudentView {
   role: 'student';
   serverNow: number;
   me: { id: string; number: number; name: string; look: AvatarLook | null; inventory: string[]; stamps: number } | null;
-  request?: { status: 'pending' | 'approved' | 'rejected' | 'expired'; symbol: string; name: string } | null;
+  request?: { status: 'pending' | 'approved' | 'rejected' | 'expired'; symbol: string; number: number | null; name: string } | null;
+  /** Set when the server turned this phone away for now; it tries again on its own. */
+  refused?: string;
+  /** Names come masked (김*윤) and only while the teacher or projector screen is open. */
   roster?: { id: string; number: number; name: string }[];
+  registrationOpen?: boolean;
   session?: SessionPublic | null;
   joined?: boolean;
   myPoint?: { x: number; y: number } | null;

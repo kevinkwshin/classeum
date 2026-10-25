@@ -13,6 +13,14 @@ export async function GET(request: NextRequest) {
   if (role === 'student' && token.length < 32) return new Response('missing token', { status: 400 });
 
   const h = hub();
+  if (role === 'student') {
+    const refused = h.admitStudent(hashToken(token));
+    if (refused) {
+      // EventSource can't read a non-200 body, so send the reason as one event; the browser waits 30 s before trying again.
+      const body = `retry: 30000\n\ndata: ${JSON.stringify({ role: 'student', serverNow: Date.now(), me: null, refused })}\n\n`;
+      return new Response(body, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform' } });
+    }
+  }
   await h.ensureJoinUrl(request.nextUrl.port || process.env.PORT || '3000');
   const encoder = new TextEncoder();
   let client: Client | null = null;
@@ -39,6 +47,16 @@ export async function GET(request: NextRequest) {
         role,
         tokenHash: role === 'student' ? hashToken(token) : undefined,
         send: (payload) => write(`data: ${JSON.stringify(payload)}\n\n`),
+        // Replaced by a newer stream from the same phone: that tab stops until the student looks at it again.
+        close: () => {
+          write('event: replaced\ndata: 1\n\n');
+          cleanup();
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
+        },
       };
       write('retry: 1500\n\n');
       h.addClient(client);
