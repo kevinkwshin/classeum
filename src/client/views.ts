@@ -30,6 +30,7 @@ export interface DisplayView {
   session: SessionPublic | null;
   blank?: boolean;
   nameLabels?: boolean;
+  sound?: boolean;
   lobby?: { avatars: { studentId: string; number: number; name: string; look: AvatarLook }[]; connected: number; joined: number } | null;
   settled?: number;
   participants?: number;
@@ -71,6 +72,7 @@ export interface TeacherEvent {
 export interface TeacherLive extends SessionPublic {
   blank: boolean;
   nameLabels: boolean;
+  sound: boolean;
   autoAdvance: boolean;
   joined: number;
   connected: number;

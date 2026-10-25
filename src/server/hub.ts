@@ -84,6 +84,8 @@ interface Live {
   pausedByBlank: boolean;
   blank: boolean;
   nameLabels: boolean;
+  /** The projector chimes at a reveal where someone got it right. */
+  sound: boolean;
   autoAdvance: boolean;
   joined: Set<string>;
   positions: Map<string, FieldPoint>;
@@ -405,6 +407,7 @@ class Hub {
       ...base,
       blank: live.blank,
       nameLabels: live.nameLabels,
+      sound: live.sound,
       lobby: live.phase === 'lobby' ? { avatars: this.avatarsOnField(), connected: this.connectedStudents().size, joined: live.joined.size } : null,
       settled: counts ? counts.settled : 0,
       participants: counts ? counts.participants.length : live.joined.size,
@@ -493,6 +496,7 @@ class Hub {
         ...this.sessionPublic(),
         blank: live.blank,
         nameLabels: live.nameLabels,
+        sound: live.sound,
         autoAdvance: live.autoAdvance,
         joined: live.joined.size,
         connected: [...live.joined].filter((id) => connected.has(id)).length,
@@ -1116,6 +1120,7 @@ class Hub {
       blank: false,
       // Names under the avatars at the reveal; the teacher can switch them off for a gentler reveal.
       nameLabels: true,
+      sound: true,
       autoAdvance: true,
       joined: new Set(),
       positions: new Map(),
@@ -1630,6 +1635,9 @@ class Hub {
         break;
       case 'names':
         live.nameLabels = !live.nameLabels;
+        break;
+      case 'sound':
+        live.sound = !live.sound;
         break;
       case 'auto':
         live.autoAdvance = !live.autoAdvance;

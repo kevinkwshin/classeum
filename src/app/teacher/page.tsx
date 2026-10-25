@@ -297,16 +297,13 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
                 {/* The classes that have had it, so a week's quiz can be rotated without opening each event. */}
                 {e.classRuns.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1">
-                    {view.classes.map((c) => {
-                      const r = e.classRuns.find((x) => x.classId === c.id);
-                      if (!r) return null;
-                      const tone = event?.id === e.id ? (r.partial ? 'bg-[#24272F] text-[#F2C46B]' : 'bg-[#24272F] text-[#7FD8A6]') : r.partial ? 'bg-[#FFF8E6] text-[#8A6100]' : 'bg-good-soft text-good';
-                      return (
-                        <span key={c.id} className={`rounded-full px-2 py-0.5 text-xs font-bold ${tone}`}>
-                          {r.partial ? '△' : '✓'} {c.name}
+                    {view.classes
+                      .filter((c) => e.classRuns.some((r) => r.classId === c.id))
+                      .map((c) => (
+                        <span key={c.id} className={`rounded-full px-2 py-0.5 text-xs font-bold ${event?.id === e.id ? 'bg-[#24272F] text-[#7FD8A6]' : 'bg-good-soft text-good'}`}>
+                          {c.name}
                         </span>
-                      );
-                    })}
+                      ))}
                   </div>
                 )}
               </button>
@@ -339,12 +336,17 @@ function ClassRuns({ view, event, chosen }: { view: TeacherView; event: TeacherE
   return (
     <div className="flex w-full flex-col gap-2">
       <div className="flex flex-wrap gap-1.5">
+        {/* Green: had it; grey: not yet. The day, accuracy and runs are in the tooltip. */}
         {view.classes.map((c) => {
           const r = runs.get(c.id);
-          const tone = !r ? 'bg-bg text-ink-3' : r.partial ? 'bg-[#FFF8E6] text-[#8A6100]' : 'bg-good-soft text-good';
+          const detail = r ? `${dayOf(r.last)}${r.partial ? ' · 중간에 끝냄' : ` · 정답률 ${Math.round(r.accuracy * 100)}%`}${r.runs > 1 ? ` · ${r.runs}번` : ''}` : '아직 안 했어요';
           return (
-            <span key={c.id} className={`rounded-full px-3 py-1 text-sm font-semibold ${tone} ${c.id === chosen ? 'ring-2 ring-ink/70' : ''}`}>
-              {!r ? `${c.name} 아직` : `${r.partial ? '△' : '✓'} ${c.name} ${dayOf(r.last)}${r.partial ? ' 일부만' : ` · ${Math.round(r.accuracy * 100)}%`}${r.runs > 1 ? ` · ${r.runs}번` : ''}`}
+            <span
+              key={c.id}
+              title={`${c.name} · ${detail}`}
+              className={`rounded-full px-3 py-1 text-sm font-semibold ${r ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'} ${c.id === chosen ? 'ring-2 ring-ink/70' : ''}`}
+            >
+              {c.name}
             </span>
           );
         })}
@@ -649,6 +651,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           <div className="flex flex-wrap gap-2">
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.autoAdvance} onChange={(e) => { control('auto'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />자동 진행</label>
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
+            <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
           </div>
         </div>
 
@@ -725,6 +728,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
         <div className="flex gap-2">
           {/* Names show under the characters on the projector, in the lobby and at each reveal. */}
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
+          <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
           <a href="/display" target="classeum-display" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</a>
           <Btn kind="ghost" onClick={() => act({ type: 'close-session' })}>대기실 닫기</Btn>
           <Btn kind="accent" onClick={() => control('start')} className="px-6">퀴즈 시작</Btn>
