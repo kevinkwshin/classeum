@@ -13,6 +13,9 @@ const HEARTS: [number, number, number][] = [[0, 2, 0], [13, 4, 0.5], [1, 9, 1.0]
 const NOTES: [number, number, number][] = [[0, 1, 0], [13, 3, 0.6], [14, 9, 1.2]];
 const BOLTS: [number, number, number, string][] = [[0, 3, 0, '#FFE14D'], [14, 5, 0.15, '#7FDBFF'], [1, 10, 0.3, '#7FDBFF'], [13, 11, 0.45, '#FFE14D']];
 const FLAMES: [number, number, number, string][] = [[1, 12, 0, '#FF8A3D'], [12, 12, 0.2, '#FFC93D'], [0, 6, 0.4, '#FFC93D'], [13, 6, 0.1, '#FF8A3D']];
+const NEONS: [number, number, number, string][] = [[0, 4, 0, '#3DF5FF'], [15, 7, 0.5, '#FF5FD2'], [1, 12, 1.0, '#C266FF'], [14, 2, 0.3, '#3DF5FF'], [15, 13, 0.8, '#C266FF']];
+// Light rising off the character, the way 'aura' is drawn in memes.
+const AURAS: [number, number, number, string][] = [[2, 14, 0, '#FFE58A'], [13, 13, 0.4, '#FFFFFF'], [4, 15, 0.8, '#FFE58A'], [11, 15, 1.2, '#FFE58A'], [1, 10, 1.0, '#FFFFFF'], [14, 10, 0.2, '#FFE58A'], [7, 15, 0.6, '#FFFFFF']];
 
 function Shape({ cells, x, y, color, delay, className }: { cells: number[][]; x: number; y: number; color: string; delay: number; className: string }) {
   return (
@@ -93,7 +96,11 @@ function PixelAvatarImpl({
       ? 'drop-shadow(1px 0 0 #F5B82E) drop-shadow(-1px 0 0 #F5B82E) drop-shadow(0 1px 0 #F5B82E) drop-shadow(0 -1px 0 #F5B82E)'
       : look.effect === 'electric'
         ? 'drop-shadow(0 0 2px #7FDBFF)'
-        : undefined;
+        : look.effect === 'neon'
+          ? 'drop-shadow(0 0 1px #3DF5FF) drop-shadow(0 0 3px #C266FF)'
+          : look.effect === 'aura'
+            ? 'drop-shadow(0 0 2px #FFE58A) drop-shadow(0 0 4px rgba(255, 229, 138, 0.6))'
+            : undefined;
   const [skin] = skinTones(look);
   return (
     <svg
@@ -130,6 +137,8 @@ function PixelAvatarImpl({
         {look.effect === 'notes' && NOTES.map(([x, y, d], i) => <Shape key={`n${i}`} cells={NOTE} x={x} y={y} color="#5B6CFF" delay={d} className="cls-spark" />)}
         {look.effect === 'electric' && BOLTS.map(([x, y, d, c], i) => <Shape key={`z${i}`} cells={BOLT} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
         {look.effect === 'fire' && FLAMES.map(([x, y, d, c], i) => <Shape key={`f${i}`} cells={FLAME} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
+        {look.effect === 'neon' && NEONS.map(([x, y, d, c], i) => <rect key={`o${i}`} className="cls-spark" x={x} y={y} width={1} height={1} fill={c} style={{ animationDelay: `${d}s` }} />)}
+        {look.effect === 'aura' && AURAS.map(([x, y, d, c], i) => <rect key={`a${i}`} className="cls-rise" x={x} y={y} width={1} height={1} fill={c} style={{ animationDelay: `${d}s` }} />)}
       </g>
     </svg>
   );

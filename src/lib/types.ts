@@ -65,7 +65,7 @@ export interface Question {
   exampleMeaning?: string;
 }
 
-export type ItemTheme = 'rome' | 'school' | 'idol' | 'fantasy' | 'modern' | 'cute';
+export type ItemTheme = 'rome' | 'school' | 'idol' | 'fantasy' | 'modern' | 'cute' | 'future' | 'medieval' | 'trend';
 
 export interface ItemDef {
   id: string;
@@ -85,15 +85,15 @@ export interface AvatarLook {
   hairStyle: 'short' | 'long' | 'bob' | 'ponytail' | 'pigtails' | 'braid' | 'side' | 'curly' | 'spiky' | 'bun' | 'twinbun' | 'buzz';
   eyes: 'round' | 'big' | 'smile' | 'sharp' | 'dot';
   /** What the body wears, armour included (it used to be a separate slot on top). */
-  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold';
-  helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones';
-  face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses';
+  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold' | 'spacesuit' | 'chainmail' | 'monk' | 'tee67';
+  helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones' | 'space' | 'knight' | 'hennin' | 'capybara' | 'hardhat';
+  face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses' | 'visor' | 'pixelshades';
   /** Worn on the back: capes, wings or a bag. */
-  cape: 'none' | 'red' | 'blue' | 'star' | 'dragon' | 'fairy' | 'backpack';
-  shield: 'none' | 'round' | 'book' | 'star';
-  shoes: 'none' | 'sandal' | 'boots' | 'sneakers' | 'winged' | 'skates';
-  hand: 'none' | 'sword' | 'spear' | 'wand' | 'pencil' | 'flag' | 'mic' | 'lightstick' | 'phone' | 'staff' | 'icecream';
-  effect: 'none' | 'sparkle' | 'dust' | 'gold' | 'hearts' | 'notes' | 'electric' | 'fire';
+  cape: 'none' | 'red' | 'blue' | 'star' | 'dragon' | 'fairy' | 'backpack' | 'jetpack' | 'knightcape';
+  shield: 'none' | 'round' | 'book' | 'star' | 'energy' | 'lion';
+  shoes: 'none' | 'sandal' | 'boots' | 'sneakers' | 'winged' | 'skates' | 'hover';
+  hand: 'none' | 'sword' | 'spear' | 'wand' | 'pencil' | 'flag' | 'mic' | 'lightstick' | 'phone' | 'staff' | 'icecream' | 'saber' | 'pilgrim' | 'lute' | 'cookie' | 'tanghulu' | 'bubbletea' | 'gamepad';
+  effect: 'none' | 'sparkle' | 'dust' | 'gold' | 'hearts' | 'notes' | 'electric' | 'fire' | 'neon' | 'aura';
 }
 
 export interface RewardSetting {

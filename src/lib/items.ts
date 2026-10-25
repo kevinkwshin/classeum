@@ -8,6 +8,9 @@ export const THEMES: { id: ItemTheme; name: string }[] = [
   { id: 'fantasy', name: '판타지' },
   { id: 'modern', name: '현대' },
   { id: 'cute', name: '귀여움' },
+  { id: 'future', name: '미래' },
+  { id: 'medieval', name: '중세' },
+  { id: 'trend', name: '요즘·밈' },
 ];
 
 // Named by where on the body it goes: hats, ears and headphones are all 머리; shields and the book are 팔.
@@ -86,6 +89,34 @@ export const ITEMS: ItemDef[] = [
   { id: 'hat-straw', name: '밀짚모자', slot: 'helmet', value: 'straw', theme: 'cute' },
   { id: 'hand-flag', name: '깃발', slot: 'hand', value: 'flag', theme: 'cute' },
   { id: 'hand-icecream', name: '아이스크림', slot: 'hand', value: 'icecream', theme: 'cute' },
+
+  { id: 'hat-space', name: '우주 헬멧', slot: 'helmet', value: 'space', theme: 'future' },
+  { id: 'face-visor', name: '네온 바이저', slot: 'face', value: 'visor', theme: 'future' },
+  { id: 'top-spacesuit', name: '우주복', slot: 'tunic', value: 'spacesuit', theme: 'future' },
+  { id: 'hand-saber', name: '광선검', slot: 'hand', value: 'saber', theme: 'future' },
+  { id: 'shield-energy', name: '에너지 방패', slot: 'shield', value: 'energy', theme: 'future' },
+  { id: 'back-jetpack', name: '제트팩', slot: 'cape', value: 'jetpack', theme: 'future' },
+  { id: 'shoes-hover', name: '호버 부츠', slot: 'shoes', value: 'hover', theme: 'future' },
+  { id: 'fx-neon', name: '네온 빛', slot: 'effect', value: 'neon', theme: 'future' },
+
+  { id: 'hat-knight', name: '기사 투구', slot: 'helmet', value: 'knight', theme: 'medieval' },
+  { id: 'hat-hennin', name: '공주 고깔모자', slot: 'helmet', value: 'hennin', theme: 'medieval' },
+  { id: 'top-chainmail', name: '사슬 갑옷', slot: 'tunic', value: 'chainmail', theme: 'medieval' },
+  { id: 'top-monk', name: '수도사 로브', slot: 'tunic', value: 'monk', theme: 'medieval' },
+  { id: 'hand-pilgrim', name: '순례자 지팡이', slot: 'hand', value: 'pilgrim', theme: 'medieval' },
+  { id: 'hand-lute', name: '류트', slot: 'hand', value: 'lute', theme: 'medieval' },
+  { id: 'shield-lion', name: '기사 방패', slot: 'shield', value: 'lion', theme: 'medieval' },
+  { id: 'back-knightcape', name: '기사 망토', slot: 'cape', value: 'knightcape', theme: 'medieval' },
+
+  { id: 'top-tee67', name: '67 티셔츠', slot: 'tunic', value: 'tee67', theme: 'trend' },
+  { id: 'hat-capybara', name: '카피바라 모자', slot: 'helmet', value: 'capybara', theme: 'trend' },
+  { id: 'hat-hardhat', name: '안전모', slot: 'helmet', value: 'hardhat', theme: 'trend' },
+  { id: 'face-pixelshades', name: '픽셀 선글라스', slot: 'face', value: 'pixelshades', theme: 'trend' },
+  { id: 'hand-cookie', name: '두쫀쿠', slot: 'hand', value: 'cookie', theme: 'trend' },
+  { id: 'hand-tanghulu', name: '탕후루', slot: 'hand', value: 'tanghulu', theme: 'trend' },
+  { id: 'hand-bubbletea', name: '버블티', slot: 'hand', value: 'bubbletea', theme: 'trend' },
+  { id: 'hand-gamepad', name: '게임패드', slot: 'hand', value: 'gamepad', theme: 'trend' },
+  { id: 'fx-aura', name: '오라', slot: 'effect', value: 'aura', theme: 'trend' },
 ];
 
 /**

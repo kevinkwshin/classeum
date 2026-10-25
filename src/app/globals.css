@@ -60,6 +60,7 @@ body {
 
 @keyframes clsTwinkle { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
 @keyframes clsPuff { 0% { opacity: 0.9; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-0.6px); } }
+@keyframes clsRise { 0% { opacity: 0; transform: translateY(0); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-5px); } }
 @keyframes clsLand {
   0% { opacity: 0; transform: translate(-50%, -260%) scale(0.9); }
   60% { opacity: 1; transform: translate(-50%, -62%) scale(1.06, 0.92); }
@@ -156,6 +157,7 @@ body {
 @media (prefers-reduced-motion: no-preference) {
   .cls-spark { animation: clsTwinkle 1.6s ease-in-out infinite; }
   .cls-puff { animation: clsPuff 1.2s ease-out infinite; }
+  .cls-rise { animation: clsRise 1.8s ease-out infinite; }
   .cls-land { animation: clsLand 0.7s cubic-bezier(0.3, 0.7, 0.4, 1) both; }
   .cls-drop-in { animation: clsDropIn 0.5s cubic-bezier(0.3, 0.7, 0.4, 1) both; }
   .cls-float { animation: clsFloat 2.4s ease-in-out infinite; }

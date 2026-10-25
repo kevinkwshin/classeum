@@ -289,6 +289,40 @@ const TUNIC: Record<string, string[]> = {
     '....kSbbbbbrrbbbbbSk....',
     '.....kyGyGyGyGyGyGk.....',
   ]),
+  spacesuit: rows(16, [
+    '......kWaaaaaaaaqk......',
+    '.....kWWWWWWWWWWWqk.....',
+    '....kWWWWnrny0nWWqWk....',
+    '....kVWWWnnnnnnWWqVk....',
+    '....kSqVVVVVVVVVVqSk....',
+    '......kqqqqqqqqqqk......',
+  ]),
+  chainmail: rows(16, [
+    '......kAgdddddvgak......',
+    '.....kAagdddddvgAak.....',
+    '....kAaAgdddddvgaAak....',
+    '....kaAagdddddvgAaAk....',
+    '....kSaAbbbggbbbaASk....',
+    '......kagdddddvgAk......',
+  ]),
+  monk: rows(15, [
+    '.....kB..........Bk.....',
+    '.....k666666666666k.....',
+    '.....kB6666666666Bk.....',
+    '....kllBB666666BBlbk....',
+    '....kBlllBB66BBllbBk....',
+    '....kSmYmYmYYmYmYmSk....',
+    '.....klllllYlllllbk.....',
+    '......kkBBBmBBBBkk......',
+  ]),
+  tee67: rows(16, [
+    '......kyyggggggyyk......',
+    '.....kyynnnyynnnygk.....',
+    '....ksyynyyyyyynygsk....',
+    '....ksyynnnyyynyygsk....',
+    '....kSyynynyyynyygSk....',
+    '......kynnnyyynygk......',
+  ]),
 };
 
 // 머리: hats, ears, headphones and crowns.
@@ -422,10 +456,94 @@ const HELMET: Record<string, string[]> = {
     'kYYmYYmYYmYYmYYmYYmYYmmk',
     '.kmmk..............kmmk.',
   ]),
+  space: rows(0, [
+    '.......kkkkkkkkkk..kyk..',
+    '.....kkKKKKKKKKKKkk.k...',
+    '....kKWWKKKKKKKKKKKkk...',
+    '...kKWKK........KKKKk...',
+    '..kKWK............KKKk..',
+    '..kWK..............KKk..',
+    '..kWK..............KKk..',
+    '..kKK..............KKk..',
+    '..kKK..............KKk..',
+    '..kKK..............KKk..',
+    '..kKK..............KKk..',
+    '..kKK..............KWk..',
+    '..kKK..............KKk..',
+    '..kKKk............kKKk..',
+    '..kaWWk..........kWWak..',
+    '...kaWWkkkkkkkkkkWWak...',
+    '....kaWrWWWWWWWWWWak....',
+    '.....kkkkkkkkkkkkkk.....',
+  ]),
+  knight: rows(0, [
+    '............kkkk........',
+    '...........krrrWk.......',
+    '........kkkrMrkk........',
+    '......kkWaaaaaaAkk......',
+    '.....kWaAAAAAAAAaAk.....',
+    '....kWaAkkkqqkkkAaAk....',
+    '....kaaAqqqqqqqqAaAk....',
+    '....kaaaAqqqqqqAaaAk....',
+    '....kkkkkkkkkkkkkkkk....',
+    '....kaW..........aAk....',
+    '....kaa..........aAk....',
+    '....kAa..........AAk....',
+    '.....kk..........kk.....',
+  ]),
+  hennin: rows(0, [
+    '...........kkqa.........',
+    '..........kWpkqa........',
+    '..........kWpkqWa.......',
+    '.........kWpWRkqWa......',
+    '........kWppppRkqWa.....',
+    '.......kWppWpppRkqWa....',
+    '......kWppppppppRkqWa...',
+    '.....kWppppppppppRkqWa..',
+    '....kgyggggggggggGGkqWa.',
+    '....................qWa.',
+    '....................qWa.',
+    '....................qWa.',
+    '....................qWa.',
+    '....................qWa.',
+    '....................qa..',
+  ]),
+  capybara: rows(0, [
+    '................kLk.....',
+    '.......kkkk..k.k#y#k....',
+    '......k!mm!kkBkk###kk...',
+    '.....k!m!!!!!!!!!!!!!k..',
+    '.....k!!!!!!!!!!kk!lBk..',
+    '.....kllllll!!!!!ppllk..',
+    '.....kllllllllllllllkk..',
+    '......kBkkkkkkkkkBkk....',
+  ]),
+  hardhat: rows(0, [
+    '..........kkkk..........',
+    '........kkkWykkk........',
+    '......kkyWgWygyykk......',
+    '.....kyWyygWygyyygk.....',
+    '....kyWyyygWygyyyygk....',
+    '....kyyyyygWygyyyygk....',
+    '....kggggggyygggggGk....',
+    '..kyWWyyyyyyyyyyyyyygk..',
+    '...kkkkkkkkkkkkkkkkkk...',
+  ]),
 };
 
 // 얼굴: worn over the eye boxes.
 const FACE: Record<string, string[]> = {
+  visor: rows(9, [
+    '....kkkkkkkkkkkkkkkk....',
+    '...knnWKKKKKKKKKKTnnk...',
+    '...knnQQQQQQQQQTTTnnk...',
+    '....kkkkkkkkkkkkkkkk....',
+  ]),
+  pixelshades: rows(10, [
+    '...kkkkkkkkkkkkkkkkkk...',
+    '.....kWkkkk..kWkkkk.....',
+    '......kWkkk...kWkkk.....',
+  ]),
   glasses: rows(9, [
     '.......nnn....nnn.......',
     '......n...nnnn...n......',
@@ -448,6 +566,7 @@ const FACE: Record<string, string[]> = {
 
 // 발
 const SHOES: Record<string, string[]> = {
+  hover: rows(22, ['.......kWW0kk0WWk.......', '......q0000kk0000q......']),
   sandal: rows(22, ['........kmskksmk........', '.......kmsmkkmsmk.......']),
   sneakers: rows(22, ['.......kWWrkkrWWk.......', '.......kAAAkkAAAk.......']),
   winged: rows(20, [
@@ -658,10 +777,153 @@ const HAND: Record<string, string[]> = {
     '.kSSS...................',
     '..kkkk..................',
   ]),
+  saber: rows(2, [
+    '.kkk....................',
+    'k&W&k...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kfWfk...................',
+    'kqaAk...................',
+    'kAnAk...................',
+    'kArAk...................',
+    'kssss...................',
+    'kSSSS...................',
+    'kAnAk...................',
+    '.kkk....................',
+  ]),
+  pilgrim: rows(1, [
+    '...k....................',
+    '..kGk...................',
+    '.kGgGk..................',
+    '..kGk...................',
+    '.kkmkk..................',
+    'kmmllk..................',
+    'kmlllk..................',
+    '.kmlk...................',
+    '.krRk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.kmlk...................',
+    '.ksss...................',
+    '.kSSS...................',
+    '.kmlkk..................',
+    '.kmlk...................',
+    '..kk....................',
+  ]),
+  lute: rows(7, [
+    'kk......................',
+    'kqk.....................',
+    'kBqk....................',
+    '.kBk....................',
+    '.kBk....................',
+    '.kBBk...................',
+    '..kBk...................',
+    '.kmBmk..................',
+    'kmmBmmk.................',
+    'kmmnnmBk................',
+    'kmmnnmBk................',
+    'kmmmmmBk................',
+    'kmmBBsssk...............',
+    '.kmmmSSSk...............',
+    '..kkkkkk................',
+  ]),
+  cookie: rows(13, [
+    '..kkk...................',
+    '.kmBmk..................',
+    'kB+++Bk.................',
+    'kl+LYlk.................',
+    'kBY++Bk.................',
+    '.kBlBk..................',
+    '.ksss...................',
+    '.kSSS...................',
+    '..kkkk..................',
+  ]),
+  tanghulu: rows(1, [
+    '..k.....................',
+    '..m.....................',
+    '.kkk....................',
+    'kWrrk...................',
+    'krrrk...................',
+    'krr?k...................',
+    '.k?k....................',
+    '.kkk....................',
+    'kW++k...................',
+    'k++Lk...................',
+    'k+LLk...................',
+    '.kkk....................',
+    'kWrrk...................',
+    'krrrk...................',
+    'krr?k...................',
+    '.k?k....................',
+    '..m.....................',
+    '.ksss...................',
+    '.kSSS...................',
+    '..kmkk..................',
+    '...k....................',
+  ]),
+  bubbletea: rows(8, [
+    '...kk...................',
+    '..kppk..................',
+    '..kpRk..................',
+    '.kkpRk..................',
+    'kqWqqk..................',
+    'kW===k..................',
+    'k====k..................',
+    'k====k..................',
+    'kn=n=k..................',
+    'k=n=nk..................',
+    '.ksss...................',
+    '.kSSS...................',
+    '..kkkk..................',
+  ]),
+  gamepad: rows(15, [
+    '.kkkkkk.................',
+    'kAnAArAk................',
+    'knnnyAxk................',
+    'kAnAAdAk................',
+    'kAAkksSk................',
+    '.kk.kSSk................',
+    '.....kk.................',
+  ]),
 };
 
 // 팔: on the picture's right, over the arm.
 const SHIELD: Record<string, string[]> = {
+  energy: rows(13, [
+    '....................*...',
+    '..................**&**.',
+    '.................*&fff&*',
+    '.................*f&&&f*',
+    '.................*&fWf&*',
+    '.................*&fff&*',
+    '.................*f&&&f*',
+    '..................**f**.',
+    '....................*...',
+  ]),
+  lion: rows(14, [
+    '.................kkkkkkk',
+    '.................kddddvk',
+    '.................kydydyk',
+    '.................kyyryyk',
+    '.................kGGGGGk',
+    '..................kddvk.',
+    '...................kvk..',
+    '....................k...',
+  ]),
   round: rows(15, [
     '...................kkk..',
     '..................kgGGk.',
@@ -695,6 +957,30 @@ const SHIELD: Record<string, string[]> = {
 
 // 등: capes and wings behind the body, the backpack with straps in front.
 const CAPE: Record<string, string[]> = {
+  jetpack: rows(13, [
+    '..k..................k..',
+    '.krk................krk.',
+    'krrrk..............krrrk',
+    'kWaAkAkA........AkAkAaWk',
+    'kWaAk..A........A..kAaWk',
+    'krrrk..g........g..krrrk',
+    'kWaAk..A........A..kAaWk',
+    '.kAk................kAk.',
+    '.yVy................yVy.',
+    '.VyV................VyV.',
+    '..V..................V..',
+  ]),
+  knightcape: rows(15, [
+    '.....kg..........gk.....',
+    '....kg$$yk....ky%%gk....',
+    '..kg$$$$k......k%%%%gk..',
+    'kg$$................%%gk',
+    'kg$$................%%gk',
+    'kg$%................%%gk',
+    'kg$%$$............%%%%gk',
+    'kg$%$$$$........%%%%%%gk',
+    'kggggggg........gggggggk',
+  ]),
   red: rows(15, [
     '.....kc..........Ck.....',
     '....kcccgk....kgCCCk....',
@@ -777,7 +1063,8 @@ const CAPE: Record<string, string[]> = {
 /** Hats that cover the top of the head hide hair that would stick up through them (the helmet hides curls too). */
 function hidesHair(look: AvatarLook): boolean {
   const tall = ['bun', 'twinbun', 'spiky'].includes(look.hairStyle);
-  return (look.helmet === 'galea' && (tall || look.hairStyle === 'curly')) || (['wizard', 'straw', 'cap', 'grad'].includes(look.helmet) && tall);
+  const full = ['galea', 'space', 'knight'].includes(look.helmet);
+  return (full && (tall || look.hairStyle === 'curly')) || (['wizard', 'straw', 'cap', 'grad', 'hardhat', 'hennin', 'capybara'].includes(look.helmet) && tall);
 }
 
 /** Layer for a look value, ignoring anything that isn't a real entry (such as 'constructor'). */
@@ -792,14 +1079,14 @@ const SKINS: Record<string, [string, string, string]> = {"light":["#F6D3B3","#DD
 const HAIRS: Record<string, [string, string]> = {"black":["#1F1B18","#3D3632"],"brown":["#5A3B26","#7E5638"],"blond":["#D2A65A","#EBC982"],"red":["#B5482B","#D7694A"],"pink":["#E58FB0","#F4B7CD"],"blue":["#3E64B3","#6A8ED6"],"silver":["#B9BEC8","#E1E4EA"]};
 const TUNICS: Record<string, [string, string]> = {"white":["#EFE9DC","#CFC6B4"],"sky":["#A9C3DD","#7E9DBE"],"olive":["#B7C59A","#8E9E6E"]};
 const CAPES: Record<string, [string, string]> = {"red":["#C2412D","#932E1F"],"blue":["#2F5DA8","#21457F"],"star":["#34446B","#232F4C"]};
-const FIXED: Record<string, string> = {"1":"#FFE58A","2":"#C9B6F4","3":"#A9D3F7","4":"#FFD3E1","5":"#A8321F","7":"#A3301F","8":"#EAF4FB","9":"#E58FB0","k":"#22201C","e":"#1E1A16","M":"#A0524A","W":"#FFFFFF","b":"#7A5230","l":"#8A5A33","g":"#D7A94B","G":"#9A7330","r":"#E0452B","L":"#4E8A3E","y":"#F5C542","a":"#B9C1CA","A":"#7D8792","o":"#9A7330","Y":"#E9C46A","p":"#F4A7B9","R":"#D64563","n":"#2B2D42","d":"#5B7DB1","u":"#8E7CC3","U":"#65579E","v":"#34446B","B":"#6B4226","m":"#D9A066","q":"#DDE3EC","x":"#3E9B6E","X":"#2B7552","J":"#463A78","D":"#A8321F","i":"#F8E6AE","j":"#86BE5C","z":"#3D5E96","Z":"#8EB0E0","E":"#A3304E","I":"#B9A9EA","N":"#4B4E68","O":"#F2805F","F":"#C97F97"};
+const FIXED: Record<string, string> = {"0":"#3CCFE6","1":"#FFE58A","2":"#C9B6F4","3":"#A9D3F7","4":"#FFD3E1","5":"#A8321F","6":"#A8794C","7":"#A3301F","8":"#EAF4FB","9":"#E58FB0","k":"#22201C","e":"#1E1A16","M":"#A0524A","W":"#FFFFFF","b":"#7A5230","l":"#8A5A33","g":"#D7A94B","G":"#9A7330","r":"#E0452B","L":"#4E8A3E","y":"#F5C542","a":"#B9C1CA","A":"#7D8792","o":"#9A7330","Y":"#E9C46A","p":"#F4A7B9","R":"#D64563","n":"#2B2D42","d":"#5B7DB1","u":"#8E7CC3","U":"#65579E","v":"#34446B","B":"#6B4226","m":"#D9A066","q":"#DDE3EC","x":"#3E9B6E","X":"#2B7552","J":"#463A78","D":"#A8321F","i":"#F8E6AE","j":"#86BE5C","z":"#3D5E96","Z":"#8EB0E0","E":"#A3304E","I":"#B9A9EA","N":"#4B4E68","O":"#F2805F","F":"#C97F97","V":"#F28A2E","$":"#A82238","%":"#6E1426","f":"#38C6EE","&":"#B5F0FA","*":"#1D8FB8","+":"#A3C75A","=":"#D9B38C","?":"#A8321F","K":"#CFEFFA","Q":"#33D1E6","T":"#FF5FB4","!":"#B07A48","#":"#F28A24"};
 
 /** Every layer table, for checking that each row is exactly 24 pixels. */
 export const ALL_LAYERS = { HAIR, EYES, TUNIC, HELMET, FACE, SHOES, HAND, SHIELD, CAPE };
 
-/** Shades and heart glasses hide the eyes, so blinking and reaction faces skip the eyes. */
+/** Shades, heart glasses, the visor and the pixel shades hide the eyes, so blinking and reaction faces skip the eyes. */
 export function eyesCovered(look: AvatarLook): boolean {
-  return look.face === 'sunglasses' || look.face === 'heartglasses';
+  return ['sunglasses', 'heartglasses', 'visor', 'pixelshades'].includes(look.face);
 }
 
 export interface PixelRun {
