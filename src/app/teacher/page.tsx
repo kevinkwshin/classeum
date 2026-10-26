@@ -986,7 +986,10 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
       .catch(() => undefined);
   return (
     <div className="flex flex-col gap-5 p-8">
-      <h1 className="text-2xl font-bold">반 관리</h1>
+      {/* Same height as the 이벤트 and 통계 header rows (their buttons are 44 px), so titles line up across tabs. */}
+      <div className="flex min-h-11 items-center">
+        <h1 className="text-2xl font-bold">반 관리</h1>
+      </div>
       <ClassTabs
         classes={view.classes}
         value={classId}
