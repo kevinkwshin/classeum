@@ -510,8 +510,9 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
             <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={150} />}</div>
             <div className="text-lg font-bold">{item?.name}</div>
           </div>
-          {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. */}
-          <div className="flex max-h-[420px] flex-1 flex-col gap-4 overflow-y-auto pr-1">
+          {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. The scroll box clips
+              what sticks out, so 4 px of padding (cancelled by the margin) keeps the chosen item's ring whole. */}
+          <div className="-m-1 flex max-h-[428px] flex-1 flex-col gap-4 overflow-y-auto p-1">
             {THEMES.map((th) => {
               const list = ITEMS.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
               if (list.length === 0) return null;
