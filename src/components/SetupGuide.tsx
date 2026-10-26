@@ -90,7 +90,7 @@ export function SetupGuide({ view, onStudents, onWrite }: { view: TeacherView; o
 
   const action = (s: SetupStep) => {
     const style = 'flex h-9 shrink-0 items-center rounded-xl border border-[#D5D8DF] bg-white px-3 text-sm font-bold';
-    if (s.key === 'class') return <button type="button" onClick={onStudents} className={style}>학생·기기</button>;
+    if (s.key === 'class') return <button type="button" onClick={onStudents} className={style}>반 관리</button>;
     if (s.key === 'words') return <button type="button" onClick={onWrite} className={style}>직접 작성하기</button>;
     if (s.key === 'projector') return <ProjectorLink className={style}>열기</ProjectorLink>;
     if (s.key === 'phones') {

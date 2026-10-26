@@ -61,8 +61,8 @@ function TeacherApp() {
         <nav aria-label="선생님 메뉴" className="sticky top-0 flex h-screen w-52 shrink-0 flex-col gap-1 self-start overflow-y-auto bg-ink px-3.5 py-7">
           <div className="px-3 pb-7 font-display text-[22px] font-bold tracking-tight text-white">Classeum</div>
           {([
+            ['students', '반 관리'],
             ['arena', '아레나'],
-            ['students', '학생·기기'],
             ['stats', '통계'],
           ] as [Tab, string][]).map(([key, label]) => (
             <button
@@ -80,7 +80,7 @@ function TeacherApp() {
           <div className="mt-auto flex flex-col gap-2 px-1">
             <div className="flex items-center gap-1.5">
               <ProjectorLink className="min-w-0 flex-1 whitespace-nowrap rounded-xl border border-[#3D4354] px-2 py-2.5 text-center text-sm font-semibold text-white">프로젝터 화면 열기</ProjectorLink>
-              <HelpButton view={view} />
+              <HelpButton view={view} onTab={setTab} />
             </div>
             <div className="break-all px-2 text-[11px] leading-snug text-[#737887]">학생 주소 {view.joinUrl}</div>
           </div>
@@ -986,7 +986,7 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
       .catch(() => undefined);
   return (
     <div className="flex flex-col gap-5 p-8">
-      <h1 className="text-2xl font-bold">학생·기기</h1>
+      <h1 className="text-2xl font-bold">반 관리</h1>
       <ClassTabs
         classes={view.classes}
         value={classId}
@@ -1118,7 +1118,7 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
   const stats = data && data.classId === classId ? data.stats : null;
   const student = useMemo(() => stats?.students.find((s) => s.id === picked) ?? stats?.students[0], [stats, picked]);
   const pct = (v: number | null | undefined) => (v === null || v === undefined ? '-' : `${Math.round(v * 100)}%`);
-  if (classes.length === 0) return <div className="p-8 text-ink-3">학생·기기에서 반을 먼저 만들어 주세요.</div>;
+  if (classes.length === 0) return <div className="p-8 text-ink-3">반 관리에서 반을 먼저 만들어 주세요.</div>;
   if (!stats) return <div className="p-8 text-ink-3">불러오는 중…</div>;
   return (
     <div className="flex flex-col gap-5 p-8">
