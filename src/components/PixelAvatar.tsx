@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import type { AvatarLook } from '@/lib/types';
 import { avatarRuns, eyesCovered, GRID, skinTones } from '@/lib/avatar';
 
@@ -34,6 +34,16 @@ const INK = '#1E1A16';
 const FX_SCALE = GRID / 16;
 
 export type Mood = 'normal' | 'happy' | 'dizzy' | 'sleep';
+
+/**
+ * One <path> per colour instead of one <rect> per run: 13-32 nodes instead of 100-325, with 40 avatars on
+ * the projector. Runs never overlap, so the picture is the same.
+ */
+function colourPaths(look: AvatarLook): [string, string][] {
+  const byColour = new Map<string, string>();
+  for (const r of avatarRuns(look)) byColour.set(r.color, `${byColour.get(r.color) ?? ''}M${r.x} ${r.y}h${r.w}v1h-${r.w}z`);
+  return [...byColour];
+}
 
 function Face({ look, mood }: { look: AvatarLook; mood: Exclude<Mood, 'normal'> }) {
   const [skin] = skinTones(look);
@@ -90,7 +100,9 @@ function PixelAvatarImpl({
   /** Any number turns on blinking; different numbers blink at different moments. */
   blink?: number;
 }) {
-  const runs = avatarRuns(look);
+  // Rebuilt when the look changes, not when only the mood or blink does.
+  const lookJson = JSON.stringify(look);
+  const paths = useMemo(() => colourPaths(JSON.parse(lookJson) as AvatarLook), [lookJson]);
   const outline =
     look.effect === 'gold'
       ? 'drop-shadow(1px 0 0 #F5B82E) drop-shadow(-1px 0 0 #F5B82E) drop-shadow(0 1px 0 #F5B82E) drop-shadow(0 -1px 0 #F5B82E)'
@@ -114,8 +126,8 @@ function PixelAvatarImpl({
       aria-hidden={title ? undefined : true}
       style={{ overflow: 'visible', filter: outline, display: 'block' }}
     >
-      {runs.map((r, i) => (
-        <rect key={i} x={r.x} y={r.y} width={r.w} height={1} fill={r.color} />
+      {paths.map(([color, d]) => (
+        <path key={color} d={d} fill={color} />
       ))}
       {mood !== 'normal' && <Face look={look} mood={mood} />}
       {mood === 'normal' && blink !== undefined && !eyesCovered(look) && (
@@ -144,4 +156,18 @@ function PixelAvatarImpl({
   );
 }
 
-export const PixelAvatar = memo(PixelAvatarImpl);
+type Props = Parameters<typeof PixelAvatarImpl>[0];
+
+function sameLook(a: AvatarLook, b: AvatarLook): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a) as (keyof AvatarLook)[];
+  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k]);
+}
+
+// Views arrive as fresh JSON on every push, so the look is compared by value; the other props as usual.
+function sameProps(a: Props, b: Props): boolean {
+  const keys = Object.keys(a) as (keyof Props)[];
+  return keys.length === Object.keys(b).length && keys.every((k) => (k === 'look' ? sameLook(a.look, b.look) : a[k] === b[k]));
+}
+
+export const PixelAvatar = memo(PixelAvatarImpl, sameProps);
