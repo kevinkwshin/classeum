@@ -4,6 +4,7 @@ import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
+import { useAudioUnlock, useProjectorPlaysSound, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
@@ -25,6 +26,8 @@ export default function TeacherPage() {
 
 function TeacherApp() {
   const { view, conn, send, serverNow } = useLive<TeacherView>('teacher');
+  // Any click here (opening the lobby, starting the quiz) lets this screen play the sounds when the projector can't.
+  useAudioUnlock();
   const [tab, setTab] = useState<Tab>('students');
   // The [직접 작성하기] editor; kept here so the setup card on 반 관리 can open it on the arena.
   const [writing, setWriting] = useState(false);
@@ -742,6 +745,11 @@ function UploadPreview({ result, typed = false, onClose, onCreate }: { result: U
 function Console({ view, live, act, serverNow }: { view: TeacherView; live: TeacherLive; act: Send; serverNow: () => number }) {
   const control = useCallback((action: string) => act({ type: 'control', action }).catch(() => undefined), [act]);
   const running = live.phase !== 'lobby' && live.phase !== 'summary';
+  // The projector plays the reveal sounds once it has been clicked; until then, or without one, this screen does.
+  const projectorPlays = useProjectorPlaysSound();
+  const fromHere = useCallback(() => !projectorPlays(), [projectorPlays]);
+  useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, fromHere);
+  useSoundPreview(live.sound, fromHere);
   // Hidden until the reveal, in case the laptop screen ends up mirrored on the projector; asked again for each question.
   const [shownSeq, setShownSeq] = useState<number | null>(null);
   const showAnswer = live.phase === 'reveal' || (shownSeq !== null && shownSeq === live.question?.seq);

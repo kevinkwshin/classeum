@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { playCheer, playCrickets, unlockAudio } from '@/client/sound';
+import { useAudioUnlock, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
@@ -25,37 +25,15 @@ function DisplayApp() {
   const s = view?.session ?? null;
   useTicker(!!s && (s.phase === 'moving' || s.phase === 'intro'), 200);
 
-  // Browsers allow sound only after a click or key press in this window; the first one turns it on.
+  // Browsers allow sound only after a click or key press in this window; the first one turns it on. Until then
+  // the teacher screen plays the sounds (src/client/revealSound.ts).
   const [audioOn, setAudioOn] = useState(false);
-  useEffect(() => {
-    const unlock = () => void unlockAudio().then(setAudioOn);
-    window.addEventListener('pointerdown', unlock);
-    window.addEventListener('keydown', unlock);
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-  }, []);
-  // When the fog lifts, once per question: "Yeah!" if someone got it right, and crickets after a beat if
-  // students took part and nobody did (not when the room is empty, e.g. the teacher trying it alone).
-  const cheered = useRef(-1);
-  const seq = s?.question?.seq ?? -1;
-  const reveal = s?.phase === 'reveal' ? view?.reveal ?? null : null;
-  const share = reveal?.accuracy ?? 0;
-  const nobody = !!reveal && share === 0 && reveal.avatars.length > 0;
+  useAudioUnlock(setAudioOn);
   const soundOn = view?.sound !== false;
-  useEffect(() => {
-    if (!soundOn || (share <= 0 && !nobody) || cheered.current === seq) return;
-    cheered.current = seq;
-    const t = share > 0 ? setTimeout(() => playCheer(share), 250) : setTimeout(playCrickets, 700);
-    return () => clearTimeout(t);
-  }, [seq, share, nobody, soundOn]);
-  // Ticking [효과음] back on plays one cheer, so the teacher hears how loud it is on the projector speakers.
-  const wasOn = useRef(soundOn);
-  useEffect(() => {
-    if (soundOn && !wasOn.current && audioOn) playCheer(1);
-    wasOn.current = soundOn;
-  }, [soundOn, audioOn]);
+  useProjectorAudioBeacon(audioOn && soundOn);
+  const reveal = s?.phase === 'reveal' ? view?.reveal ?? null : null;
+  useRevealSound(s?.question?.seq ?? -1, reveal, soundOn && audioOn);
+  useSoundPreview(soundOn && audioOn);
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;
