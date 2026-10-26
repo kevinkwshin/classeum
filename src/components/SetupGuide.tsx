@@ -24,13 +24,13 @@ export function setupSteps(view: TeacherView): SetupStep[] {
     { key: 'words', label: '단어 넣기', hint: '직접 쓰거나 엑셀로', done: view.events.length > 0 },
     // After a first quiz the projector counts as set up even on a day its window isn't open yet.
     { key: 'projector', label: '프로젝터', hint: '확장 모드 → 창 옮기고 F', done: view.displayOn || played },
-    { key: 'phones', label: '폰 접속', hint: !phones && view.phones > 0 ? '폰 연결됨 · 요청을 기다려요' : 'QR 찍고 등록 → 승인', done: phones },
+    { key: 'phones', label: '폰 접속', hint: !phones && view.requests.length > 0 ? '요청 왔어요 → 승인' : !phones && view.phones > 0 ? '폰 연결됨 · 요청을 기다려요' : 'QR 찍고 등록 → 승인', done: phones },
     { key: 'quiz', label: '첫 퀴즈', hint: '반 고르고 대기실 열기', done: played },
   ];
 }
 
 /** What to check when phones can't reach the laptop. */
-export const PHONE_HELP = ['같은 와이파이인지 확인', '윈도우 보안 경고 → 허용 (개인 네트워크)', '그래도 안 되면 휴대용 공유기'];
+export const PHONE_HELP = ['같은 와이파이인지 확인', '윈도우: 와이파이 속성 → 개인 네트워크로', '그래도 안 되면 휴대용 공유기'];
 
 export const GUIDE_LOOK: AvatarLook = { ...DEFAULT_LOOK, helmet: 'grad', face: 'glasses' };
 
@@ -144,7 +144,7 @@ export function SetupGuide({ view, onStudents, onWrite }: { view: TeacherView; o
                   <div className="flex min-h-12 items-center gap-3 py-1.5">
                     <StepCheck done={s.done} n={i + 1} />
                     <span className={`w-24 shrink-0 font-bold ${s.done ? 'text-ink-3' : ''}`}>{s.label}</span>
-                    <span className={`min-w-0 flex-1 truncate text-sm ${s.key === 'phones' && !s.done && view.phones > 0 ? 'font-semibold text-good' : 'text-ink-3'}`}>{s.hint}</span>
+                    <span className={`min-w-0 flex-1 truncate text-sm ${s.key === 'phones' && !s.done && (view.phones > 0 || view.requests.length > 0) ? 'font-semibold text-good' : 'text-ink-3'}`}>{s.hint}</span>
                     {!s.done && action(s)}
                   </div>
                   {s.key === 'phones' && phoneHelp && !s.done && (

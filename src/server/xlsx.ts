@@ -165,7 +165,9 @@ function workbook(words: Row[], questions: Row[]): Buffer {
 /** A file name Windows and macOS both take, at most 40 characters as the importer keeps for an event's name. */
 export function fileBaseOf(name: string): string {
   let out = '';
-  for (const ch of name.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim()) {
+  // A name cut in the middle of an emoji keeps half of it, which can't go into a header; drop such halves.
+  const whole = name.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '');
+  for (const ch of whole.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim()) {
     if (out.length + ch.length > 40) break;
     out += ch;
   }

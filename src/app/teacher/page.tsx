@@ -58,7 +58,7 @@ function TeacherApp() {
   return (
     <div className="flex min-h-screen bg-bg">
       {!running && (
-        <nav aria-label="선생님 메뉴" className="flex w-52 shrink-0 flex-col gap-1 bg-ink px-3.5 py-7">
+        <nav aria-label="선생님 메뉴" className="sticky top-0 flex h-screen w-52 shrink-0 flex-col gap-1 self-start overflow-y-auto bg-ink px-3.5 py-7">
           <div className="px-3 pb-7 font-display text-[22px] font-bold tracking-tight text-white">Classeum</div>
           {([
             ['arena', '아레나'],
@@ -335,7 +335,8 @@ function Events({ view, act, notify, onStudents }: { view: TeacherView; act: Sen
         </div>
       </div>
 
-      <SetupGuide view={view} onStudents={onStudents} onWrite={() => setWriting(true)} />
+      {/* Hidden while requests wait: their popup is step 4's action and would cover 대기실 열기 below the card. */}
+      {view.requests.length === 0 && <SetupGuide view={view} onStudents={onStudents} onWrite={() => setWriting(true)} />}
 
       {view.events.length === 0 && !upload && (
         <Card className="flex flex-col items-center gap-3 py-16 text-center">

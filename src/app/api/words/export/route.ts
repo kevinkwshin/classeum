@@ -22,7 +22,8 @@ export async function POST(request: NextRequest) {
   } catch {
     return Response.json({ ok: false, error: '잘못된 요청이에요.' }, { status: 400 });
   }
-  const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  // Cut by characters so an emoji at the limit isn't split in half.
+  const str = (v: unknown, max: number) => (typeof v === 'string' ? Array.from(v.trim()).slice(0, max).join('') : '');
   let file: { fileName: string; data: Buffer } | null;
   try {
     if (typeof body.eventId === 'string') {

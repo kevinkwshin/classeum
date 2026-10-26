@@ -246,6 +246,16 @@ class Hub {
   addClient(c: Client) {
     const openBefore = this.registrationOpen();
     if (c.role === 'student' && c.tokenHash) {
+      // The browser reconnects a dropped EventSource by itself with the same stream id, and one EventSource has one
+      // live connection, so an older stream with that id is already abandoned (and its heartbeats would keep it).
+      if (c.streamId) {
+        for (const x of [...this.clients]) {
+          if (x.role === 'student' && x.tokenHash === c.tokenHash && x.streamId === c.streamId) {
+            this.clients.delete(x);
+            x.end?.();
+          }
+        }
+      }
       // A reconnecting phone often opens its new stream before the old one is noticed as gone.
       const same = [...this.clients].filter((x) => x.role === 'student' && x.tokenHash === c.tokenHash);
       for (const old of same.slice(0, Math.max(0, same.length - (MAX_STREAMS_PER_DEVICE - 1)))) {
@@ -1000,7 +1010,9 @@ class Hub {
     // Only the name as shown in the teacher's file picker: no folders, no control characters, not too long.
     const cleanFile = fileName?.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined;
     // Rows without a 세트 make an event named after the file ('3주차 단어장'), or after the day if the name is unknown.
-    const defaultName = title?.trim().slice(0, 40) || cleanFile?.replace(/\.xlsx?$/i, '').trim().slice(0, 40) || `${shortDate()} 퀴즈`;
+    // Cut by characters, not UTF-16 units, so an emoji at the cut isn't left half there.
+    const cut = (s: string) => Array.from(s.trim()).slice(0, 40).join('');
+    const defaultName = (title && cut(title)) || (cleanFile && cut(cleanFile.replace(/\.xlsx?$/i, ''))) || `${shortDate()} 퀴즈`;
     const groups = new Map<string, { words: Word[]; custom: CustomQuestion[] }>();
     for (const w of result.words) {
       const name = w.set || defaultName;
@@ -1812,6 +1824,8 @@ export function hub(): Hub {
     };
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
+    // Closing the console window: Windows reports it as SIGHUP and ends the process at once unless it is handled.
+    process.once('SIGHUP', stop);
   }
   return g.__classeumHub;
 }

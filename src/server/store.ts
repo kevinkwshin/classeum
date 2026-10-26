@@ -287,9 +287,14 @@ function unpackResponses(v: unknown): ResponseRec[] {
 function parse(text: string): DB {
   const raw: unknown = JSON.parse(text);
   if (!isRecord(raw)) throw new Error('not an object');
-  const d = { ...empty(), ...(raw as Partial<DB>) };
-  // Files saved before answers were packed hold the plain list, which loads as it is.
-  if (!Array.isArray(d.responses)) d.responses = unpackResponses(d.responses);
+  const d = { ...empty(), ...(raw as Partial<DB>) } as DB & { answers?: unknown };
+  // Packed answers are kept under 'answers' and 'responses' is saved as a plain list, so an older copy of the app
+  // (a rollback, or .data copied to a laptop with an older ZIP) reads an empty list instead of crashing, and keeps
+  // 'answers' as it is. Answers it adds to the list are merged back here. Files saved before packing hold only the
+  // plain list; a few saved during development hold the packed form under 'responses'.
+  const plain = Array.isArray(d.responses) ? d.responses : unpackResponses(d.responses);
+  d.responses = d.answers === undefined ? plain : [...unpackResponses(d.answers), ...plain];
+  delete d.answers;
   for (const k of RECORDS) if (!isRecord(d[k])) throw new Error(`${k} is not an object`);
   for (const k of LISTS) if (!Array.isArray(d[k])) throw new Error(`${k} is not a list`);
   return migrate(d);
@@ -309,7 +314,7 @@ function write(d: DB): void {
   const tmp = `${FILE}.tmp`;
   const fd = openSync(tmp, 'w');
   try {
-    writeFileSync(fd, JSON.stringify({ ...d, responses: packResponses(d.responses) }));
+    writeFileSync(fd, JSON.stringify({ ...d, responses: [], answers: packResponses(d.responses) }));
     fsyncSync(fd);
   } finally {
     closeSync(fd);
