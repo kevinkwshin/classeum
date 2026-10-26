@@ -4,7 +4,7 @@
 // because nobody clicked the projector. The two windows talk over a BroadcastChannel (same laptop only).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Phase, RevealInfo } from '@/lib/types';
-import { TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
+import { MUSIC_FULL, MUSIC_SOFT, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
 
 const CHANNEL = 'classeum-sound';
 // One function for every render: a fresh `() => true` default would re-run the sound effects on each re-render
@@ -82,16 +82,19 @@ export function useTeacherPlaysSound(): { now: () => boolean; on: boolean } {
   return { now, on };
 }
 
-/** The music plays in the lobby and on the results, not over the questions, and stops while the projector is covered. */
-export const musicTime = (phase: Phase | undefined, blank: boolean | undefined) => (phase === 'lobby' || phase === 'summary') && !blank;
+/**
+ * How loud the music plays: fuller in the lobby and on the results, softly under the questions, and not at all while
+ * the quiz is paused or the projector is covered (the teacher is talking then), or with no session.
+ */
+export function musicLevel(phase: Phase | undefined, blank: boolean | undefined, paused: boolean | undefined): number {
+  if (!phase || blank || paused) return 0;
+  return phase === 'lobby' || phase === 'summary' ? MUSIC_FULL : MUSIC_SOFT;
+}
 
-/** Background music, looping softly while `on` and fading out when it turns off. */
-export function useBackgroundMusic(on: boolean) {
-  useEffect(() => {
-    if (!on) return;
-    setMusic(true);
-    return () => setMusic(false);
-  }, [on]);
+/** Background music at `level` (0 for none), easing between levels and fading out when it stops. */
+export function useBackgroundMusic(level: number) {
+  useEffect(() => setMusic(level), [level]);
+  useEffect(() => () => setMusic(0), []);
 }
 
 /**

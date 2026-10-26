@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { musicTime, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
+import { musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
@@ -36,7 +36,7 @@ function DisplayApp() {
   useRevealSound(s?.question?.seq ?? -1, reveal, soundOn && audioOn);
   useCountdownTick(s?.phase === 'moving' ? s.phaseEndsAt : null, serverNow, soundOn && audioOn);
   useSoundPreview(soundOn && audioOn);
-  useBackgroundMusic(musicOn && audioOn && musicTime(s?.phase, view?.blank));
+  useBackgroundMusic(musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0);
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;
