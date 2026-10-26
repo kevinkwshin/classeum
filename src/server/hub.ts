@@ -5,6 +5,7 @@ import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, Publ
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
+import { zoneOf } from '@/lib/field';
 import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
 import { compareNames } from './stats';
@@ -23,8 +24,6 @@ export interface Client {
   end?: () => void;
 }
 
-export const START_HALF_W = 0.09;
-export const START_HALF_H = 0.13;
 const INTRO_MS = 600;
 // The first question of each round gets a 3·2·1 on the projector and phones.
 const FIRST_INTRO_MS = 3000;
@@ -47,13 +46,6 @@ const FRIENDS_SHOWN = 9;
 /** Two tabs on one phone are fine; a third replaces the oldest. */
 const MAX_STREAMS_PER_DEVICE = 2;
 const ANIMALS = ['여우', '부엉이', '사슴', '고래', '펭귄', '다람쥐', '거북', '판다', '수달', '코알라', '호랑이', '토끼'];
-
-export function zoneOf(p: FieldPoint, optionCount: number): number {
-  if (Math.abs(p.x - 0.5) < START_HALF_W && Math.abs(p.y - 0.5) < START_HALF_H) return -1;
-  if (optionCount === 2) return p.x < 0.5 ? 0 : 1;
-  const z = (p.y < 0.5 ? 0 : 2) + (p.x < 0.5 ? 0 : 1);
-  return z < optionCount ? z : -1;
-}
 
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');

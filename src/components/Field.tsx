@@ -5,10 +5,7 @@ import { CountUp } from './CountUp';
 import { PixelAvatar } from './PixelAvatar';
 import { Reaction, reactionLine } from './Reaction';
 import { hashString } from '@/lib/text';
-
-// Must match START_HALF_W / START_HALF_H in src/server/hub.ts.
-const START_W = 0.18;
-const START_H = 0.26;
+import { START_HALF_H, START_HALF_W, zoneOf } from '@/lib/field';
 
 // [left%, top%, width%, height%, alpha]; on reveal each cloud slides out the side it is nearest.
 const CLOUDS = [
@@ -23,13 +20,6 @@ const LEAVES = Array.from({ length: 16 }, (_, i) => ({
   size: 12 + ((i * 7) % 10),
   color: i % 3 === 0 ? '#2b8a3e' : '#F5B82E',
 }));
-
-function zoneOf(x: number, y: number, n: number): number {
-  if (Math.abs(x - 0.5) < START_W / 2 && Math.abs(y - 0.5) < START_H / 2) return -1;
-  if (n === 2) return x < 0.5 ? 0 : 1;
-  const z = (y < 0.5 ? 0 : 2) + (x < 0.5 ? 0 : 1);
-  return z < n ? z : -1;
-}
 
 type Tag = { h: number; w: number; small: boolean };
 // Name tag under an avatar: its height (with the 2px gap) and the width a three-syllable name needs.
@@ -86,7 +76,7 @@ function formation(
 ) {
   const groups = new Map<number, AvatarOnField[]>();
   for (const a of avatars) {
-    const z = zoneOf(a.point.x, a.point.y, n);
+    const z = zoneOf(a.point, n);
     if (z < 0 && !showAll) continue;
     groups.set(z, [...(groups.get(z) ?? []), a]);
   }
@@ -302,7 +292,7 @@ export function Field({
 
       <div
         className="absolute rounded-full border-[3px] border-dashed border-[#C9CDD6] bg-white"
-        style={{ left: `${50 - (START_W * 100) / 2}%`, top: `${50 - (START_H * 100) / 2}%`, width: `${START_W * 100}%`, height: `${START_H * 100}%`, zIndex: 1 }}
+        style={{ left: `${50 - START_HALF_W * 100}%`, top: `${50 - START_HALF_H * 100}%`, width: `${START_HALF_W * 200}%`, height: `${START_HALF_H * 200}%`, zIndex: 1 }}
       />
 
       {avatars &&

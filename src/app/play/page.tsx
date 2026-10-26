@@ -7,30 +7,15 @@ import { PixelAvatar } from '@/components/PixelAvatar';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { MAX_TEXT_ANSWER } from '@/lib/text';
+import { zoneCenter, zoneOf } from '@/lib/field';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
 import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
-
-// Must match START_HALF_W / START_HALF_H in src/server/hub.ts.
-const START_HALF_W = 0.09;
-const START_HALF_H = 0.13;
-
-function zoneOf(p: FieldPoint, n: number) {
-  if (Math.abs(p.x - 0.5) < START_HALF_W && Math.abs(p.y - 0.5) < START_HALF_H) return -1;
-  if (n === 2) return p.x < 0.5 ? 0 : 1;
-  const z = (p.y < 0.5 ? 0 : 2) + (p.x < 0.5 ? 0 : 1);
-  return z < n ? z : -1;
-}
 
 function buzz(pattern: number | number[]) {
   // Android only; iPhone Safari has no vibration API.
   try {
     navigator.vibrate?.(pattern);
   } catch {}
-}
-
-function zoneCenter(z: number, n: number): FieldPoint {
-  if (n === 2) return { x: z === 0 ? 0.25 : 0.75, y: 0.5 };
-  return { x: z % 2 === 0 ? 0.25 : 0.75, y: z < 2 ? 0.27 : 0.73 };
 }
 
 // Moves are numbered across remounts and reloads, so the server never mistakes a new move for an old one.
