@@ -83,7 +83,7 @@ npm install
 
 - 모든 기록은 노트북의 `.data/classeum.json`에 저장돼요. 이 파일은 git에 올라가지 않아요 (학생 이름이 들어 있으므로).
 - 학생 정보는 번호, 이름, 퀴즈 기록, 캐릭터만 저장해요.
-- [통계] → [엑셀로 내보내기]로 학생별 기록을 받을 수 있어요.
+- [통계]의 [이 반 엑셀로]·[전체 엑셀로]로 학생별 기록을 받을 수 있어요.
 - 학생마다 마지막 퀴즈의 오답 노트가 남아서, 아레나를 닫은 뒤에도 폰 첫 화면의 [지난 오답 노트]에서 다시 보고 풀 수 있어요.
 - `.data/teacher-key`는 선생님 링크의 열쇠예요. 링크가 퍼졌다면 이 파일을 지우고 서버를 다시 켜세요. 새 열쇠가 만들어지고 예전 링크와 쿠키는 더 이상 통하지 않아요.
 
@@ -95,7 +95,7 @@ src/
     teacher/   선생님 노트북 화면 (이벤트, 진행 콘솔, 학생·기기, 통계)
     display/   프로젝터 화면 (대기실, 운동장, 마무리)
     play/      학생 폰 화면 (등록, 캐릭터, 게임 패드, 결과, 오답 노트, 보관함)
-    api/       stream(SSE) · action · upload · words · stats · device
+    api/       stream(SSE) · action · upload · words · stats · device · teacher/login · teacher/me
   server/
     excel.ts     엑셀 읽기·검증
     generate.ts  단어장 → 문제·오답 보기 자동 생성 (AI 없음)
