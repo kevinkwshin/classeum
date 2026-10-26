@@ -1148,16 +1148,6 @@ export function skinTones(look: AvatarLook): [string, string] {
   return [sk[0], sk[1]];
 }
 
-/** A hair colour swatch for the picker. */
-export function hairColor(id: string): string {
-  return pick(HAIRS, id, 'brown')[0];
-}
-
-/** A skin colour swatch for the picker. */
-export function skinColor(id: string): string {
-  return pick(SKINS, id, 'light')[0];
-}
-
 export function normalizeLook(raw: Partial<AvatarLook> | undefined): AvatarLook {
   return { ...DEFAULT_LOOK, ...(raw ?? {}) };
 }

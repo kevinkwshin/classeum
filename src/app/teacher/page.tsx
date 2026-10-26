@@ -468,7 +468,7 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
           {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. */}
           <div className="flex max-h-[420px] flex-1 flex-col gap-4 overflow-y-auto pr-1">
             {THEMES.map((th) => {
-              const list = view.items.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
+              const list = ITEMS.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
               if (list.length === 0) return null;
               return (
                 <div key={th.id}>
@@ -1168,5 +1168,3 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
     </div>
   );
 }
-
-void ITEMS;

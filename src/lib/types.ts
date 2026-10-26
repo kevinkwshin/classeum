@@ -62,7 +62,6 @@ export interface Question {
   answers?: string[];
   seconds: number;
   explanation?: string;
-  exampleMeaning?: string;
 }
 
 export type ItemTheme = 'rome' | 'school' | 'idol' | 'fantasy' | 'modern' | 'cute' | 'future' | 'medieval' | 'trend';
@@ -140,12 +139,6 @@ export interface RevealInfo {
   avatars: AvatarOnField[];
   textWrong?: string[];
   long: boolean;
-}
-
-export interface RosterEntry {
-  id: string;
-  number: number;
-  name: string;
 }
 
 export interface WrongNote {

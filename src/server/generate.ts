@@ -182,7 +182,6 @@ function buildWordQuestion(
     answerIndex: 0,
     seconds: target.seconds ?? defaultSeconds,
     explanation,
-    exampleMeaning: target.exampleMeaning,
   };
 }
 

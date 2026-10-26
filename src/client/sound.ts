@@ -40,10 +40,6 @@ export async function unlockAudio(): Promise<boolean> {
   return c.state === 'running';
 }
 
-export function audioReady(): boolean {
-  return context()?.state === 'running';
-}
-
 function play(sound: Sound, volume: number, rate = 1) {
   const c = context();
   if (!c || c.state !== 'running') return;

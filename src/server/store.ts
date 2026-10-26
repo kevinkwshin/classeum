@@ -56,7 +56,8 @@ export interface EventRec {
   retry: Record<string, Question>;
   warnings: string[];
   reward: RewardSetting;
-  wordKeys: string[];
+  /** Written by older versions; nothing reads it. */
+  wordKeys?: string[];
   /** After the main round, ask again the words much of the class got wrong. Off unless the teacher turns it on. */
   retryRound?: boolean;
   /** The Excel file it was made from (events made before this was kept have none). */

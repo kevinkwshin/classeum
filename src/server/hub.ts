@@ -509,7 +509,7 @@ class Hub {
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + Math.min(x.seconds, 9) + 4, 0)),
       };
     }
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, items: ITEMS };
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail };
   }
 
   private registrationContext(): RegistrationContext {
@@ -1043,7 +1043,6 @@ class Hub {
         retry: gen.retry,
         warnings: gen.warnings,
         reward: { itemId: nextItem.id, challengePct: 70, growthPp: 10 },
-        wordKeys: g.words.map((w) => w.key),
         fileName: draft.fileName,
         typed: draft.typed,
       };
@@ -1248,7 +1247,6 @@ class Hub {
     let correct = 0;
     let unanswered = 0;
     const textWrong = new Map<string, number>();
-    const event = db().events[live.eventId];
     for (const id of counted) {
       let choice = -1;
       let ok = false;
@@ -1312,7 +1310,6 @@ class Hub {
     live.phase = 'reveal';
     live.phaseAt = now;
     live.phaseEndsAt = live.autoAdvance ? now + (long ? REVEAL_LONG_MS : REVEAL_MS) : null;
-    void event;
     save();
     this.schedulePush(true);
   }

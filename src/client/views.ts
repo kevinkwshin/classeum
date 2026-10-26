@@ -1,5 +1,5 @@
 // Shapes of the views the server pushes over SSE (see src/server/hub.ts).
-import type { AvatarLook, ItemDef, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, WrongNote } from '@/lib/types';
+import type { AvatarLook, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, WrongNote } from '@/lib/types';
 
 export type { WrongNote };
 
@@ -102,7 +102,6 @@ export interface TeacherView {
   requests: { id: string; className: string; number: number; name: string; kind: 'match' | 'replace' | 'new' | 'conflict'; note: string; bound: boolean; records: boolean; holder: string; /** [모두 승인] takes it; otherwise the teacher checks it alone. */ auto: boolean; symbol: string; createdAt: number }[];
   events: TeacherEvent[];
   live: TeacherLive | null;
-  items: ItemDef[];
 }
 
 
