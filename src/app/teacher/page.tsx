@@ -4,7 +4,7 @@ import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
-import { useAudioUnlock, useProjectorPlaysSound, useRevealSound, useSoundPreview } from '@/client/revealSound';
+import { musicTime, useAudioUnlock, useBackgroundMusic, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
@@ -28,6 +28,7 @@ function TeacherApp() {
   const { view, conn, send, serverNow } = useLive<TeacherView>('teacher');
   // Any click here (opening the lobby, starting the quiz) lets this screen play the sounds when the projector can't.
   useAudioUnlock();
+  const plays = useTeacherPlaysSound();
   const [tab, setTab] = useState<Tab>('students');
   // The [직접 작성하기] editor; kept here so the setup card on 반 관리 can open it on the arena.
   const [writing, setWriting] = useState(false);
@@ -103,6 +104,7 @@ function TeacherApp() {
       )}
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
+        {view.live && <TeacherSounds live={view.live} plays={plays} />}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
         {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} writing={writing} setWriting={setWriting} onStudents={() => setTab('students')} />)}
         {tab === 'students' && !running && (
@@ -742,14 +744,20 @@ function UploadPreview({ result, typed = false, onClose, onCreate }: { result: U
 
 // ---------- live console ----------
 
+/**
+ * The projector plays the sounds once it has been clicked; until then, or without one, this screen does, whichever
+ * menu tab is open (src/client/revealSound.ts).
+ */
+function TeacherSounds({ live, plays }: { live: TeacherLive; plays: { now: () => boolean; on: boolean } }) {
+  useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, plays.now);
+  useSoundPreview(live.sound, plays.now);
+  useBackgroundMusic(live.music && plays.on && musicTime(live.phase, live.blank));
+  return null;
+}
+
 function Console({ view, live, act, serverNow }: { view: TeacherView; live: TeacherLive; act: Send; serverNow: () => number }) {
   const control = useCallback((action: string) => act({ type: 'control', action }).catch(() => undefined), [act]);
   const running = live.phase !== 'lobby' && live.phase !== 'summary';
-  // The projector plays the reveal sounds once it has been clicked; until then, or without one, this screen does.
-  const projectorPlays = useProjectorPlaysSound();
-  const fromHere = useCallback(() => !projectorPlays(), [projectorPlays]);
-  useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, fromHere);
-  useSoundPreview(live.sound, fromHere);
   // Hidden until the reveal, in case the laptop screen ends up mirrored on the projector; asked again for each question.
   const [shownSeq, setShownSeq] = useState<number | null>(null);
   const showAnswer = live.phase === 'reveal' || (shownSeq !== null && shownSeq === live.question?.seq);
@@ -784,7 +792,10 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           <Card className="min-w-56"><div className="text-ink-3">보상 받은 학생</div><div className="tabular text-6xl font-extrabold">{live.summary?.rewarded ?? 0}<span className="text-2xl text-ink-3"> / {live.summary?.judged ?? 0}</span></div></Card>
         </div>
         <p className="text-ink-3">학생들은 각자 폰에서 결과와 오답 노트를 보고 있어요. 학생별 기록은 통계에 쌓였어요.</p>
-        <Btn onClick={() => act({ type: 'close-session' })}>아레나 닫기</Btn>
+        <div className="flex items-center gap-2">
+          <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.music} onChange={(e) => { control('music'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />배경음악</label>
+          <Btn onClick={() => act({ type: 'close-session' })}>아레나 닫기</Btn>
+        </div>
       </div>
     );
   }
@@ -870,6 +881,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.autoAdvance} onChange={(e) => { control('auto'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />자동 진행</label>
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
+            <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.music} onChange={(e) => { control('music'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />배경음악</label>
           </div>
         </div>
 
@@ -948,6 +960,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
           {/* Names show under the characters on the projector, in the lobby and at each reveal. */}
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
+          <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.music} onChange={(e) => { control('music'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />배경음악</label>
           <ProjectorLink className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</ProjectorLink>
           {/* A 12-second demo on the projector; pressed again it starts over. */}
           <Btn kind="ghost" onClick={() => control('howto')} className={live.howto ? '!border-ink !bg-ink !text-white' : ''}>

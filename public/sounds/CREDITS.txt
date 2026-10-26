@@ -10,3 +10,9 @@ crickets.m4a
   https://freesound.org/s/73529/
   License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
   Changed: cut to 2 seconds (4.1 s to 6.1 s), mixed to mono, short fades, louder.
+
+music.m4a
+  "Shaky Platforms" by code_box
+  https://freesound.org/s/653811/
+  License: CC0 1.0 (public domain)
+  Changed: freesound's MP3 preview re-encoded to AAC, with its first second repeated at the end so it loops without a gap.

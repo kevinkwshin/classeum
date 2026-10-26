@@ -1,10 +1,10 @@
 'use client';
-// When the reveal sounds play, and from which window. The projector plays them once it has been clicked; until
-// then, or with no projector window open, the teacher screen on the same laptop plays them, so a class never goes
-// silent because nobody clicked the projector. The two windows talk over a BroadcastChannel (same laptop only).
-import { useCallback, useEffect, useRef } from 'react';
-import type { RevealInfo } from '@/lib/types';
-import { playCheer, playCrickets, unlockAudio } from './sound';
+// When the sounds play, and from which window. The projector plays them once it has been clicked; until then, or
+// with no projector window open, the teacher screen on the same laptop plays them, so a class never goes silent
+// because nobody clicked the projector. The two windows talk over a BroadcastChannel (same laptop only).
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Phase, RevealInfo } from '@/lib/types';
+import { playCheer, playCrickets, setMusic, unlockAudio } from './sound';
 
 const CHANNEL = 'classeum-sound';
 
@@ -21,12 +21,13 @@ export function useAudioUnlock(onChange?: (on: boolean) => void) {
   }, [onChange]);
 }
 
-/** The projector, while its sound is on, tells the teacher screen every 2 s that it is playing the sounds. */
+/** The projector, once its audio is on, tells the teacher screen every 2 s (and at once when asked) that it plays the sounds. */
 export function useProjectorAudioBeacon(active: boolean) {
   useEffect(() => {
     if (!active || typeof BroadcastChannel === 'undefined') return;
     const channel = new BroadcastChannel(CHANNEL);
     const send = () => channel.postMessage({ projectorAudio: true });
+    channel.onmessage = (e: MessageEvent<{ ask?: boolean }>) => e.data?.ask && send();
     send();
     const timer = setInterval(send, 2000);
     return () => {
@@ -36,18 +37,58 @@ export function useProjectorAudioBeacon(active: boolean) {
   }, [active]);
 }
 
-/** Whether a projector window on this laptop has said in the last 5 s that it plays the sounds. */
-export function useProjectorPlaysSound(): () => boolean {
-  const last = useRef(0);
+/**
+ * For the teacher page, kept for its whole life: whether this tab should play the sounds. Not while a projector
+ * window on this laptop says it plays them (in the last 5 s; a new tab asks it at once), and not when another teacher
+ * tab was clicked more recently, so a tab left open from an earlier period stays quiet. `now()` asks at the moment a
+ * sound is due; `on` follows it for the music, from half a second after the page opens so the projector can answer.
+ */
+export function useTeacherPlaysSound(): { now: () => boolean; on: boolean } {
+  const lastBeacon = useRef(0);
+  const owner = useRef(true);
+  const [on, setOn] = useState(false);
+  const now = useCallback(() => owner.current && Date.now() - lastBeacon.current >= 5000, []);
   useEffect(() => {
-    if (typeof BroadcastChannel === 'undefined') return;
-    const channel = new BroadcastChannel(CHANNEL);
-    channel.onmessage = (e: MessageEvent<{ projectorAudio?: boolean }>) => {
-      if (e.data?.projectorAudio) last.current = Date.now();
+    const id = Math.random().toString(36).slice(2);
+    const opened = Date.now();
+    const update = () => setOn(now() && Date.now() - opened >= 500);
+    const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(CHANNEL);
+    if (channel) {
+      channel.onmessage = (e: MessageEvent<{ projectorAudio?: boolean; teacherAudio?: string }>) => {
+        if (e.data?.projectorAudio) lastBeacon.current = Date.now();
+        else if (e.data?.teacherAudio && e.data.teacherAudio !== id) owner.current = false;
+        update();
+      };
+      channel.postMessage({ ask: true });
+    }
+    const claim = () => {
+      owner.current = true;
+      channel?.postMessage({ teacherAudio: id });
+      update();
     };
-    return () => channel.close();
-  }, []);
-  return useCallback(() => Date.now() - last.current < 5000, []);
+    window.addEventListener('pointerdown', claim);
+    window.addEventListener('keydown', claim);
+    const timer = setInterval(update, 500);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('pointerdown', claim);
+      window.removeEventListener('keydown', claim);
+      channel?.close();
+    };
+  }, [now]);
+  return { now, on };
+}
+
+/** The music plays in the lobby and on the results, not over the questions, and stops while the projector is covered. */
+export const musicTime = (phase: Phase | undefined, blank: boolean | undefined) => (phase === 'lobby' || phase === 'summary') && !blank;
+
+/** Background music, looping softly while `on` and fading out when it turns off. */
+export function useBackgroundMusic(on: boolean) {
+  useEffect(() => {
+    if (!on) return;
+    setMusic(true);
+    return () => setMusic(false);
+  }, [on]);
 }
 
 /**

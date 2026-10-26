@@ -31,6 +31,7 @@ export interface DisplayView {
   blank?: boolean;
   nameLabels?: boolean;
   sound?: boolean;
+  music?: boolean;
   /** The 놀이 방법 demo is playing in the lobby; howtoAt is when it began (server clock). */
   howto?: boolean;
   howtoAt?: number | null;
@@ -78,6 +79,7 @@ export interface TeacherLive extends SessionPublic {
   blank: boolean;
   nameLabels: boolean;
   sound: boolean;
+  music: boolean;
   howto: boolean;
   autoAdvance: boolean;
   joined: number;

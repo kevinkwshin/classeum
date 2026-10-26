@@ -91,6 +91,8 @@ interface Live {
   nameLabels: boolean;
   /** The projector plays a "Yeah!" cheer at a reveal where someone got it right. */
   sound: boolean;
+  /** Soft background music on the projector in the lobby and on the results. */
+  music: boolean;
   autoAdvance: boolean;
   joined: Set<string>;
   positions: Map<string, FieldPoint>;
@@ -453,6 +455,7 @@ class Hub {
       blank: live.blank,
       nameLabels: live.nameLabels,
       sound: live.sound,
+      music: live.music,
       howto,
       howtoAt: howto ? live.howtoUntil - HOWTO_MS : null,
       lobby: live.phase === 'lobby' ? { avatars: this.avatarsOnField(), connected: this.connectedStudents().size, joined: live.joined.size } : null,
@@ -545,6 +548,7 @@ class Hub {
         blank: live.blank,
         nameLabels: live.nameLabels,
         sound: live.sound,
+        music: live.music,
         howto: live.phase === 'lobby' && live.howtoUntil > Date.now(),
         autoAdvance: live.autoAdvance,
         joined: live.joined.size,
@@ -1176,6 +1180,7 @@ class Hub {
       // Names under the avatars at the reveal; the teacher can switch them off for a gentler reveal.
       nameLabels: true,
       sound: true,
+      music: true,
       autoAdvance: true,
       joined: new Set(),
       positions: new Map(),
@@ -1713,6 +1718,9 @@ class Hub {
         break;
       case 'sound':
         live.sound = !live.sound;
+        break;
+      case 'music':
+        live.music = !live.music;
         break;
       case 'howto':
         // Pressed again it starts over; it never covers a question.

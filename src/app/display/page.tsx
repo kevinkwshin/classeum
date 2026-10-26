@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { useAudioUnlock, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
+import { musicTime, useAudioUnlock, useBackgroundMusic, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
@@ -30,10 +30,12 @@ function DisplayApp() {
   const [audioOn, setAudioOn] = useState(false);
   useAudioUnlock(setAudioOn);
   const soundOn = view?.sound !== false;
-  useProjectorAudioBeacon(audioOn && soundOn);
+  const musicOn = view?.music !== false;
+  useProjectorAudioBeacon(audioOn);
   const reveal = s?.phase === 'reveal' ? view?.reveal ?? null : null;
   useRevealSound(s?.question?.seq ?? -1, reveal, soundOn && audioOn);
   useSoundPreview(soundOn && audioOn);
+  useBackgroundMusic(musicOn && audioOn && musicTime(s?.phase, view?.blank));
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;
@@ -58,7 +60,7 @@ function DisplayApp() {
   return (
     <Shell>
       {conn === 'lost' && <div className="absolute right-6 top-4 z-50 rounded-full bg-bad px-4 py-1 text-sm font-bold text-white">연결 끊김 · 다시 연결 중</div>}
-      {soundOn && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 효과음을 켜려면 이 화면을 한 번 클릭하세요</div>}
+      {(soundOn || musicOn) && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 소리를 켜려면 이 화면을 한 번 클릭하세요</div>}
       {s.paused && <div className="absolute inset-x-0 top-0 z-40 bg-ink py-3 text-center text-2xl font-bold text-white">잠깐! 선생님을 봐 주세요</div>}
       {s.phase === 'lobby' && <Lobby view={view} s={s} serverNow={serverNow} />}
       {s.phase === 'lobby' && <FullscreenHint />}
