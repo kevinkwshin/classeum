@@ -1,5 +1,5 @@
-// Local JSON store for the prototype. Swap this module for Supabase in production;
-// the rest of the server only talks to the functions exported here.
+// The class records: one JSON file in .data, kept in memory while the server runs and rewritten whole a moment
+// after each change. The rest of the server only talks to the functions exported here.
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
@@ -66,6 +66,7 @@ export interface EventRec {
   typed?: boolean;
 }
 
+/** Packed on disk (PackedResponses): a new field needs adding there too, or answers that have it are saved unpacked. */
 export interface ResponseRec {
   sessionId: string;
   eventId: string;
@@ -154,11 +155,141 @@ const RECORDS = ['classes', 'students', 'devices', 'requests', 'words', 'events'
 const LISTS = ['sessions', 'responses', 'rewards'] as const;
 const isRecord = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/**
+ * Answers on disk. They are most of the file and grow every class, so the names repeated on every answer are listed
+ * once and each answer is four numbers: question, student, flags, ms since the previous answer, where
+ * flags = (choice + 1) * 12 + round * 4 + typed * 2 + correct and round is 0 main, 1 retry, 2 practice. In memory they
+ * stay plain ResponseRec objects.
+ */
+interface PackedResponses {
+  packed: 1;
+  count: number;
+  /** [questionId] or [questionId, wordKey]. */
+  questions: string[][];
+  students: string[];
+  /** Consecutive answers from one session and event: [sessionId, eventId, four numbers per answer]. */
+  runs: [string, string, number[]][];
+  /** [position in the list, what the student typed] for each answer flagged typed (단답형). */
+  texts: [number, string][];
+  /** [position in the list, answer] for anything that doesn't fit the numbers, kept as it is. */
+  other: [number, unknown][];
+}
+
+const ROUNDS: readonly unknown[] = ['main', 'retry', 'practice'] satisfies ResponseRec['round'][];
+const FIELDS = new Set(['sessionId', 'eventId', 'questionId', 'wordKey', 'round', 'studentId', 'choice', 'text', 'correct', 'at']);
+
+/** Whether an answer packs without losing anything; undefined counts as absent, as it does in JSON. */
+function packable(v: unknown): v is ResponseRec {
+  if (!isRecord(v)) return false;
+  for (const k of Object.keys(v as object)) if (!FIELDS.has(k)) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.sessionId === 'string' && typeof r.eventId === 'string' && typeof r.questionId === 'string' && typeof r.studentId === 'string'
+    && (r.wordKey === undefined || typeof r.wordKey === 'string') && (r.text === undefined || typeof r.text === 'string')
+    && ROUNDS.includes(r.round) && typeof r.correct === 'boolean'
+    && Number.isSafeInteger(r.choice) && (r.choice as number) >= -1 && Number.isSafeInteger(r.at);
+}
+
+function packResponses(list: ResponseRec[]): PackedResponses {
+  const p: PackedResponses = { packed: 1, count: list.length, questions: [], students: [], runs: [], texts: [], other: [] };
+  const questions = new Map<string, Map<string | undefined, number>>();
+  const students = new Map<string, number>();
+  let run: [string, string, number[]] | undefined;
+  let at = 0;
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (!packable(r) || !Number.isSafeInteger(r.at - at)) {
+      p.other.push([i, r]);
+      continue;
+    }
+    let byWord = questions.get(r.questionId);
+    if (!byWord) questions.set(r.questionId, (byWord = new Map()));
+    let q = byWord.get(r.wordKey);
+    if (q === undefined) {
+      byWord.set(r.wordKey, (q = p.questions.length));
+      p.questions.push(r.wordKey === undefined ? [r.questionId] : [r.questionId, r.wordKey]);
+    }
+    let u = students.get(r.studentId);
+    if (u === undefined) {
+      students.set(r.studentId, (u = p.students.length));
+      p.students.push(r.studentId);
+    }
+    if (!run || run[0] !== r.sessionId || run[1] !== r.eventId) p.runs.push((run = [r.sessionId, r.eventId, []]));
+    run[2].push(q, u, (r.choice + 1) * 12 + ROUNDS.indexOf(r.round) * 4 + (r.text !== undefined ? 2 : 0) + (r.correct ? 1 : 0), r.at - at);
+    at = r.at;
+    if (r.text !== undefined) p.texts.push([i, r.text]);
+  }
+  return p;
+}
+
+/** The answers back as saved, or throws: damaged answers must stop the start like any damaged file, never go missing. */
+function unpackResponses(v: unknown): ResponseRec[] {
+  if (!isRecord(v) || (v as { packed?: unknown }).packed !== 1) throw new Error('responses is not a list');
+  const p = v as Record<keyof PackedResponses, unknown>;
+  const bad = (what: string) => new Error(`responses: ${what}`);
+  const index = (n: unknown, size: number): n is number => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) < size;
+  const { count, questions, students, runs } = p;
+  if (!index(count, Infinity)) throw bad('count');
+  if (!Array.isArray(questions) || !questions.every((e) => Array.isArray(e) && (e.length === 1 || e.length === 2) && e.every((s) => typeof s === 'string'))) throw bad('questions');
+  if (!Array.isArray(students) || !students.every((s) => typeof s === 'string')) throw bad('students');
+  if (!Array.isArray(runs)) throw bad('runs');
+  /** [position, value] pairs in strictly rising positions, so each lands exactly once. */
+  const positioned = <T>(name: 'texts' | 'other', ok: (value: unknown) => boolean): [number, T][] => {
+    const list = p[name];
+    if (!Array.isArray(list)) throw bad(name);
+    let last = -1;
+    for (const e of list) {
+      if (!Array.isArray(e) || e.length !== 2 || !index(e[0], count) || e[0] <= last || !ok(e[1])) throw bad(name);
+      last = e[0];
+    }
+    return list;
+  };
+  const texts = positioned<string>('texts', (t) => typeof t === 'string');
+  const other = positioned<ResponseRec>('other', () => true);
+
+  const out: ResponseRec[] = [];
+  let o = 0;
+  let t = 0;
+  let at = 0;
+  const takeOther = () => {
+    while (o < other.length && other[o][0] === out.length) out.push(other[o++][1]);
+  };
+  for (const run of runs) {
+    if (!Array.isArray(run) || run.length !== 3 || typeof run[0] !== 'string' || typeof run[1] !== 'string' || !Array.isArray(run[2]) || run[2].length % 4) throw bad('runs');
+    const [sessionId, eventId, rows] = run as PackedResponses['runs'][number];
+    for (let j = 0; j < rows.length; j += 4) {
+      takeOther();
+      const q = rows[j], u = rows[j + 1], x = rows[j + 2], gap = rows[j + 3];
+      if (!index(q, questions.length) || !index(u, students.length) || !index(x, Infinity) || !Number.isSafeInteger(gap) || !Number.isSafeInteger(at + gap)) {
+        throw bad(`answer ${out.length}`);
+      }
+      at += gap;
+      const [questionId, wordKey] = questions[q];
+      const r = { sessionId, eventId, questionId } as ResponseRec;
+      if (wordKey !== undefined) r.wordKey = wordKey;
+      r.round = ROUNDS[Math.floor(x / 4) % 3] as ResponseRec['round'];
+      r.studentId = students[u];
+      r.choice = Math.floor(x / 12) - 1;
+      if (Math.floor(x / 2) % 2) {
+        if (texts[t]?.[0] !== out.length) throw bad(`answer ${out.length} text`);
+        r.text = texts[t++][1];
+      }
+      r.correct = x % 2 === 1;
+      r.at = at;
+      out.push(r);
+    }
+  }
+  takeOther();
+  if (out.length !== count || o < other.length || t < texts.length) throw bad(`${out.length} of ${count} answers`);
+  return out;
+}
+
 /** Throws unless the text is a whole database, so a damaged file is never taken for an empty class. */
 function parse(text: string): DB {
   const raw: unknown = JSON.parse(text);
   if (!isRecord(raw)) throw new Error('not an object');
   const d = { ...empty(), ...(raw as Partial<DB>) };
+  // Files saved before answers were packed hold the plain list, which loads as it is.
+  if (!Array.isArray(d.responses)) d.responses = unpackResponses(d.responses);
   for (const k of RECORDS) if (!isRecord(d[k])) throw new Error(`${k} is not an object`);
   for (const k of LISTS) if (!Array.isArray(d[k])) throw new Error(`${k} is not a list`);
   return migrate(d);
@@ -178,7 +309,7 @@ function write(d: DB): void {
   const tmp = `${FILE}.tmp`;
   const fd = openSync(tmp, 'w');
   try {
-    writeFileSync(fd, JSON.stringify(d));
+    writeFileSync(fd, JSON.stringify({ ...d, responses: packResponses(d.responses) }));
     fsyncSync(fd);
   } finally {
     closeSync(fd);
