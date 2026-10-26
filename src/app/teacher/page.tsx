@@ -5,6 +5,7 @@ import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { IdleAvatar } from '@/components/IdleAvatar';
+import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
 import { SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
@@ -67,7 +68,10 @@ function TeacherApp() {
     <div className="flex min-h-screen bg-bg">
       {!running && (
         <nav aria-label="선생님 메뉴" className="sticky top-0 flex h-screen w-52 shrink-0 flex-col gap-1 self-start overflow-y-auto bg-ink px-3.5 py-7">
-          <div className="px-3 pb-7 font-display text-[22px] font-bold tracking-tight text-white">Classeum</div>
+          <div className="px-3 pb-7">
+            <Logo width={60} />
+            <div className="mt-2.5 font-display text-[22px] font-bold tracking-tight text-white">Classeum</div>
+          </div>
           {([
             ['students', '반 관리'],
             ['arena', '아레나'],
