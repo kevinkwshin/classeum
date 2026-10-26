@@ -1,9 +1,10 @@
 // The projector's sounds, recordings in public/sounds (credits in CREDITS.txt there): "Yeah!" at a reveal where
-// some of the class got it right, crickets when nobody did, and soft background music in the lobby and the results.
+// some of the class got it right, crickets when nobody did, a wood-block tick-tock over a question's last three
+// seconds, and soft background music in the lobby and the results.
 // Browsers keep audio off until the page is clicked or a key is pressed; the projector calls unlockAudio() on
 // its first touch (the teacher clicks it or presses F for full screen anyway), which also loads the sounds.
 
-const SOUNDS = { yeah: '/sounds/yeah.mp3', crickets: '/sounds/crickets.m4a', music: '/sounds/music.m4a' };
+const SOUNDS = { yeah: '/sounds/yeah.mp3', crickets: '/sounds/crickets.m4a', tick: '/sounds/ticktock.m4a', music: '/sounds/music.m4a' };
 type Sound = keyof typeof SOUNDS;
 
 let ctx: AudioContext | null = null;
@@ -69,6 +70,39 @@ export function playCheer(share: number) {
 /** Two seconds of crickets for a reveal where nobody got it right: an awkward little silence. */
 export function playCrickets() {
   play('crickets', 0.7);
+}
+
+/** The tick-tock file's six hits sit on a half-second grid, each starting 10 ms into its slot. */
+export const TICK_STEP_MS = 500;
+export const TICK_PRE_MS = 10;
+export const TICK_LEAD_MS = 3000 + TICK_PRE_MS;
+
+/**
+ * The tick-tock from `offset` seconds into the file (0 when it starts on time at 3 s left); returns a stop that
+ * fades it out in a few milliseconds, for a question that closes early, pauses, or gets more time.
+ */
+export function playTickTock(offset: number): () => void {
+  const c = context();
+  if (!c || c.state !== 'running') return () => undefined;
+  let playing: { source: AudioBufferSourceNode; gain: GainNode } | null = null;
+  let stopped = false;
+  void load(c, 'tick').then((buffer) => {
+    if (!buffer || stopped || offset >= buffer.duration) return;
+    const source = c.createBufferSource();
+    source.buffer = buffer;
+    const gain = c.createGain();
+    gain.gain.value = 0.7;
+    source.connect(gain).connect(c.destination);
+    source.start(0, offset);
+    playing = { source, gain };
+  });
+  return () => {
+    stopped = true;
+    if (!playing) return;
+    const t = c.currentTime;
+    playing.gain.gain.setTargetAtTime(0, t, 0.01);
+    playing.source.stop(t + 0.08);
+  };
 }
 
 // The music file is a 16.7-second loop followed by its first second again, so looping from 0.5 s to 0.5 s plus the

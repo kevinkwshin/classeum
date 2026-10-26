@@ -4,7 +4,7 @@ import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
-import { musicTime, useAudioUnlock, useBackgroundMusic, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
+import { musicTime, useAudioUnlock, useBackgroundMusic, useCountdownTick, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
@@ -104,7 +104,7 @@ function TeacherApp() {
       )}
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
-        {view.live && <TeacherSounds live={view.live} plays={plays} />}
+        {view.live && <TeacherSounds live={view.live} plays={plays} serverNow={serverNow} />}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
         {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} writing={writing} setWriting={setWriting} onStudents={() => setTab('students')} />)}
         {tab === 'students' && !running && (
@@ -748,8 +748,9 @@ function UploadPreview({ result, typed = false, onClose, onCreate }: { result: U
  * The projector plays the sounds once it has been clicked; until then, or without one, this screen does, whichever
  * menu tab is open (src/client/revealSound.ts).
  */
-function TeacherSounds({ live, plays }: { live: TeacherLive; plays: { now: () => boolean; on: boolean } }) {
+function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: { now: () => boolean; on: boolean }; serverNow: () => number }) {
   useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, plays.now);
+  useCountdownTick(live.phase === 'moving' ? live.phaseEndsAt : null, serverNow, live.sound, plays.now);
   useSoundPreview(live.sound, plays.now);
   useBackgroundMusic(live.music && plays.on && musicTime(live.phase, live.blank));
   return null;

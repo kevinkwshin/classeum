@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { musicTime, useAudioUnlock, useBackgroundMusic, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
+import { musicTime, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
@@ -34,6 +34,7 @@ function DisplayApp() {
   useProjectorAudioBeacon(audioOn);
   const reveal = s?.phase === 'reveal' ? view?.reveal ?? null : null;
   useRevealSound(s?.question?.seq ?? -1, reveal, soundOn && audioOn);
+  useCountdownTick(s?.phase === 'moving' ? s.phaseEndsAt : null, serverNow, soundOn && audioOn);
   useSoundPreview(soundOn && audioOn);
   useBackgroundMusic(musicOn && audioOn && musicTime(s?.phase, view?.blank));
 

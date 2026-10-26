@@ -11,6 +11,13 @@ crickets.m4a
   License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
   Changed: cut to 2 seconds (4.1 s to 6.1 s), mixed to mono, short fades, louder.
 
+ticktock.m4a
+  "Wood Block Tick Tock (cartoon clock)" by ultradust
+  https://freesound.org/s/167385/
+  License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  Changed: six hits (tick, tock, tick, tock, tick, tock) cut from freesound's MP3 preview, mixed to mono,
+  high-passed at 120 Hz, evened out in level and placed exactly 0.5 seconds apart.
+
 music.m4a
   "Shaky Platforms" by code_box
   https://freesound.org/s/653811/
