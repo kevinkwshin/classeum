@@ -102,6 +102,9 @@ export async function POST(request: NextRequest) {
     if (token.length < 32) return Response.json({ ok: false, error: '기기 정보가 없어요.' }, { status: 400 });
     const tokenHash = hashToken(token);
     switch (type) {
+      case 'hb':
+        h.beat(tokenHash, String(body.s ?? '').slice(0, 16));
+        break;
       case 'register':
         h.requestRegistration(tokenHash, { classId: String(body.classId ?? ''), number: Number(body.number), name: String(body.name ?? '') });
         break;
