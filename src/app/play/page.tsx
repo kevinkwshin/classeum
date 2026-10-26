@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
 import type { StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
+import { IdleAvatar } from '@/components/IdleAvatar';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { PracticeCard } from '@/components/PracticeCard';
 import { Reaction, reactionLine } from '@/components/Reaction';
@@ -318,7 +319,7 @@ function CharacterPick({ send, name, current, onClose }: { send: Send; name: str
         )}
       </div>
       <div className="mx-auto flex h-44 w-40 shrink-0 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-3 [@media(max-height:640px)]:h-36 [@media(max-height:640px)]:w-32">
-        <PixelAvatar look={shown} size={132} blink={2} />
+        <IdleAvatar look={shown} size={132} seed="me" />
       </div>
       <div className="flex shrink-0 gap-1 rounded-full bg-[#24272F] p-1" role="tablist">
         {PICK_TABS.map(([t, label]) => (
@@ -338,7 +339,7 @@ function CharacterPick({ send, name, current, onClose }: { send: Send; name: str
             onClick={() => setLook({ ...look, [key]: o.id })}
             className={`flex flex-col items-center gap-0.5 rounded-2xl bg-[#24272F] pb-1.5 pt-1 ${look[key] === o.id ? 'ring-2 ring-accent' : ''}`}
           >
-            <PixelAvatar look={{ ...shown, [key]: o.id }} size={56} />
+            <IdleAvatar look={{ ...shown, [key]: o.id }} size={56} seed={`${key}:${o.id}`} />
             <span className="text-[11px] font-semibold text-[#A3A8B4]">{o.name}</span>
           </button>
         ))}
@@ -420,7 +421,7 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
       </div>
       {waiting && s?.reward && (
         <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
-          {itemById(s.reward.itemId) && <PixelAvatar look={previewLook(itemById(s.reward.itemId)!, look)} size={64} />}
+          {itemById(s.reward.itemId) && <IdleAvatar look={previewLook(itemById(s.reward.itemId)!, look)} size={64} seed={s.reward.itemId} />}
           <div>
             <div className="text-xs font-extrabold">오늘의 보상</div>
             <div className="text-xl font-extrabold">{s.reward.itemName}</div>
@@ -444,7 +445,7 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
           ))}
           {nextGift && (
             <div className="flex aspect-square items-end justify-center rounded-xl bg-gold/30" title={`다음 선물: ${nextGift.name}`}>
-              <PixelAvatar look={previewLook(nextGift, look)} size={40} />
+              <IdleAvatar look={previewLook(nextGift, look)} size={40} seed={nextGift.id} />
             </div>
           )}
         </div>
@@ -1024,7 +1025,7 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
             <button type="button" onClick={onClose} className="rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">닫기</button>
           </div>
         </div>
-        <div className="mx-auto flex h-48 w-40 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><PixelAvatar look={look} size={128} blink={2} /></div>
+        <div className="mx-auto flex h-48 w-40 items-end justify-center rounded-t-full rounded-b-2xl bg-[#24272F] pb-4"><IdleAvatar look={look} size={128} seed="me" /></div>
       </div>
       {/* Which part to change, then optionally narrow to one theme. */}
       <div className="flex gap-1.5 overflow-x-auto px-4 pt-4">
@@ -1057,7 +1058,8 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
               onClick={() => send({ type: 'look', look: { [slot]: item.value } })}
               className={`flex h-28 flex-col items-center justify-center gap-0.5 rounded-2xl ${on ? 'bg-white ring-2 ring-accent' : has ? 'bg-white' : 'border-2 border-dashed border-[#D5D8DF] bg-[#ECEEF1]'}`}
             >
-              <div className={has ? '' : 'opacity-30'}><PixelAvatar look={previewLook(item, look)} size={52} /></div>
+              {/* Items the student has stir now and then; locked ones stand still. */}
+              <div className={has ? '' : 'opacity-30'}>{has ? <IdleAvatar look={previewLook(item, look)} size={52} seed={item.id} /> : <PixelAvatar look={previewLook(item, look)} size={52} />}</div>
               <span className="text-xs font-bold">{item.name}</span>
               {!has && <span className="text-[10px] font-semibold text-ink-3">{stampsNeeded ? `출석 ${stampsNeeded}회` : '퀴즈 보상'}</span>}
             </button>

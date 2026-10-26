@@ -153,6 +153,10 @@ body {
 }
 @keyframes clsPoke { 0% { transform: scale(1, 1); } 20% { transform: scale(1.2, 0.8); } 50% { transform: translateY(-22%) scale(0.9, 1.1); } 80% { transform: translateY(0) scale(1.05, 0.95); } 100% { transform: scale(1); } }
 @keyframes clsSpin { 0% { transform: rotate(0); } 100% { transform: rotate(720deg); } }
+/* Idle (IdleAvatar): mostly still, then a quick hop, a sway or a glance aside near the end of each cycle. */
+@keyframes clsIdleHop { 0%, 88%, 100% { transform: translateY(0) scale(1, 1); } 91% { transform: translateY(0) scale(1.06, 0.94); } 94% { transform: translateY(-12%) scale(0.96, 1.04); } 97% { transform: translateY(0) scale(1.03, 0.97); } }
+@keyframes clsIdleSway { 0%, 86%, 100% { transform: rotate(0); } 90% { transform: rotate(-7deg); } 95% { transform: rotate(6deg); } }
+@keyframes clsIdleLook { 0%, 84%, 100% { transform: translateX(0); } 88%, 93% { transform: translateX(-6%); } 96% { transform: translateX(4%); } }
 
 @media (prefers-reduced-motion: no-preference) {
   .cls-spark { animation: clsTwinkle 1.6s ease-in-out infinite; }
@@ -194,6 +198,9 @@ body {
   .cls-antic { animation: clsAntic 9s ease-in-out infinite; }
   .cls-poke { animation: clsPoke 0.5s ease-out; }
   .cls-spin { animation: clsSpin 0.8s ease-in-out; }
+  .cls-idle-0 { animation: clsIdleHop 8s ease-in-out infinite; transform-origin: 50% 100%; }
+  .cls-idle-1 { animation: clsIdleSway 8s ease-in-out infinite; transform-origin: 50% 100%; }
+  .cls-idle-2 { animation: clsIdleLook 8s ease-in-out infinite; }
 }
 
 @media (prefers-reduced-motion: reduce) {

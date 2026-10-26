@@ -4,7 +4,7 @@ import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
-import { PixelAvatar } from '@/components/PixelAvatar';
+import { IdleAvatar } from '@/components/IdleAvatar';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
 import { SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
@@ -507,7 +507,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
         <h2 className="text-lg font-bold">이번 퀴즈 보상</h2>
         <div className="flex gap-6">
           <div className="flex w-48 shrink-0 flex-col items-center gap-3">
-            <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={150} />}</div>
+            <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <IdleAvatar key={item.id} look={previewLook(item, DEFAULT_LOOK)} size={150} seed={item.id} />}</div>
             <div className="text-lg font-bold">{item?.name}</div>
           </div>
           {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. The scroll box clips
@@ -523,7 +523,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(max(72px,calc(20%_-_0.5rem)),1fr))] gap-2">
                     {list.map((it) => (
                       <button key={it.id} type="button" aria-pressed={itemId === it.id} onClick={() => setItemId(it.id)} className={`flex flex-col items-center gap-1 rounded-2xl p-2 ${itemId === it.id ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
-                        <PixelAvatar look={previewLook(it, DEFAULT_LOOK)} size={48} />
+                        <IdleAvatar look={previewLook(it, DEFAULT_LOOK)} size={48} seed={it.id} />
                         <span className="text-[11px] font-semibold leading-tight">{it.name}</span>
                       </button>
                     ))}
@@ -952,7 +952,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
           <div className="flex flex-wrap gap-2">
             {joined.map((s) => (
               <div key={s.id} className="flex items-center gap-2 rounded-xl bg-bg py-1.5 pl-1.5 pr-3">
-                <PixelAvatar look={normalizeLook(s.look ?? undefined)} size={28} />
+                <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
                 <span className="text-sm font-semibold">{s.number} {s.name}</span>
               </div>
             ))}
@@ -1064,7 +1064,7 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
                     </td>
                     <td className="tabular px-2 py-2.5 text-ink-3">{s.number}</td>
                     <td className="font-semibold">{s.name}</td>
-                    <td>{s.look ? <PixelAvatar look={normalizeLook(s.look)} size={28} /> : <span className="text-xs text-ink-3">-</span>}</td>
+                    <td>{s.look ? <IdleAvatar look={normalizeLook(s.look)} size={28} seed={s.id} /> : <span className="text-xs text-ink-3">-</span>}</td>
                     <td className="text-sm">{s.hasDevice ? <span className={s.connected ? 'font-semibold text-good' : 'text-ink-2'}>{s.connected ? '접속 중' : '등록됨'}</span> : <span className="text-ink-3">미등록</span>}</td>
                     <td className="tabular text-sm">{s.stamps}</td>
                     <td className="pr-3 text-right">
