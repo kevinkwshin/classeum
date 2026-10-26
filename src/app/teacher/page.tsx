@@ -3,7 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
+import { HelpButton } from '@/components/HelpButton';
 import { PixelAvatar } from '@/components/PixelAvatar';
+import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
+import { SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
@@ -75,7 +78,10 @@ function TeacherApp() {
             </button>
           ))}
           <div className="mt-auto flex flex-col gap-2 px-1">
-            <a href="/display" target="classeum-display" className="rounded-xl border border-[#3D4354] px-3 py-2.5 text-center text-sm font-semibold text-white">프로젝터 화면 열기</a>
+            <div className="flex items-center gap-1.5">
+              <ProjectorLink className="min-w-0 flex-1 whitespace-nowrap rounded-xl border border-[#3D4354] px-2 py-2.5 text-center text-sm font-semibold text-white">프로젝터 화면 열기</ProjectorLink>
+              <HelpButton view={view} />
+            </div>
             <div className="break-all px-2 text-[11px] leading-snug text-[#737887]">학생 주소 {view.joinUrl}</div>
           </div>
         </nav>
@@ -83,7 +89,7 @@ function TeacherApp() {
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
-        {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} />)}
+        {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} onStudents={() => setTab('students')} />)}
         {tab === 'students' && !running && <Students view={view} act={act} />}
         {tab === 'stats' && !running && <Stats classes={view.classes} />}
       </main>
@@ -251,7 +257,7 @@ function loadTyped(): TypedDraft {
   return { title: '', rows: blankRows(10) };
 }
 
-function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (message: string) => void }) {
+function Events({ view, act, notify, onStudents }: { view: TeacherView; act: Send; notify: (message: string) => void; onStudents: () => void }) {
   const [upload, setUpload] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [writing, setWriting] = useState(false);
@@ -314,6 +320,8 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
         </div>
       </div>
 
+      <SetupGuide view={view} onStudents={onStudents} onWrite={() => setWriting(true)} />
+
       {view.events.length === 0 && !upload && (
         <Card className="flex flex-col items-center gap-3 py-16 text-center">
           <div className="text-xl font-bold">아직 이벤트가 없어요</div>
@@ -350,7 +358,7 @@ function Events({ view, act, notify }: { view: TeacherView; act: Send; notify: (
               </button>
             ))}
           </div>
-          {event && <EventDetail key={event.id} view={view} event={event} act={act} />}
+          {event && <EventDetail key={event.id} view={view} event={event} act={act} onStudents={onStudents} />}
         </div>
       )}
 
@@ -406,7 +414,7 @@ function ClassRuns({ view, event, chosen }: { view: TeacherView; event: TeacherE
   );
 }
 
-function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEvent; act: Send }) {
+function EventDetail({ view, event, act, onStudents }: { view: TeacherView; event: TeacherEvent; act: Send; onStudents: () => void }) {
   const [classId, setClassId] = useClassChoice(view.classes);
   const [itemId, setItemId] = useState(event.reward.itemId);
   const [challenge, setChallenge] = useState(event.reward.challengePct);
@@ -436,17 +444,21 @@ function EventDetail({ view, event, act }: { view: TeacherView; event: TeacherEv
           {event.typed && <div className="mt-0.5 text-sm text-ink-3">✏️ 직접 작성 · {new Date(event.createdAt).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}</div>}
         </div>
         <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
-          <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요?`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
+          <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요? 기록은 통계에 남아요.`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
           {view.classes.length === 0 ? (
-            <span className="text-sm font-semibold text-ink-3">학생·기기에서 반을 먼저 만들어 주세요</span>
+            <Btn onClick={onStudents}>반 만들기 →</Btn>
           ) : (
             <>
-              <select aria-label="오늘 수업할 반" value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
-                {view.classes.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <Btn kind="accent" onClick={async () => { if (dirty) await saveReward(); await act({ type: 'open-lobby', eventId: event.id, classId }); window.open('/display', 'classeum-display'); }}>대기실 열기</Btn>
+              <label className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-ink-3">오늘 반</span>
+                <select value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
+                  {view.classes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
+              {/* The projector window opens first, inside the click: Safari blocks one opened after the awaits. */}
+              <Btn kind="accent" onClick={async () => { if (!view.displayOn) openProjector(); if (dirty) await saveReward(); await act({ type: 'open-lobby', eventId: event.id, classId }); }}>대기실 열기</Btn>
             </>
           )}
         </div>
@@ -877,16 +889,22 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
   const notJoined = mine.filter((s) => !s.joined);
   return (
     <div className="flex flex-col gap-5 p-8">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <div className="text-sm text-ink-3">대기실</div>
           <h1 className="text-2xl font-bold">{live.className} · {live.eventName} · {live.mainCount}문항</h1>
         </div>
-        <div className="flex gap-2">
+        {/* With 놀이 방법 the buttons can outgrow a laptop screen; they wrap rather than squeeze the title. */}
+        <div className="flex flex-wrap justify-end gap-2">
           {/* Names show under the characters on the projector, in the lobby and at each reveal. */}
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
-          <a href="/display" target="classeum-display" className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</a>
+          <ProjectorLink className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</ProjectorLink>
+          {/* A 12-second demo on the projector; pressed again it starts over. */}
+          <Btn kind="ghost" onClick={() => control('howto')} className={live.howto ? '!border-ink !bg-ink !text-white' : ''}>
+            {live.howto && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-accent align-middle" />}
+            놀이 방법
+          </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'close-session' })}>대기실 닫기</Btn>
           <Btn kind="accent" onClick={() => control('start')} className="px-6">퀴즈 시작</Btn>
         </div>

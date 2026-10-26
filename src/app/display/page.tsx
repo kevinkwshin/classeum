@@ -5,6 +5,8 @@ import { playCheer, playCrickets, unlockAudio } from '@/client/sound';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
+import { FullscreenHint } from '@/components/FullscreenHint';
+import { HowTo } from '@/components/HowTo';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK } from '@/lib/avatar';
@@ -73,14 +75,15 @@ function DisplayApp() {
 
   if (!view) return <Shell><Center>연결 중…</Center></Shell>;
   if (view.blank) return <Shell><Center><span className="font-display text-7xl font-bold">Classeum</span></Center></Shell>;
-  if (!s) return <Shell><Idle view={view} /></Shell>;
+  if (!s) return <Shell><Idle view={view} /><FullscreenHint /></Shell>;
 
   return (
     <Shell>
       {conn === 'lost' && <div className="absolute right-6 top-4 z-50 rounded-full bg-bad px-4 py-1 text-sm font-bold text-white">연결 끊김 · 다시 연결 중</div>}
       {soundOn && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 효과음을 켜려면 이 화면을 한 번 클릭하세요</div>}
       {s.paused && <div className="absolute inset-x-0 top-0 z-40 bg-ink py-3 text-center text-2xl font-bold text-white">잠깐! 선생님을 봐 주세요</div>}
-      {s.phase === 'lobby' && <Lobby view={view} s={s} />}
+      {s.phase === 'lobby' && <Lobby view={view} s={s} serverNow={serverNow} />}
+      {s.phase === 'lobby' && <FullscreenHint />}
       {(s.phase === 'intro' || s.phase === 'moving' || s.phase === 'reveal') && s.question && <Play view={view} s={s} now={serverNow()} />}
       {s.phase === 'checkpoint' && <Checkpoint s={s} />}
       {s.phase === 'summary' && <Summary s={s} parade={view.parade ?? []} />}
@@ -104,6 +107,7 @@ function Idle({ view }: { view: DisplayView }) {
         <div className="font-display text-6xl font-bold">Classeum</div>
         <div className="text-3xl font-semibold text-ink-2">QR을 찍고 이름을 등록해 두세요</div>
         <div className="tabular text-2xl text-ink-3">{view.joinUrl}</div>
+        <div className="text-xl text-ink-3">같은 와이파이에서 접속</div>
       </div>
     </div>
   );
@@ -153,8 +157,10 @@ function lobbyLayout(count: number, w: number, h: number, wantNames: boolean): {
   return { size: 20, names: false };
 }
 
-function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
+function Lobby({ view, s, serverNow }: { view: DisplayView; s: SessionPublic; serverNow: () => number }) {
   const avatars = view.lobby?.avatars ?? [];
+  // While the teacher's 놀이 방법 plays, the demo takes the characters' and the reward card's place.
+  const howtoAt = view.howto && view.howtoAt ? view.howtoAt : null;
   const area = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -193,8 +199,10 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
           </div>
           <div key={avatars.length} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{avatars.length}</div>
         </div>
+        {howtoAt !== null && <HowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} sound={view.sound !== false} />}
         {/* Takes whatever height the header and card leave; avatars shrink to fit, and the top padding (over the gap) gives hops room. */}
-        <div ref={area} className="-mt-6 flex min-h-0 flex-1 flex-col justify-center overflow-y-clip pt-6">
+        {/* Hidden, not unmounted, during the demo, so its size keeps being measured. */}
+        <div ref={area} className={`-mt-6 flex min-h-0 flex-1 flex-col justify-center overflow-y-clip pt-6 ${howtoAt !== null ? 'hidden' : ''}`}>
           <div className="flex min-h-[min(18vh,100%)] flex-wrap content-start gap-2">
             {avatars.map((a, i) => (
               <div key={a.studentId} className="cls-drop-in flex flex-col items-center" style={{ width: names ? Math.max(size, LOBBY_NAME_W) : undefined }}>
@@ -209,7 +217,7 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
             ))}
           </div>
         </div>
-        <RewardCard s={s} />
+        {howtoAt === null && <RewardCard s={s} />}
       </div>
     </div>
   );

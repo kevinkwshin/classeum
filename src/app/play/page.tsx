@@ -4,6 +4,7 @@ import { formatClock, remainingMs, useLive, useTicker, type ConnState } from '@/
 import type { StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { PixelAvatar } from '@/components/PixelAvatar';
+import { PracticeCard } from '@/components/PracticeCard';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { MAX_TEXT_ANSWER } from '@/lib/text';
@@ -184,6 +185,7 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
             <div className="text-xs font-bold text-ink-3">확인 기호</div>
             <div className="text-3xl font-extrabold">{req.symbol}</div>
           </div>
+          <div className="-mt-4 text-sm text-ink-3">선생님 화면에도 같은 기호가 떠요</div>
         </div>
         <Button kind="ghost" className="w-full" onClick={() => send({ type: 'cancel-register' })}>취소하고 다시 쓰기</Button>
       </div>
@@ -306,7 +308,7 @@ function CharacterPick({ send, name, current, onClose }: { send: Send; name: str
       <div className="flex items-start justify-between">
         <div>
           <div className="text-3xl font-bold">{editing ? '캐릭터 바꾸기' : `반가워요, ${name.slice(-2)}`}</div>
-          <div className="mt-1 text-[#A3A8B4]">{editing ? '모자·안경은 잠깐 벗어 둬요' : '내 캐릭터를 골라요'}</div>
+          <div className="mt-1 text-[#A3A8B4]">{editing ? '모자·안경은 잠깐 벗어 둬요' : '내 캐릭터를 골라요 · 나중에 바꿀 수 있어요'}</div>
         </div>
         {editing && (
           <button type="button" onClick={onClose} className="shrink-0 rounded-full bg-[#24272F] px-4 py-1.5 text-sm font-bold">
@@ -425,6 +427,8 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
           </div>
         </div>
       )}
+      {/* A first-timer (no footprints yet) can try one pretend question while waiting. */}
+      {me.stamps === 0 && <PracticeCard look={look} />}
       <div className="rounded-3xl bg-white p-4">
         <div className="mb-3 flex items-center justify-between text-sm font-bold">
           <span>출석 발자국</span>
