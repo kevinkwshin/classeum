@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatClock, remainingMs, useLive, useTicker, type ConnState } from '@/client/live';
+import { formatClock, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
 import type { StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { PixelAvatar } from '@/components/PixelAvatar';
@@ -34,7 +34,8 @@ export default function PlayPage() {
     let stop = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tryFetch = (n: number) => {
-      fetch(`/api/device${slot ? `?slot=${encodeURIComponent(slot)}` : ''}`, { method: 'POST' })
+      // Timed out like every phone request, so a dead connection reaches the retries below instead of hanging.
+      fetch(`/api/device${slot ? `?slot=${encodeURIComponent(slot)}` : ''}`, { method: 'POST', signal: timeoutSignal(SEND_TIMEOUT_MS) })
         .then((r) => {
           if (!r.ok) throw new Error(String(r.status));
           return r.json() as Promise<{ token?: unknown }>;

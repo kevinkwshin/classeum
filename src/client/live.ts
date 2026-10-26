@@ -5,6 +5,33 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type ConnState = 'connecting' | 'open' | 'lost';
 
+/** A request stuck on a dead connection would never fail, so a caller's retry would never run. */
+export const SEND_TIMEOUT_MS = 5_000;
+
+export function timeoutSignal(ms: number): AbortSignal | undefined {
+  if (typeof AbortSignal === 'undefined') return undefined;
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  // Safari before 16 and Chrome before 103.
+  const c = new AbortController();
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
+
+async function postAction(body: Record<string, unknown>, timeoutMs: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: timeoutMs ? timeoutSignal(timeoutMs) : undefined,
+    });
+    return (await res.json()) as { ok: boolean; error?: string };
+  } catch {
+    // Offline, timed out, or a reply that isn't ours (cut short, or an error page).
+    return { ok: false, error: '연결이 불안정해요.' };
+  }
+}
+
 export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'display' | 'student', token?: string | null) {
   const [view, setView] = useState<T | null>(null);
   const [conn, setConn] = useState<ConnState>('connecting');
@@ -67,16 +94,13 @@ export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'disp
 
   const send = useCallback(
     async (action: Record<string, unknown>) => {
-      const res = await fetch('/api/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(token ? { ...action, token } : action),
-      });
-      const json = (await res.json().catch(() => ({ ok: false, error: '연결이 불안정해요.' }))) as { ok: boolean; error?: string };
+      // Only phones time out: the laptop's own screens talk to itself, and a slow teacher action that looked
+      // failed could be clicked twice.
+      const json = await postAction(token ? { ...action, token } : action, role === 'student' ? SEND_TIMEOUT_MS : 0);
       if (!json.ok) throw new Error(json.error ?? '문제가 생겼어요.');
       return json;
     },
-    [token],
+    [role, token],
   );
 
   const serverNow = useCallback(() => Date.now() + offset.current, []);
