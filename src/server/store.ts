@@ -1,6 +1,6 @@
 // The class records: one JSON file in .data, kept in memory while the server runs and rewritten whole a moment
 // after each change. The rest of the server only talks to the functions exported here.
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
 
@@ -401,6 +401,13 @@ export function db(): DB {
  * left running, every request would fail and print it again.
  */
 export async function openStore(): Promise<void> {
+  // The build loaded, so a stop from here on (a refused store, Ctrl+C, a relaunch) isn't one that
+  // scripts/build-if-changed.mjs --forget should treat as a broken build.
+  try {
+    rmSync(join(process.cwd(), '.next', 'classeum-started'), { force: true });
+  } catch {
+    // Only npm run class writes it.
+  }
   try {
     db();
   } catch (e) {
