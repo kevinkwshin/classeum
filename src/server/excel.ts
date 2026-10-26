@@ -28,7 +28,7 @@ const POS_ALIASES: Record<string, Pos> = {
 const STATUS_VALUES: WordStatus[] = ['사용', '검토', '보관'];
 
 // Header aliases → canonical header, so small differences don't lose data.
-const WORD_HEADERS: Record<string, string> = {
+export const WORD_HEADERS: Record<string, string> = {
   단어: '단어', 영어: '단어', 영단어: '단어', word: '단어',
   뜻: '뜻', 의미: '뜻', 한국어: '뜻', meaning: '뜻',
   품사: '품사',
@@ -37,7 +37,7 @@ const WORD_HEADERS: Record<string, string> = {
   '시간(초)': '시간(초)', 시간: '시간(초)', 초: '시간(초)',
   세트: '세트', 단원: '단원', 상태: '상태', 단어id: '단어ID',
 };
-const QUESTION_HEADERS: Record<string, string> = {
+export const QUESTION_HEADERS: Record<string, string> = {
   문항id: '문항ID', id: '문항ID', 유형: '유형', 문제: '문제',
   보기1: '보기1', 보기2: '보기2', 보기3: '보기3', 보기4: '보기4',
   정답: '정답', 해설: '해설',
@@ -56,7 +56,7 @@ function text(v: Cell | undefined): string {
   return String(v).trim();
 }
 
-function headerKey(h: string): string {
+export function headerKey(h: string): string {
   return h.replace(/\s+/g, '').toLowerCase();
 }
 
