@@ -1,8 +1,12 @@
-// Short sound effects made with the Web Audio API, so there are no sound files to ship or license.
-// Browsers keep audio off until the page is clicked or a key is pressed; the projector calls
+// Sound effects for the projector, made in code (src/client/cheer.ts) so there are no sound files to ship or
+// license. Browsers keep audio off until the page is clicked or a key is pressed; the projector calls
 // unlockAudio() on its first touch (the teacher clicks it or presses F for full screen anyway).
+import { cheerLevel, renderCheer } from './cheer';
 
 let ctx: AudioContext | null = null;
+// Two takes of each cheer size, alternated so twenty reveals in a row don't sound like one recording.
+const takes = new Map<number, AudioBuffer[]>();
+let played = 0;
 
 function context(): AudioContext | null {
   if (ctx || typeof window === 'undefined') return ctx;
@@ -11,11 +15,33 @@ function context(): AudioContext | null {
   return ctx;
 }
 
+function render(c: AudioContext, level: 0 | 1 | 2, seed: number): AudioBuffer {
+  const data = renderCheer(c.sampleRate, level, seed);
+  const buffer = c.createBuffer(2, data[0].length, c.sampleRate);
+  data.forEach((ch, i) => buffer.getChannelData(i).set(ch));
+  return buffer;
+}
+
+/** Makes the takes in the background, one at a time (each is a few tens of ms), well before a reveal needs them. */
+function prepare(c: AudioContext) {
+  if (takes.size > 0) return;
+  ([0, 1, 2] as const).forEach((level) => takes.set(level, []));
+  const jobs = ([0, 1, 2] as const).flatMap((level) => [1, 2].map((seed) => [level, seed] as const));
+  const next = () => {
+    const job = jobs.shift();
+    if (!job) return;
+    takes.get(job[0])!.push(render(c, job[0], job[1]));
+    setTimeout(next, 50);
+  };
+  setTimeout(next, 0);
+}
+
 /** Turns audio on after a click or key press; resolves to whether it is now playing. */
 export async function unlockAudio(): Promise<boolean> {
   const c = context();
   if (!c) return false;
   if (c.state === 'suspended') await c.resume().catch(() => undefined);
+  if (c.state === 'running') prepare(c);
   return c.state === 'running';
 }
 
@@ -24,29 +50,21 @@ export function audioReady(): boolean {
 }
 
 /**
- * A bright rising chime for a reveal where some of the class got it right. `share` (0-1) is how many:
- * a few get two notes, about half get four, nearly everyone gets five and a sparkle on top.
+ * Students shouting "Yeah!" for a reveal where some of the class got it right. `share` (0-1) is how many:
+ * a few voices for a few, a bigger crowd for about half, and nearly everyone adds applause.
  */
 export function playCheer(share: number) {
   const c = context();
   if (!c || c.state !== 'running' || share <= 0) return;
-  const notes = share >= 0.8 ? [523.25, 659.25, 783.99, 1046.5, 1318.5] : share >= 0.4 ? [523.25, 659.25, 783.99, 1046.5] : [659.25, 987.77];
-  const out = c.createGain();
-  out.gain.value = 0.16;
-  out.connect(c.destination);
-  const start = c.currentTime + 0.02;
-  const tone = (freq: number, at: number, length: number, type: OscillatorType, peak = 1) => {
-    const osc = c.createOscillator();
-    const env = c.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    env.gain.setValueAtTime(0.0001, at);
-    env.gain.exponentialRampToValueAtTime(peak, at + 0.015);
-    env.gain.exponentialRampToValueAtTime(0.0001, at + length);
-    osc.connect(env).connect(out);
-    osc.start(at);
-    osc.stop(at + length + 0.05);
-  };
-  notes.forEach((f, i) => tone(f, start + i * 0.085, 0.45, 'triangle'));
-  if (share >= 0.8) [2093, 2637, 3136].forEach((f, i) => tone(f, start + notes.length * 0.085 + i * 0.05, 0.25, 'sine', 0.35));
+  const level = cheerLevel(share);
+  const list = takes.get(level) ?? [];
+  const buffer = list.length > 0 ? list[played++ % list.length] : render(c, level, 1);
+  const source = c.createBufferSource();
+  source.buffer = buffer;
+  // A slightly different pitch each time keeps it lively.
+  source.playbackRate.value = 0.96 + Math.random() * 0.08;
+  const gain = c.createGain();
+  gain.gain.value = [0.5, 0.6, 0.7][level];
+  source.connect(gain).connect(c.destination);
+  source.start(c.currentTime + 0.02);
 }

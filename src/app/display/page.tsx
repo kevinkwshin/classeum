@@ -34,17 +34,23 @@ function DisplayApp() {
       window.removeEventListener('keydown', unlock);
     };
   }, []);
-  // A chime when the fog lifts on a question someone got right, once per question.
-  const chimed = useRef(-1);
+  // A "Yeah!" when the fog lifts on a question someone got right, once per question.
+  const cheered = useRef(-1);
   const seq = s?.question?.seq ?? -1;
   const share = s?.phase === 'reveal' ? view?.reveal?.accuracy ?? 0 : 0;
   const soundOn = view?.sound !== false;
   useEffect(() => {
-    if (!soundOn || share <= 0 || chimed.current === seq) return;
-    chimed.current = seq;
+    if (!soundOn || share <= 0 || cheered.current === seq) return;
+    cheered.current = seq;
     const t = setTimeout(() => playCheer(share), 250);
     return () => clearTimeout(t);
   }, [seq, share, soundOn]);
+  // Ticking [효과음] back on plays one cheer, so the teacher hears how loud it is on the projector speakers.
+  const wasOn = useRef(soundOn);
+  useEffect(() => {
+    if (soundOn && !wasOn.current && audioOn) playCheer(1);
+    wasOn.current = soundOn;
+  }, [soundOn, audioOn]);
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;

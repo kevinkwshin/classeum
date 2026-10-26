@@ -84,7 +84,7 @@ interface Live {
   pausedByBlank: boolean;
   blank: boolean;
   nameLabels: boolean;
-  /** The projector chimes at a reveal where someone got it right. */
+  /** The projector plays a "Yeah!" cheer at a reveal where someone got it right. */
   sound: boolean;
   autoAdvance: boolean;
   joined: Set<string>;
