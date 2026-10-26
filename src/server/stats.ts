@@ -1,5 +1,8 @@
 // Per-student and per-word statistics for the teacher, computed from stored responses.
-import { db } from './store';
+import { db, type ResponseRec } from './store';
+
+/** Class names in the order people expect ('2반' before '10반'). One collator: localeCompare with options builds one per call. */
+export const compareNames = new Intl.Collator('ko', { numeric: true }).compare;
 
 export interface StudentStats {
   id: string;
@@ -29,9 +32,19 @@ export function computeStats(classId?: string): { students: StudentStats[]; word
   const d = db();
   const sessions = [...d.sessions].filter((ses) => !classId || ses.classId === classId).sort((a, b) => a.startedAt - b.startedAt);
   const classSessions = new Set(sessions.map((ses) => ses.id));
+  // Each student's answers and rewards in one pass, not one pass over the whole semester per student.
+  const answersOf = new Map<string, ResponseRec[]>();
+  for (const r of d.responses) {
+    if (!r.wordKey || r.round === 'practice') continue;
+    const list = answersOf.get(r.studentId);
+    if (list) list.push(r);
+    else answersOf.set(r.studentId, [r]);
+  }
+  const rewardsOf = new Map<string, number>();
+  for (const r of d.rewards) rewardsOf.set(r.studentId, (rewardsOf.get(r.studentId) ?? 0) + 1);
   const students: StudentStats[] = Object.values(d.students)
     .filter((s) => !classId || s.classId === classId)
-    .sort((a, b) => (d.classes[a.classId]?.name ?? '').localeCompare(d.classes[b.classId]?.name ?? '', 'ko', { numeric: true }) || a.number - b.number)
+    .sort((a, b) => compareNames(d.classes[a.classId]?.name ?? '', d.classes[b.classId]?.name ?? '') || a.number - b.number)
     .map((s) => {
       // Only the sessions of the student's own class count, so other classes' quizzes aren't "missed".
       const perSession = sessions.filter((ses) => ses.classId === s.classId).map((ses) => {
@@ -44,7 +57,7 @@ export function computeStats(classId?: string): { students: StudentStats[]; word
         };
       });
       const accs = perSession.map((x) => x.accuracy).filter((x): x is number => x !== null);
-      const mine = d.responses.filter((r) => r.studentId === s.id && r.wordKey && r.round !== 'practice');
+      const mine = answersOf.get(s.id) ?? [];
       const missCount = new Map<string, number>();
       const firstWrong = new Map<string, number>();
       const lastResult = new Map<string, { correct: boolean; at: number }>();
@@ -72,7 +85,7 @@ export function computeStats(classId?: string): { students: StudentStats[]; word
         average: accs.length ? accs.reduce((a, b) => a + b, 0) / accs.length : null,
         missed: [...missCount].filter(([k]) => !fixed.includes(k)).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => ({ word: label(k), count: n })),
         fixed: fixed.map(label).slice(0, 8),
-        rewards: d.rewards.filter((r) => r.studentId === s.id).length,
+        rewards: rewardsOf.get(s.id) ?? 0,
       };
     });
 

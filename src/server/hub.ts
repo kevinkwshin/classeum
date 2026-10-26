@@ -5,8 +5,9 @@ import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, Publ
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
-import { db, flush, newId, save, type EventRec, type RequestRec, type SessionSummaryRec, type StudentRec } from './store';
+import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
+import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
 
@@ -171,7 +172,7 @@ function sameClassName(a: string, b: string): boolean {
 }
 
 function byClassAndNumber(a: StudentRec, b: StudentRec): number {
-  return className(a.classId).localeCompare(className(b.classId), 'ko', { numeric: true }) || a.number - b.number;
+  return compareNames(className(a.classId), className(b.classId)) || a.number - b.number;
 }
 
 function publicQuestion(q: Question, seq: number): PublicQuestion {
@@ -457,7 +458,7 @@ class Hub {
         createdAt: r.createdAt,
       }));
     const classes = Object.values(d.classes)
-      .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))
+      .sort((a, b) => compareNames(a.name, b.name))
       .map((c) => {
         const mine = students.filter((s) => s.classId === c.id);
         return { id: c.id, name: c.name, students: mine.length, devices: mine.filter((s) => s.hasDevice).length };
@@ -531,7 +532,7 @@ class Hub {
     const today = this.live?.classId;
     const classes = Object.values(d.classes)
       .filter((c) => !today || c.id === today)
-      .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }))
+      .sort((a, b) => compareNames(a.name, b.name))
       .map((c) => ({ id: c.id, name: c.name }));
     return { open, latest, classes };
   }
@@ -1405,8 +1406,23 @@ class Hub {
     let totalCorrect = 0;
     let totalConnected = 0;
     const perStudent: { studentId: string; connected: number; correct: number; judged: boolean }[] = [];
+    // This session's answers and attendance unlocks per student, in one pass over the semester's records.
+    const answersOf = new Map<string, ResponseRec[]>();
+    for (const x of d.responses) {
+      if (x.sessionId !== live.id || x.round === 'practice') continue;
+      const list = answersOf.get(x.studentId);
+      if (list) list.push(x);
+      else answersOf.set(x.studentId, [x]);
+    }
+    const unlockedOf = new Map<string, string[]>();
+    for (const x of d.rewards) {
+      if (x.sessionId !== live.id || x.reason !== 'attendance') continue;
+      const list = unlockedOf.get(x.studentId);
+      if (list) list.push(x.itemId);
+      else unlockedOf.set(x.studentId, [x.itemId]);
+    }
     // Only a student who answered something this time gets their saved notes replaced.
-    const tookPart = new Set(d.responses.filter((x) => x.sessionId === live.id && x.round !== 'practice' && (x.choice >= 0 || !!x.text)).map((x) => x.studentId));
+    const tookPart = new Set([...answersOf].filter(([, list]) => list.some((x) => x.choice >= 0 || !!x.text)).map(([id]) => id));
     for (const id of live.joined) {
       const s = d.students[id];
       if (!s) continue;
@@ -1440,8 +1456,8 @@ class Hub {
         stampAdded: live.stamped.has(id),
         shortQuiz,
         bestStreak: live.bestStreak.get(id) ?? 0,
-        unlocked: d.rewards.filter((x) => x.sessionId === live.id && x.studentId === id && x.reason === 'attendance').map((x) => x.itemId),
-        ...this.wrongNotes(id, event),
+        unlocked: unlockedOf.get(id) ?? [],
+        ...this.wrongNotes(id, event, answersOf.get(id) ?? []),
       };
       live.studentSummary.set(id, summary);
       if (tookPart.has(id)) d.lastSummary[id] = { ...summary, sessionId: live.id, eventId: live.eventId, eventName: event.name, at: Date.now() };
@@ -1459,12 +1475,13 @@ class Hub {
     this.schedulePush(true);
   }
 
-  private wrongNotes(studentId: string, event: EventRec): { wrong: WrongNote[]; practice: Question[] } {
+  /** `answers`: the student's main and retry answers this session, oldest first (finish() groups them in one pass). */
+  private wrongNotes(studentId: string, event: EventRec, answers?: ResponseRec[]): { wrong: WrongNote[]; practice: Question[] } {
     const live = this.live!;
     const d = db();
-    const latest = new Map<string, (typeof d.responses)[number]>();
-    for (const r of d.responses) {
-      if (r.sessionId !== live.id || r.studentId !== studentId || r.round === 'practice') continue;
+    answers ??= d.responses.filter((r) => r.sessionId === live.id && r.studentId === studentId && r.round !== 'practice');
+    const latest = new Map<string, ResponseRec>();
+    for (const r of answers) {
       const base = r.questionId.replace(/#retry$/, '');
       latest.set(r.wordKey ?? base, r);
     }
