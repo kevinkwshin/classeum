@@ -31,6 +31,9 @@ export interface DisplayView {
   blank?: boolean;
   nameLabels?: boolean;
   sound?: boolean;
+  /** The 놀이 방법 demo is playing in the lobby; howtoAt is when it began (server clock). */
+  howto?: boolean;
+  howtoAt?: number | null;
   lobby?: { avatars: { studentId: string; number: number; name: string; look: AvatarLook }[]; connected: number; joined: number } | null;
   settled?: number;
   participants?: number;
@@ -75,6 +78,7 @@ export interface TeacherLive extends SessionPublic {
   blank: boolean;
   nameLabels: boolean;
   sound: boolean;
+  howto: boolean;
   autoAdvance: boolean;
   joined: number;
   connected: number;
@@ -103,6 +107,10 @@ export interface TeacherView {
   events: TeacherEvent[];
   live: TeacherLive | null;
   items: ItemDef[];
+  /** A projector screen is open. */
+  displayOn: boolean;
+  /** Phones connected right now, registered or not. */
+  phones: number;
 }
 
 

@@ -32,6 +32,8 @@ const FIRST_INTRO_MS = 3000;
 const REVEAL_MS = 4000;
 const REVEAL_LONG_MS = 6000;
 const CHECKPOINT_MS = 6000;
+/** The projector's 놀이 방법 demo in the lobby (its captions are timed on the projector). */
+const HOWTO_MS = 12000;
 const RETRY_INTRO_MS = 3000;
 const BLOCK = 10;
 /** A request lapses 2 minutes after its phone stops waiting (left the page, screen off), or after 15 minutes at most. */
@@ -118,6 +120,8 @@ interface Live {
   /** Students whose attendance stamp was added by this session (not earlier the same day). */
   stamped: Set<string>;
   mainCount: number;
+  /** While the projector plays the 놀이 방법 demo (lobby only): when it ends, or 0. */
+  howtoUntil: number;
 }
 
 type Generated = ReturnType<typeof generateEvent>;
@@ -405,11 +409,14 @@ class Hub {
     const base = { role: 'display', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, session: this.sessionPublic() };
     if (!live) return base;
     const counts = live.phase === 'moving' ? this.movingCounts() : null;
+    const howto = live.phase === 'lobby' && live.howtoUntil > Date.now();
     return {
       ...base,
       blank: live.blank,
       nameLabels: live.nameLabels,
       sound: live.sound,
+      howto,
+      howtoAt: howto ? live.howtoUntil - HOWTO_MS : null,
       lobby: live.phase === 'lobby' ? { avatars: this.avatarsOnField(), connected: this.connectedStudents().size, joined: live.joined.size } : null,
       settled: counts ? counts.settled : 0,
       participants: counts ? counts.participants.length : live.joined.size,
@@ -500,6 +507,7 @@ class Hub {
         blank: live.blank,
         nameLabels: live.nameLabels,
         sound: live.sound,
+        howto: live.phase === 'lobby' && live.howtoUntil > Date.now(),
         autoAdvance: live.autoAdvance,
         joined: live.joined.size,
         connected: [...live.joined].filter((id) => connected.has(id)).length,
@@ -517,7 +525,10 @@ class Hub {
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + Math.min(x.seconds, 9) + 4, 0)),
       };
     }
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, items: ITEMS };
+    // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
+    const displayOn = [...this.clients].some((c) => c.role === 'display');
+    const phones = new Set([...this.clients].filter((c) => c.role === 'student' && c.tokenHash).map((c) => c.tokenHash)).size;
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, items: ITEMS, displayOn, phones };
   }
 
   private registrationContext(): RegistrationContext {
@@ -1149,6 +1160,7 @@ class Hub {
       studentSummary: new Map(),
       stamped: new Set(),
       mainCount: event.questions.length,
+      howtoUntil: 0,
     };
     for (const id of this.connectedStudents()) if (db().students[id]?.look) this.join(id);
     this.startTicker();
@@ -1174,6 +1186,7 @@ class Hub {
     const live = this.live;
     if (!live || live.phase !== 'lobby') return;
     for (const id of live.joined) if (this.stampAttendance(id)) live.stamped.add(id);
+    live.howtoUntil = 0;
     live.round = 'main';
     live.index = 0;
     this.beginQuestion();
@@ -1200,6 +1213,10 @@ class Hub {
   tick() {
     const live = this.live;
     if (!live) return;
+    if (live.howtoUntil && Date.now() >= live.howtoUntil) {
+      live.howtoUntil = 0;
+      this.schedulePush(true);
+    }
     if (live.blank) {
       // A deadline set while covered (Enter, 다음, Space) waits too, until the screen is uncovered.
       if (!live.paused && live.phaseEndsAt !== null) {
@@ -1643,6 +1660,10 @@ class Hub {
         break;
       case 'sound':
         live.sound = !live.sound;
+        break;
+      case 'howto':
+        // Pressed again it starts over; it never covers a question.
+        if (live.phase === 'lobby') live.howtoUntil = now + HOWTO_MS;
         break;
       case 'auto':
         live.autoAdvance = !live.autoAdvance;
