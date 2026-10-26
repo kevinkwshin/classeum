@@ -1,12 +1,12 @@
-// Sound effects for the projector, made in code (src/client/cheer.ts) so there are no sound files to ship or
-// license. Browsers keep audio off until the page is clicked or a key is pressed; the projector calls
-// unlockAudio() on its first touch (the teacher clicks it or presses F for full screen anyway).
-import { cheerLevel, renderCheer } from './cheer';
+// The projector's "Yeah!" at a reveal: a short recording of children cheering (public/sounds/yeah.mp3, CC0:
+// "funny kids 7 yeah" by phantastonia on freesound.org).
+// Browsers keep audio off until the page is clicked or a key is pressed; the projector calls unlockAudio() on
+// its first touch (the teacher clicks it or presses F for full screen anyway), which also loads the sound.
+
+const SOUND_URL = '/sounds/yeah.mp3';
 
 let ctx: AudioContext | null = null;
-// Two takes of each cheer size, alternated so twenty reveals in a row don't sound like one recording.
-const takes = new Map<number, AudioBuffer[]>();
-let played = 0;
+let yeah: Promise<AudioBuffer | null> | null = null;
 
 function context(): AudioContext | null {
   if (ctx || typeof window === 'undefined') return ctx;
@@ -15,25 +15,15 @@ function context(): AudioContext | null {
   return ctx;
 }
 
-function render(c: AudioContext, level: 0 | 1 | 2, seed: number): AudioBuffer {
-  const data = renderCheer(c.sampleRate, level, seed);
-  const buffer = c.createBuffer(2, data[0].length, c.sampleRate);
-  data.forEach((ch, i) => buffer.getChannelData(i).set(ch));
-  return buffer;
-}
-
-/** Makes the takes in the background, one at a time (each is a few tens of ms), well before a reveal needs them. */
-function prepare(c: AudioContext) {
-  if (takes.size > 0) return;
-  ([0, 1, 2] as const).forEach((level) => takes.set(level, []));
-  const jobs = ([0, 1, 2] as const).flatMap((level) => [1, 2].map((seed) => [level, seed] as const));
-  const next = () => {
-    const job = jobs.shift();
-    if (!job) return;
-    takes.get(job[0])!.push(render(c, job[0], job[1]));
-    setTimeout(next, 50);
-  };
-  setTimeout(next, 0);
+function load(c: AudioContext): Promise<AudioBuffer | null> {
+  yeah ??= fetch(SOUND_URL)
+    .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(String(res.status)))))
+    .then((data) => c.decodeAudioData(data))
+    .catch(() => {
+      yeah = null; // try again on the next click
+      return null;
+    });
+  return yeah;
 }
 
 /** Turns audio on after a click or key press; resolves to whether it is now playing. */
@@ -41,7 +31,7 @@ export async function unlockAudio(): Promise<boolean> {
   const c = context();
   if (!c) return false;
   if (c.state === 'suspended') await c.resume().catch(() => undefined);
-  if (c.state === 'running') prepare(c);
+  if (c.state === 'running') void load(c);
   return c.state === 'running';
 }
 
@@ -49,22 +39,20 @@ export function audioReady(): boolean {
   return context()?.state === 'running';
 }
 
-/**
- * Students shouting "Yeah!" for a reveal where some of the class got it right. `share` (0-1) is how many:
- * a few voices for a few, a bigger crowd for about half, and nearly everyone adds applause.
- */
+/** Plays the cheer for a reveal where some of the class got it right; louder the more of them (`share`, 0-1). */
 export function playCheer(share: number) {
   const c = context();
   if (!c || c.state !== 'running' || share <= 0) return;
-  const level = cheerLevel(share);
-  const list = takes.get(level) ?? [];
-  const buffer = list.length > 0 ? list[played++ % list.length] : render(c, level, 1);
-  const source = c.createBufferSource();
-  source.buffer = buffer;
-  // A slightly different pitch each time keeps it lively.
-  source.playbackRate.value = 0.96 + Math.random() * 0.08;
-  const gain = c.createGain();
-  gain.gain.value = [0.5, 0.6, 0.7][level];
-  source.connect(gain).connect(c.destination);
-  source.start(c.currentTime + 0.02);
+  void load(c).then((buffer) => {
+    if (!buffer) return;
+    const source = c.createBufferSource();
+    source.buffer = buffer;
+    // A hair higher or lower each time, so twenty reveals don't sound like one recording on repeat.
+    source.playbackRate.value = 0.97 + Math.random() * 0.06;
+    const gain = c.createGain();
+    // The recording itself is loud (peaks at full scale), so even the biggest cheer leaves some headroom.
+    gain.gain.value = share >= 0.8 ? 0.8 : share >= 0.4 ? 0.65 : 0.5;
+    source.connect(gain).connect(c.destination);
+    source.start();
+  });
 }
