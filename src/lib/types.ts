@@ -83,7 +83,7 @@ export interface AvatarLook {
   hair: 'brown' | 'black' | 'blond' | 'red' | 'pink' | 'blue' | 'silver';
   hairStyle: 'short' | 'long' | 'bob' | 'ponytail' | 'pigtails' | 'braid' | 'side' | 'curly' | 'spiky' | 'bun' | 'twinbun' | 'buzz';
   eyes: 'round' | 'big' | 'smile' | 'sharp' | 'dot';
-  /** What the body wears, armour included (it used to be a separate slot on top). */
+  /** What the body wears, armour included. */
   tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold' | 'spacesuit' | 'chainmail' | 'monk' | 'tee67';
   helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones' | 'space' | 'knight' | 'hennin' | 'capybara' | 'hardhat';
   face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses' | 'visor' | 'pixelshades';
