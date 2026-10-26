@@ -4,13 +4,14 @@ import type { AvatarLook, AvatarSlot, ItemDef, ItemTheme } from './types';
 export const THEMES: { id: ItemTheme; name: string }[] = [
   { id: 'rome', name: '고대 로마' },
   { id: 'school', name: '학교' },
+  { id: 'sports', name: '스포츠' },
   { id: 'idol', name: '아이돌' },
   { id: 'fantasy', name: '판타지' },
   { id: 'modern', name: '현대' },
   { id: 'cute', name: '귀여움' },
   { id: 'future', name: '미래' },
   { id: 'medieval', name: '중세' },
-  { id: 'trend', name: '요즘·밈' },
+  { id: 'trend', name: '밈' },
 ];
 
 // Named by where on the body it goes: hats, ears and headphones are all 머리; shields and the book are 팔.
@@ -117,6 +118,45 @@ export const ITEMS: ItemDef[] = [
   { id: 'hand-bubbletea', name: '버블티', slot: 'hand', value: 'bubbletea', theme: 'trend' },
   { id: 'hand-gamepad', name: '게임패드', slot: 'hand', value: 'gamepad', theme: 'trend' },
   { id: 'fx-aura', name: '오라', slot: 'effect', value: 'aura', theme: 'trend' },
+  { id: 'hat-bucket', name: '버킷햇', slot: 'helmet', value: 'bucket', theme: 'trend' },
+  { id: 'face-bandaid', name: '코 반창고', slot: 'face', value: 'bandaid', theme: 'trend' },
+  { id: 'top-longpad', name: '롱패딩', slot: 'tunic', value: 'longpad', theme: 'trend' },
+  { id: 'shoes-slippers', name: '슬리퍼와 흰 양말', slot: 'shoes', value: 'slippers', theme: 'trend' },
+  { id: 'shoes-chunky', name: '청키 운동화', slot: 'shoes', value: 'chunky', theme: 'trend' },
+  { id: 'hand-tteok', name: '떡볶이 컵', slot: 'hand', value: 'tteok', theme: 'trend' },
+  { id: 'shield-skateboard', name: '스케이트보드', slot: 'shield', value: 'skateboard', theme: 'trend' },
+
+  { id: 'hat-sweatband', name: '스포츠 머리띠', slot: 'helmet', value: 'sweatband', theme: 'sports' },
+  { id: 'face-facepaint', name: '응원 페이스페인팅', slot: 'face', value: 'facepaint', theme: 'sports' },
+  { id: 'face-goggles', name: '수경', slot: 'face', value: 'goggles', theme: 'sports' },
+  { id: 'top-bball', name: '농구 유니폼', slot: 'tunic', value: 'bball', theme: 'sports' },
+  { id: 'top-soccer', name: '축구 유니폼', slot: 'tunic', value: 'soccer', theme: 'sports' },
+  { id: 'top-baseball', name: '야구 유니폼', slot: 'tunic', value: 'baseball', theme: 'sports' },
+  { id: 'shoes-hightop', name: '하이탑 농구화', slot: 'shoes', value: 'hightop', theme: 'sports' },
+  { id: 'shoes-cleats', name: '축구화', slot: 'shoes', value: 'cleats', theme: 'sports' },
+  { id: 'hand-basketball', name: '농구공', slot: 'hand', value: 'basketball', theme: 'sports' },
+  { id: 'hand-soccerball', name: '축구공', slot: 'hand', value: 'soccerball', theme: 'sports' },
+  { id: 'hand-bat', name: '야구 배트', slot: 'hand', value: 'bat', theme: 'sports' },
+  { id: 'hand-racket', name: '배드민턴 라켓', slot: 'hand', value: 'racket', theme: 'sports' },
+  { id: 'shield-glove', name: '야구 글러브', slot: 'shield', value: 'glove', theme: 'sports' },
+  { id: 'fx-sweat', name: '땀방울', slot: 'effect', value: 'sweat', theme: 'sports' },
+
+  { id: 'hat-bearears', name: '곰돌이 귀', slot: 'helmet', value: 'bearears', theme: 'cute' },
+  { id: 'face-whiskers', name: '고양이 수염', slot: 'face', value: 'whiskers', theme: 'cute' },
+  { id: 'top-dino', name: '공룡 잠옷', slot: 'tunic', value: 'dino', theme: 'cute' },
+  { id: 'shoes-bunny', name: '토끼 슬리퍼', slot: 'shoes', value: 'bunny', theme: 'cute' },
+  { id: 'shield-teddy', name: '곰 인형', slot: 'shield', value: 'teddy', theme: 'cute' },
+  { id: 'back-bearpack', name: '곰돌이 백팩', slot: 'cape', value: 'bearpack', theme: 'cute' },
+  { id: 'back-turtle', name: '거북이 등껍질', slot: 'cape', value: 'turtle', theme: 'cute' },
+  { id: 'fx-bubbles', name: '비눗방울', slot: 'effect', value: 'bubbles', theme: 'cute' },
+  { id: 'fx-petals', name: '벚꽃잎', slot: 'effect', value: 'petals', theme: 'cute' },
+  { id: 'fx-snow', name: '눈송이', slot: 'effect', value: 'snow', theme: 'cute' },
+
+  { id: 'hat-beanie', name: '비니', slot: 'helmet', value: 'beanie', theme: 'modern' },
+  { id: 'shield-watch', name: '스마트워치', slot: 'shield', value: 'watch', theme: 'modern' },
+  { id: 'back-guitar', name: '기타', slot: 'cape', value: 'guitar', theme: 'modern' },
+
+  { id: 'face-roundglasses', name: '동그란 안경', slot: 'face', value: 'roundglasses', theme: 'school' },
 ];
 
 /**

@@ -14,6 +14,15 @@ const NOTES: [number, number, number][] = [[0, 1, 0], [13, 3, 0.6], [14, 9, 1.2]
 const BOLTS: [number, number, number, string][] = [[0, 3, 0, '#FFE14D'], [14, 5, 0.15, '#7FDBFF'], [1, 10, 0.3, '#7FDBFF'], [13, 11, 0.45, '#FFE14D']];
 const FLAMES: [number, number, number, string][] = [[1, 12, 0, '#FF8A3D'], [12, 12, 0.2, '#FFC93D'], [0, 6, 0.4, '#FFC93D'], [13, 6, 0.1, '#FF8A3D']];
 const NEONS: [number, number, number, string][] = [[0, 4, 0, '#3DF5FF'], [15, 7, 0.5, '#FF5FD2'], [1, 12, 1.0, '#C266FF'], [14, 2, 0.3, '#3DF5FF'], [15, 13, 0.8, '#C266FF']];
+const DROP = [[1, 0], [0, 1], [1, 1], [0, 2], [1, 2]];
+const BUBBLE = [[1, 0], [2, 0], [0, 1], [3, 1], [0, 2], [3, 2], [1, 3], [2, 3]];
+const PETAL = [[0, 0], [1, 0], [1, 1]];
+const FLAKE = [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]];
+// Sweat beads by the head after a hard game; bubbles drift up; petals and snow drift down past the character.
+const DROPS: [number, number, number][] = [[2, 3, 0], [13, 2, 0.7], [14, 6, 1.4]];
+const BUBBLES: [number, number, number][] = [[0, 11, 0], [12, 9, 0.6], [0, 5, 1.2], [12, 3, 0.3], [10, 12, 0.9]];
+const PETALS: [number, number, number, string][] = [[0, 1, 0, '#F7A8C4'], [13, 0, 0.9, '#FFC2D6'], [2, 7, 1.8, '#FFC2D6'], [13, 6, 2.4, '#F7A8C4'], [1, 12, 1.2, '#F7A8C4']];
+const FLAKES: [number, number, number][] = [[0, 1, 0], [12, 2, 1.1], [1, 8, 2.2], [13, 9, 0.6], [11, 13, 1.6]];
 // Light rising off the character, the way 'aura' is drawn in memes.
 const AURAS: [number, number, number, string][] = [[2, 14, 0, '#FFE58A'], [13, 13, 0.4, '#FFFFFF'], [4, 15, 0.8, '#FFE58A'], [11, 15, 1.2, '#FFE58A'], [1, 10, 1.0, '#FFFFFF'], [14, 10, 0.2, '#FFE58A'], [7, 15, 0.6, '#FFFFFF']];
 
@@ -151,6 +160,10 @@ function PixelAvatarImpl({
         {look.effect === 'fire' && FLAMES.map(([x, y, d, c], i) => <Shape key={`f${i}`} cells={FLAME} x={x} y={y} color={c} delay={d} className="cls-zap" />)}
         {look.effect === 'neon' && NEONS.map(([x, y, d, c], i) => <rect key={`o${i}`} className="cls-spark" x={x} y={y} width={1} height={1} fill={c} style={{ animationDelay: `${d}s` }} />)}
         {look.effect === 'aura' && AURAS.map(([x, y, d, c], i) => <rect key={`a${i}`} className="cls-rise" x={x} y={y} width={1} height={1} fill={c} style={{ animationDelay: `${d}s` }} />)}
+        {look.effect === 'sweat' && DROPS.map(([x, y, d], i) => <Shape key={`w${i}`} cells={DROP} x={x} y={y} color="#4FA8E8" delay={d} className="cls-drip" />)}
+        {look.effect === 'bubbles' && BUBBLES.map(([x, y, d], i) => <Shape key={`b${i}`} cells={BUBBLE} x={x} y={y} color="#5DBDEA" delay={d} className="cls-rise" />)}
+        {look.effect === 'petals' && PETALS.map(([x, y, d, c], i) => <Shape key={`l${i}`} cells={PETAL} x={x} y={y} color={c} delay={d} className="cls-fall" />)}
+        {look.effect === 'snow' && FLAKES.map(([x, y, d], i) => <Shape key={`k${i}`} cells={FLAKE} x={x} y={y} color="#A9CBEA" delay={d} className="cls-fall" />)}
       </g>
     </svg>
   );
