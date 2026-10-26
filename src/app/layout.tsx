@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { IBM_Plex_Sans_KR, Inter_Tight, Unbounded } from 'next/font/google';
 import './globals.css';
 
-const plexKr = IBM_Plex_Sans_KR({ variable: '--font-plex-kr', weight: ['400', '500', '600', '700'], subsets: ['latin'], preload: false });
+const plexKr = IBM_Plex_Sans_KR({ variable: '--font-plex-kr', weight: ['400', '600', '700'], subsets: ['latin'], preload: false });
 const interTight = Inter_Tight({ variable: '--font-inter-tight', subsets: ['latin'] });
 const unbounded = Unbounded({ variable: '--font-unbounded', subsets: ['latin'] });
 

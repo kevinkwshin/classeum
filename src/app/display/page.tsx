@@ -189,7 +189,7 @@ function Lobby({ view, s }: { view: DisplayView; s: SessionPublic }) {
             <div className="font-display text-3xl font-bold [@media(max-height:800px)]:text-2xl">Classeum</div>
             <div className="mt-4 text-3xl font-bold text-accent [@media(max-height:800px)]:mt-2 [@media(max-height:800px)]:text-2xl">{s.className}</div>
             <div className="mt-1 text-6xl font-bold tracking-tight [@media(max-height:800px)]:text-5xl">{s.eventName}</div>
-            <div className="mt-2 text-3xl font-medium text-ink-3 [@media(max-height:800px)]:mt-1 [@media(max-height:800px)]:text-2xl">{s.mainCount}문항</div>
+            <div className="mt-2 text-3xl font-semibold text-ink-3 [@media(max-height:800px)]:mt-1 [@media(max-height:800px)]:text-2xl">{s.mainCount}문항</div>
           </div>
           <div key={avatars.length} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{avatars.length}</div>
         </div>
