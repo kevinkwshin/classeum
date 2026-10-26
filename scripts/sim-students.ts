@@ -1,11 +1,13 @@
 // Simulates a class of phones against a running Classeum server, for testing without 30 real devices.
 // Usage: npm run sim -- [count=30] [baseUrl=http://localhost:3000] [class=시험반] [noroster]
 // It makes the class (and, unless 'noroster', its roster), registers each fake phone by typing
-// 반·번호·이름 like a student, approves them as the teacher, picks a look, and then walks each
-// avatar into an answer zone during every question of that class's quiz.
+// 반·번호·이름 like a student, approves them as the teacher, picks a look, and then answers every
+// question of that class's quiz the way a phone does: one tap on an answer box (now and then a second,
+// different one), 단답형 sent with 제출, and about one phone in twenty leaving a box question unanswered.
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { zoneCenter } from '../src/lib/field';
 
 const COUNT = Number(process.argv[2] ?? 30);
 const BASE = process.argv[3] ?? 'http://localhost:3000';
@@ -47,10 +49,10 @@ async function subscribe(url: string, onView: (v: View) => void, signal: AbortSi
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function zoneCenter(z: number, n: number) {
-  if (n === 2) return { x: z === 0 ? 0.25 : 0.75, y: 0.5 };
-  return { x: z % 2 === 0 ? 0.25 : 0.75, y: z < 2 ? 0.27 : 0.73 };
-}
+// Numbered like a real phone's taps, so the server keeps only each phone's newest one.
+const MOVE_BASE = Date.now() * 1000;
+let moveCount = 0;
+const nextMoveNumber = () => MOVE_BASE + ++moveCount;
 
 async function main() {
   const controller = new AbortController();
@@ -103,7 +105,7 @@ async function main() {
   }
   console.log(`${COUNT}명 등록 완료. 선생님 화면에서 대기실을 열고 퀴즈를 시작하세요. (Ctrl+C로 종료)`);
 
-  // Play loop: each phone answers once per question, walking a few steps like a real student.
+  // Play loop: each phone answers once per question, a second or a few after it opens.
   for (;;) {
     await sleep(250);
     const live = (teacher as View | null)?.live;
@@ -118,17 +120,21 @@ async function main() {
       setTimeout(async () => {
         if (q.kind === 'text') {
           const ok = Math.random() < p.skill;
-          await post({ type: 'text', token: p.token, seq: q.seq, value: ok ? (live.current.answers?.[0] ?? 'x') : 'wrong' });
+          await post({ type: 'text', token: p.token, seq: q.seq, value: ok ? (live.current.answers?.[0] ?? 'x') : 'wrong', final: true, n: nextMoveNumber() });
           return;
         }
         if (Math.random() < 0.05) return; // someone always stays on the start line
+        // A tap puts the character in the middle of that box, as on the phone.
+        const tap = (z: number) => {
+          const c = zoneCenter(z, n);
+          return post({ type: 'pos', token: p.token, seq: q.seq, n: nextMoveNumber(), x: c.x, y: c.y });
+        };
         const pick = Math.random() < p.skill ? answer : Math.floor(Math.random() * n);
-        const target = zoneCenter(pick, n);
-        const jitter = { x: target.x + (Math.random() - 0.5) * 0.2, y: target.y + (Math.random() - 0.5) * 0.2 };
-        for (let k = 1; k <= 4; k++) {
-          const t = k / 4;
-          await post({ type: 'pos', token: p.token, seq: q.seq, x: 0.5 + (jitter.x - 0.5) * t, y: 0.5 + (jitter.y - 0.5) * t });
-          await sleep(160);
+        await tap(pick);
+        // Now and then someone changes their mind.
+        if (Math.random() < 0.1) {
+          await sleep(400 + Math.random() * 1200);
+          await tap((pick + 1 + Math.floor(Math.random() * (n - 1))) % n);
         }
       }, delay);
     }
