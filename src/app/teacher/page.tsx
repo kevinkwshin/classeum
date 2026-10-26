@@ -24,7 +24,9 @@ export default function TeacherPage() {
 
 function TeacherApp() {
   const { view, conn, send, serverNow } = useLive<TeacherView>('teacher');
-  const [tab, setTab] = useState<Tab>('arena');
+  const [tab, setTab] = useState<Tab>('students');
+  // The [직접 작성하기] editor; kept here so the setup card on 반 관리 can open it on the arena.
+  const [writing, setWriting] = useState(false);
   const [toast, setToast] = useState('');
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -44,6 +46,12 @@ function TeacherApp() {
   if (quizOn !== wasQuizOn) {
     setWasQuizOn(quizOn);
     if (quizOn) setTab('arena');
+  }
+  // The first screen is 반 관리, the top of the menu, unless a lobby or quiz is already open (after a reload, say).
+  const [landed, setLanded] = useState(false);
+  if (view && !landed) {
+    setLanded(true);
+    if (view.live) setTab('arena');
   }
 
   if (!view) {
@@ -89,8 +97,17 @@ function TeacherApp() {
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
-        {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} onStudents={() => setTab('students')} />)}
-        {tab === 'students' && !running && <Students view={view} act={act} />}
+        {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} writing={writing} setWriting={setWriting} onStudents={() => setTab('students')} />)}
+        {tab === 'students' && !running && (
+          <Students
+            view={view}
+            act={act}
+            onWrite={() => {
+              setTab('arena');
+              setWriting(true);
+            }}
+          />
+        )}
         {tab === 'stats' && !running && <Stats classes={view.classes} />}
       </main>
       {/* During a quiz it floats over the console; otherwise it gets its own column on wide screens so it covers no buttons. */}
@@ -257,10 +274,9 @@ function loadTyped(): TypedDraft {
   return { title: '', rows: blankRows(10) };
 }
 
-function Events({ view, act, notify, onStudents }: { view: TeacherView; act: Send; notify: (message: string) => void; onStudents: () => void }) {
+function Events({ view, act, notify, writing, setWriting, onStudents }: { view: TeacherView; act: Send; notify: (message: string) => void; writing: boolean; setWriting: (on: boolean) => void; onStudents: () => void }) {
   const [upload, setUpload] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const [writing, setWriting] = useState(false);
   // Whether the open preview came from [직접 작성하기], so 고치기 goes back to the editor.
   const [typedPreview, setTypedPreview] = useState(false);
   const [typed, setTyped] = useState<TypedDraft>(loadTyped);
@@ -953,7 +969,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
 
 // ---------- students ----------
 
-function Students({ view, act }: { view: TeacherView; act: Send }) {
+function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrite: () => void }) {
   const [classId, setClassId] = useClassChoice(view.classes);
   const [text, setText] = useState('');
   const [newClass, setNewClass] = useState('');
@@ -990,6 +1006,8 @@ function Students({ view, act }: { view: TeacherView; act: Send }) {
       <div className="flex min-h-11 items-center">
         <h1 className="text-2xl font-bold">반 관리</h1>
       </div>
+      {/* The first screen on a new laptop, so the setup card shows here too (its first step is this page). */}
+      <SetupGuide view={view} onWrite={onWrite} />
       <ClassTabs
         classes={view.classes}
         value={classId}

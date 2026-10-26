@@ -56,7 +56,8 @@ function readFlag(): string | null {
  * 수업 준비: a card on the empty laptop of a teacher using Classeum for the first time. A laptop that already has
  * everything never shows it. When the last step is done the guide cheers "준비 끝!" and the card folds away.
  */
-export function SetupGuide({ view, onStudents, onWrite }: { view: TeacherView; onStudents: () => void; onWrite: () => void }) {
+/** `onStudents` is left out on 반 관리 itself, where step 1 needs no button. */
+export function SetupGuide({ view, onStudents, onWrite }: { view: TeacherView; onStudents?: () => void; onWrite: () => void }) {
   const steps = setupSteps(view);
   const doneCount = steps.filter((s) => s.done).length;
   const all = doneCount === steps.length;
@@ -90,7 +91,7 @@ export function SetupGuide({ view, onStudents, onWrite }: { view: TeacherView; o
 
   const action = (s: SetupStep) => {
     const style = 'flex h-9 shrink-0 items-center rounded-xl border border-[#D5D8DF] bg-white px-3 text-sm font-bold';
-    if (s.key === 'class') return <button type="button" onClick={onStudents} className={style}>반 관리</button>;
+    if (s.key === 'class') return onStudents ? <button type="button" onClick={onStudents} className={style}>반 관리</button> : null;
     if (s.key === 'words') return <button type="button" onClick={onWrite} className={style}>직접 작성하기</button>;
     if (s.key === 'projector') return <ProjectorLink className={style}>열기</ProjectorLink>;
     if (s.key === 'phones') {
