@@ -5,21 +5,19 @@ yeah.mp3
   https://freesound.org/s/457917/
   License: CC0 1.0 (public domain)
 
-crickets.m4a
+crickets.wav
   "cricket.wav" by xserra
   https://freesound.org/s/73529/
   License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
-  Changed: cut to 2 seconds (4.1 s to 6.1 s), mixed to mono, short fades, louder.
+  Changed: cut to 2 seconds (4.1 s to 6.1 s), mixed to mono, short fades, louder; 22.05 kHz WAV.
 
-ticktock.m4a
+ticktock.wav
   "Wood Block Tick Tock (cartoon clock)" by ultradust
   https://freesound.org/s/167385/
   License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
   Changed: six hits (tick, tock, tick, tock, tick, tock) cut from freesound's MP3 preview, mixed to mono,
-  high-passed at 120 Hz, evened out in level and placed exactly 0.5 seconds apart.
+  high-passed at 120 Hz, evened out in level and placed exactly 0.5 seconds apart; 22.05 kHz WAV.
 
-music.m4a
-  "Shaky Platforms" by code_box
-  https://freesound.org/s/653811/
-  License: CC0 1.0 (public domain)
-  Changed: freesound's MP3 preview re-encoded to AAC, with its first second repeated at the end so it loops without a gap.
+music.mp3
+  "오늘은 내가 정해" (Today I Decide), made for Classeum by the teacher with Suno (https://suno.com), 2026-10-26.
+  Changed: the MP3's tags (lyrics, cover art, Suno ids) removed; the audio is untouched.

@@ -1,10 +1,12 @@
-// The projector's sounds, recordings in public/sounds (credits in CREDITS.txt there): "Yeah!" at a reveal where
-// some of the class got it right, crickets when nobody did, a wood-block tick-tock over a question's last three
-// seconds, and background music through the whole session, softer under the questions.
+// The projector's sounds, in public/sounds (credits in CREDITS.txt there): "Yeah!" at a reveal where some of the
+// class got it right, crickets when nobody did, a wood-block tick-tock over a question's last three seconds, and the
+// background song through the whole session, softer under the questions.
 // Browsers keep audio off until the page is clicked or a key is pressed; the projector calls unlockAudio() on
 // its first touch (the teacher clicks it or presses F for full screen anyway), which also loads the sounds.
+// Only MP3 and WAV: every browser decodes them itself, while AAC (.m4a) leans on Windows' own decoders, which some
+// editions (N/KN without the media pack) lack.
 
-const SOUNDS = { yeah: '/sounds/yeah.mp3', crickets: '/sounds/crickets.m4a', tick: '/sounds/ticktock.m4a', music: '/sounds/music.m4a' };
+const SOUNDS = { yeah: '/sounds/yeah.mp3', crickets: '/sounds/crickets.wav', tick: '/sounds/ticktock.wav' };
 type Sound = keyof typeof SOUNDS;
 
 let ctx: AudioContext | null = null;
@@ -36,10 +38,23 @@ function load(c: AudioContext, sound: Sound): Promise<AudioBuffer | null> {
 export async function unlockAudio(): Promise<boolean> {
   const c = context();
   if (!c) return false;
+  // The song's <audio> element first, synchronously inside the click: Safari lets it play only within the gesture
+  // itself (the first resume() below finishes outside it), and once it has played there it may play later too. Its
+  // gain stays at 0 until playMusic raises it, so this makes no sound.
+  const m = musicNode(c);
+  if (!m.primed || (musicLevel > 0 && m.el.paused)) {
+    m.primed = true;
+    void m.el.play().then(
+      () => musicLevel <= 0 && m.el.pause(),
+      () => {
+        m.primed = false; // refused: try again at the next click
+      },
+    );
+  }
   if (c.state === 'suspended') await c.resume().catch(() => undefined);
   if (c.state === 'running') {
     (Object.keys(SOUNDS) as Sound[]).forEach((s) => void load(c, s));
-    if (musicLevel > 0) void startMusic();
+    if (musicLevel > 0) playMusic();
   }
   return c.state === 'running';
 }
@@ -107,9 +122,11 @@ export function playTickTock(offset: number): () => void {
   };
 }
 
-// The music file is a 16.7-second loop followed by its first second again, so looping from 0.5 s to 0.5 s plus the
-// loop's length is seamless however much silence a browser's decoder adds or drops at the very start.
-const MUSIC_LOOP = 736279 / 44100;
+// The song plays from an <audio> element, through a gain node for the fades: decoded whole, two minutes of music
+// would take some 50 MB in each window. Paused, the element keeps its place, so the song carries on from there.
+const MUSIC_SRC = '/sounds/music.mp3';
+/** The song's name, shown on the teacher screen beside its switch. */
+export const MUSIC_TITLE = '오늘은 내가 정해';
 /** Music volumes: fuller in the lobby and on the results, softly under the questions. */
 export const MUSIC_FULL = 0.25;
 export const MUSIC_SOFT = 0.12;
@@ -117,26 +134,21 @@ export const MUSIC_SOFT = 0.12;
 const MUSIC_DUCK = 0.35;
 let musicLevel = 0;
 let ticking = 0;
-// Where the song was when it last stopped, so after a pause or a cover it carries on from there.
-let musicPos = 0;
+let musicPause: ReturnType<typeof setTimeout> | undefined;
 // The gain's current ramp, so a new ramp starts from where the last one has got to (gain.value can still read 1
-// before the audio thread has run a new node), and where in the song the source started.
-let music: {
-  source: AudioBufferSourceNode;
-  gain: GainNode;
-  from: number;
-  to: number;
-  t0: number;
-  t1: number;
-  startedAt: number;
-  offset: number;
-} | null = null;
+// before the audio thread has run a new node).
+let music: { el: HTMLAudioElement; gain: GainNode; from: number; to: number; t0: number; t1: number; primed: boolean } | null = null;
 
-/** The song's position at context time `t`, following the loop. */
-function musicPosAt(t: number): number {
-  if (!music) return 0;
-  const raw = music.offset + (t - music.startedAt);
-  return raw < 0.5 + MUSIC_LOOP ? raw : 0.5 + ((raw - 0.5) % MUSIC_LOOP);
+function musicNode(c: AudioContext) {
+  if (music) return music;
+  const el = new Audio(MUSIC_SRC);
+  el.loop = true;
+  el.preload = 'auto';
+  const gain = c.createGain();
+  gain.gain.value = 0;
+  c.createMediaElementSource(el).connect(gain).connect(c.destination);
+  music = { el, gain, from: 0, to: 0, t0: 0, t1: 0, primed: false };
+  return music;
 }
 
 const musicTarget = () => musicLevel * (ticking > 0 ? MUSIC_DUCK : 1);
@@ -152,41 +164,30 @@ function rampMusic(to: number, seconds: number) {
   Object.assign(music, { from: now, to, t0: t, t1: t + seconds });
 }
 
-async function startMusic() {
+function playMusic() {
   const c = context();
-  if (!c || c.state !== 'running' || music) return;
-  const buffer = await load(c, 'music');
-  if (!buffer || musicLevel <= 0 || music) return;
-  const source = c.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-  source.loopStart = 0.5;
-  source.loopEnd = 0.5 + MUSIC_LOOP;
-  const gain = c.createGain();
-  gain.gain.value = 0;
-  source.connect(gain).connect(c.destination);
-  const t = c.currentTime;
-  source.start(0, musicPos);
-  music = { source, gain, from: 0, to: 0, t0: t, t1: t, startedAt: t, offset: musicPos };
-  rampMusic(musicTarget(), 1);
+  if (!c || c.state !== 'running') return;
+  const m = musicNode(c);
+  clearTimeout(musicPause);
+  if (m.el.paused) void m.el.play().catch(() => undefined);
+  rampMusic(musicTarget(), m.to > 0 ? 0.8 : 1);
 }
 
 /**
- * Sets the background music's volume (MUSIC_FULL, MUSIC_SOFT, or 0 to fade it out and stop), easing between levels;
- * started again, it carries on where it stopped. Asked before audio is on, it starts at the first click.
+ * Sets the background music's volume (MUSIC_FULL, MUSIC_SOFT, or 0 to fade it out and pause), easing between levels;
+ * started again, it carries on where it paused. Asked before audio is on, it starts at the first click.
  */
 export function setMusic(level: number) {
   musicLevel = level;
   if (level > 0) {
-    if (music) rampMusic(musicTarget(), 0.8);
-    else void startMusic();
+    playMusic();
     return;
   }
-  if (!music || !ctx) return;
+  if (!music) return;
   rampMusic(0, 0.6);
-  music.source.stop(ctx.currentTime + 0.7);
-  musicPos = musicPosAt(ctx.currentTime + 0.6);
-  music = null;
+  const { el } = music;
+  clearTimeout(musicPause);
+  musicPause = setTimeout(() => musicLevel <= 0 && el.pause(), 700);
 }
 
 function duckMusic(by: 1 | -1) {

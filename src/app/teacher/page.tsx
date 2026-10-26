@@ -4,6 +4,7 @@ import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
+import { MUSIC_TITLE } from '@/client/sound';
 import { musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
@@ -135,6 +136,34 @@ function TeacherApp() {
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <section className={`rounded-[20px] bg-white p-6 ${className}`}>{children}</section>;
+}
+
+/**
+ * The background song's switch at the top of the console: its name, level bars that bounce while it is on, and 켜짐
+ * or 꺼짐. `dark` is for the quiz bar.
+ */
+function MusicSwitch({ on, onToggle, dark = false }: { on: boolean; onToggle: () => void; dark?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title={`${MUSIC_TITLE} · ${on ? '끄기' : '켜기'}`}
+      onClick={(e) => {
+        onToggle();
+        e.currentTarget.blur();
+      }}
+      className={`flex items-center gap-2.5 rounded-xl border font-bold ${dark ? 'h-10 border-[#3D4354] px-4 text-sm' : 'h-11 border-[#D5D8DF] bg-white px-3.5 text-[15px]'}`}
+    >
+      <span aria-hidden className={`flex h-3.5 items-end gap-[2px] ${on ? 'cls-eq' : ''}`}>
+        {[0.6, 1, 0.8].map((h, i) => (
+          <i key={i} className={`block w-[3px] rounded-sm ${on ? (dark ? 'bg-accent' : 'bg-ink') : 'bg-[#A3A8B4]'}`} style={{ height: `${h * 100}%` }} />
+        ))}
+      </span>
+      {/* On the quiz bar the name gives way on a narrow screen; the bars, the badge and the tooltip stay. */}
+      <span className={`${on ? '' : 'text-ink-3'} ${dark ? 'hidden min-[1200px]:inline' : ''}`}>{MUSIC_TITLE}</span>
+      <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${on ? (dark ? 'bg-accent text-ink' : 'bg-ink text-white') : dark ? 'bg-[#24272F] text-ink-3' : 'bg-bg text-ink-3'}`}>{on ? '켜짐' : '꺼짐'}</span>
+    </button>
+  );
 }
 
 function Btn({ children, onClick, kind = 'dark', disabled, className = '', title }: { children: React.ReactNode; onClick?: () => void; kind?: 'dark' | 'ghost' | 'gold' | 'accent'; disabled?: boolean; className?: string; title?: string }) {
@@ -787,16 +816,16 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
   if (live.phase === 'summary') {
     return (
       <div className="flex flex-col items-center gap-8 p-12">
+        <div className="flex w-full justify-end">
+          <MusicSwitch on={live.music} onToggle={() => control('music')} />
+        </div>
         <h1 className="text-3xl font-bold">{live.className} · {live.eventName} 끝</h1>
         <div className="flex gap-5">
           <Card className="min-w-56 !bg-ink text-white"><div className="text-[#A3A8B4]">반 정답률</div><div className="tabular text-6xl font-extrabold text-[#3DDC97]">{Math.round((live.summary?.accuracy ?? 0) * 100)}%</div></Card>
           <Card className="min-w-56"><div className="text-ink-3">보상 받은 학생</div><div className="tabular text-6xl font-extrabold">{live.summary?.rewarded ?? 0}<span className="text-2xl text-ink-3"> / {live.summary?.judged ?? 0}</span></div></Card>
         </div>
         <p className="text-ink-3">학생들은 각자 폰에서 결과와 오답 노트를 보고 있어요. 학생별 기록은 통계에 쌓였어요.</p>
-        <div className="flex items-center gap-2">
-          <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.music} onChange={(e) => { control('music'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />배경음악</label>
-          <Btn onClick={() => act({ type: 'close-session' })}>아레나 닫기</Btn>
-        </div>
+        <Btn onClick={() => act({ type: 'close-session' })}>아레나 닫기</Btn>
       </div>
     );
   }
@@ -819,7 +848,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
   const previewMax = `max(320px, calc((100vh - ${showAnswer && q?.explanation ? 456 : 424}px) * 2))`;
   return (
     <div className="flex min-h-screen flex-col">
-      <div className="flex h-[76px] items-center justify-between gap-5 bg-ink px-7 text-white">
+      <div className="flex h-[76px] items-center justify-between gap-5 whitespace-nowrap bg-ink px-7 text-white">
         <div className="flex items-center gap-6">
           <div className="text-sm font-bold text-[#A3A8B4]">{live.className}</div>
           <div className="tabular text-[22px] font-extrabold">{live.index + 1 > 0 ? live.index + 1 : '-'}<span className="text-ink-3"> / {total}</span></div>
@@ -831,6 +860,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           {live.paused && <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-ink">멈춤</span>}
         </div>
         <div className="flex gap-2">
+          <MusicSwitch dark on={live.music} onToggle={() => control('music')} />
           <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>화면 가리기 B</button>
           <button
             type="button"
@@ -882,7 +912,6 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.autoAdvance} onChange={(e) => { control('auto'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />자동 진행</label>
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
             <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
-            <label className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold"><input type="checkbox" checked={live.music} onChange={(e) => { control('music'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />배경음악</label>
           </div>
         </div>
 
@@ -951,17 +980,21 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
   const notJoined = mine.filter((s) => !s.joined);
   return (
     <div className="flex flex-col gap-5 p-8">
-      <div className="flex items-center justify-between gap-4">
+      {/* Top-aligned, so 퀴즈 시작 stays above the floating 기기 등록 요청 card (top-24). */}
+      <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-sm text-ink-3">대기실</div>
-          <h1 className="text-2xl font-bold">{live.className} · {live.eventName} · {live.mainCount}문항</h1>
+          <h1 className="break-keep text-2xl font-bold">{live.className} · {live.eventName} · {live.mainCount}문항</h1>
+          {/* Under the title, so the buttons on the right keep 퀴즈 시작 on their first row. */}
+          <div className="mt-3 flex">
+            <MusicSwitch on={live.music} onToggle={() => control('music')} />
+          </div>
         </div>
         {/* With 놀이 방법 the buttons can outgrow a laptop screen; they wrap rather than squeeze the title. */}
         <div className="flex flex-wrap justify-end gap-2">
           {/* Names show under the characters on the projector, in the lobby and at each reveal. */}
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.nameLabels} onChange={(e) => { control('names'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />이름표</label>
           <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.sound} onChange={(e) => { control('sound'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />효과음</label>
-          <label className="flex h-11 items-center gap-2 rounded-xl border border-[#D5D8DF] bg-white px-3.5 text-[15px] font-bold"><input type="checkbox" checked={live.music} onChange={(e) => { control('music'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />배경음악</label>
           <ProjectorLink className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</ProjectorLink>
           {/* A 12-second demo on the projector; pressed again it starts over. */}
           <Btn kind="ghost" onClick={() => control('howto')} className={live.howto ? '!border-ink !bg-ink !text-white' : ''}>

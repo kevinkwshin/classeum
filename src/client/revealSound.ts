@@ -11,16 +11,16 @@ const CHANNEL = 'classeum-sound';
 // (the projector re-renders five times a second during a question), restarting timers and dropping sounds.
 const always = () => true;
 
-/** Turns audio on at the first click or key press in this window (browsers allow nothing earlier). */
+// The gestures that let a page play sound: a mouse press counts at once, a touch only when the finger lifts (a touch
+// screen laptop or an electronic whiteboard), a key press at once.
+const GESTURES = ['pointerdown', 'pointerup', 'keydown'] as const;
+
+/** Turns audio on at the first click, tap or key press in this window (browsers allow nothing earlier). */
 export function useAudioUnlock(onChange?: (on: boolean) => void) {
   useEffect(() => {
     const unlock = () => void unlockAudio().then((on) => onChange?.(on));
-    window.addEventListener('pointerdown', unlock);
-    window.addEventListener('keydown', unlock);
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
+    GESTURES.forEach((g) => window.addEventListener(g, unlock));
+    return () => GESTURES.forEach((g) => window.removeEventListener(g, unlock));
   }, [onChange]);
 }
 
@@ -69,13 +69,11 @@ export function useTeacherPlaysSound(): { now: () => boolean; on: boolean } {
       channel?.postMessage({ teacherAudio: id });
       update();
     };
-    window.addEventListener('pointerdown', claim);
-    window.addEventListener('keydown', claim);
+    GESTURES.forEach((g) => window.addEventListener(g, claim));
     const timer = setInterval(update, 500);
     return () => {
       clearInterval(timer);
-      window.removeEventListener('pointerdown', claim);
-      window.removeEventListener('keydown', claim);
+      GESTURES.forEach((g) => window.removeEventListener(g, claim));
       channel?.close();
     };
   }, [now]);
