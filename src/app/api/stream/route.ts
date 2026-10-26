@@ -50,11 +50,19 @@ export async function GET(request: NextRequest) {
           // already closed
         }
       };
+      // A classmate's join or look re-sends every phone its view, which then differs only in serverNow; skip
+      // those repeats. A reconnect is a new client, so its first view always goes out.
+      let lastKey = '';
       client = {
-        id: crypto.randomUUID(),
         role,
         tokenHash: role === 'student' ? hashToken(token) : undefined,
-        send: (payload) => write(`data: ${JSON.stringify(payload)}\n\n`),
+        send: (payload) => {
+          const body = JSON.stringify(payload);
+          const key = body.replace(/"serverNow":\d+/, '');
+          if (key === lastKey) return;
+          lastKey = key;
+          write(`data: ${body}\n\n`);
+        },
         // Replaced by a newer stream from the same phone: that tab stops until the student looks at it again.
         close: () => {
           write('event: replaced\ndata: 1\n\n');

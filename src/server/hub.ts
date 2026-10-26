@@ -13,7 +13,6 @@ import { lanAddress, qrSvg } from './lan';
 export type Role = 'teacher' | 'display' | 'student';
 
 export interface Client {
-  id: string;
   role: Role;
   tokenHash?: string;
   send: (payload: unknown) => void;
