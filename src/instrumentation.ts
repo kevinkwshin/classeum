@@ -1,6 +1,8 @@
 // Prints the teacher link once at startup; `npm run class` also opens it in the laptop's browser.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  const { openStore } = await import('./server/store');
+  await openStore();
   const { teacherKey } = await import('./server/auth');
   const port = process.env.PORT || '3000';
   const url = `http://localhost:${port}/api/teacher/login?key=${teacherKey()}`;
