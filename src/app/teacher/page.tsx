@@ -295,6 +295,21 @@ function Events({ view, act, notify, onStudents }: { view: TeacherView; act: Sen
     setUpload(res);
   };
 
+  // [엑셀로 받기]: the server fills our template and names the file after the title or the event.
+  const saveExcel = async (body: Record<string, unknown>) => {
+    const res = await fetch('/api/words/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+    if (!res?.ok) {
+      notify(((await res?.json().catch(() => null)) as { error?: string } | null)?.error ?? '엑셀 파일을 만들지 못했어요.');
+      return;
+    }
+    const name = /filename\*=UTF-8''([^;]+)/i.exec(res.headers.get('content-disposition') ?? '')?.[1];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await res.blob());
+    a.download = name ? decodeURIComponent(name) : '단어장.xlsx';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+  };
+
   return (
     <div className="flex flex-col gap-5 p-8">
       <div className="flex items-center justify-between">
@@ -358,11 +373,11 @@ function Events({ view, act, notify, onStudents }: { view: TeacherView; act: Sen
               </button>
             ))}
           </div>
-          {event && <EventDetail key={event.id} view={view} event={event} act={act} onStudents={onStudents} />}
+          {event && <EventDetail key={event.id} view={view} event={event} act={act} onStudents={onStudents} onExcel={() => saveExcel({ eventId: event.id })} />}
         </div>
       )}
 
-      {writing && <WordEditor draft={typed} setDraft={setTyped} busy={busy} onClose={() => setWriting(false)} onPreview={previewTyped} />}
+      {writing && <WordEditor draft={typed} setDraft={setTyped} busy={busy} onClose={() => setWriting(false)} onPreview={previewTyped} onExcel={() => saveExcel({ name: typed.title, words: typed.rows })} />}
       {upload && <UploadPreview result={upload} typed={typedPreview} onClose={() => {
         setUpload(null);
         if (typedPreview) setWriting(true);
@@ -414,7 +429,7 @@ function ClassRuns({ view, event, chosen }: { view: TeacherView; event: TeacherE
   );
 }
 
-function EventDetail({ view, event, act, onStudents }: { view: TeacherView; event: TeacherEvent; act: Send; onStudents: () => void }) {
+function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherView; event: TeacherEvent; act: Send; onStudents: () => void; onExcel: () => void }) {
   const [classId, setClassId] = useClassChoice(view.classes);
   const [itemId, setItemId] = useState(event.reward.itemId);
   const [challenge, setChallenge] = useState(event.reward.challengePct);
@@ -444,6 +459,7 @@ function EventDetail({ view, event, act, onStudents }: { view: TeacherView; even
           {event.typed && <div className="mt-0.5 text-sm text-ink-3">✏️ 직접 작성 · {new Date(event.createdAt).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}</div>}
         </div>
         <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
+          <Btn kind="ghost" onClick={onExcel}>엑셀로 받기</Btn>
           <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요? 기록은 통계에 남아요.`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
           {view.classes.length === 0 ? (
             <Btn onClick={onStudents}>반 만들기 →</Btn>
@@ -530,10 +546,12 @@ function EventDetail({ view, event, act, onStudents }: { view: TeacherView; even
  * [직접 작성하기]: a title and a table of word / meaning / example. Pasting several lines copied from Excel or a
  * Hangul table fills the rows from there (columns split by tabs); Enter moves down a row.
  */
-function WordEditor({ draft, setDraft, busy, onClose, onPreview }: { draft: TypedDraft; setDraft: (f: (d: TypedDraft) => TypedDraft) => void; busy: boolean; onClose: () => void; onPreview: () => void }) {
+function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { draft: TypedDraft; setDraft: (f: (d: TypedDraft) => TypedDraft) => void; busy: boolean; onClose: () => void; onPreview: () => void; onExcel: () => void }) {
   const cells = useRef<(HTMLInputElement | null)[][]>([]);
   const keys = ['spelling', 'meaning', 'example'] as const;
   const filled = draft.rows.filter((r) => r.spelling.trim() && r.meaning.trim()).length;
+  // Half-written rows go into the file too, to finish in Excel.
+  const anyRow = draft.rows.some((r) => keys.some((k) => r[k].trim()));
   const setCell = (row: number, col: number, value: string) => setDraft((d) => ({ ...d, rows: d.rows.map((r, i) => (i === row ? { ...r, [keys[col]]: value } : r)) }));
   const focus = (row: number, col: number) => requestAnimationFrame(() => cells.current[row]?.[col]?.focus());
   const paste = (row: number, col: number) => (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -624,6 +642,7 @@ function WordEditor({ draft, setDraft, busy, onClose, onPreview }: { draft: Type
           <div className="flex gap-2">
             <Btn kind="ghost" onClick={() => setDraft((d) => ({ ...d, rows: [...d.rows, ...blankRows(10)] }))}>10줄 추가</Btn>
             <Btn kind="ghost" onClick={() => { if (confirm('쓴 내용을 모두 지울까요?')) setDraft(() => ({ title: '', rows: blankRows(10) })); }}>비우기</Btn>
+            <Btn kind="ghost" disabled={!anyRow} onClick={onExcel}>엑셀로 받기</Btn>
           </div>
           <div className="flex items-center gap-3">
             {filled > 0 && filled < 4 && <span className="text-sm text-ink-3">단어가 4개 이상이면 보기를 잘 만들 수 있어요</span>}
