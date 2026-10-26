@@ -4,13 +4,15 @@
 // with a stamp written in .next after a good build. The stamp also keeps that build's BUILD_ID, so a build made
 // by hand (`next build`) is never taken for ours: the next run builds again. CLASSEUM_REBUILD=1 forces a build.
 //
+// It also deletes .next/dev, the build `next dev` keeps (often over 100 MB), which class mode never reads.
+//
 // `--forget` runs when `next start` exits with an error. Next exits that way whenever it stops (Ctrl+C, or the next
 // `npm run class` replacing it), so the stamp is dropped only when the server stopped within 20 seconds of starting,
 // which points at a broken build; the next start then builds again. It always exits 1, like the failed start.
 // Plain Node, so it works on Mac and Windows.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, relative, sep } from 'node:path';
 
@@ -43,6 +45,39 @@ function files(path, out = []) {
     for (const name of readdirSync(path).sort()) if (!JUNK.test(name)) files(join(path, name), out);
   } else out.push(path);
   return out;
+}
+
+/** Size of a file or folder, not following links. */
+function bytes(path) {
+  try {
+    const st = lstatSync(path);
+    return st.isDirectory() ? readdirSync(path).reduce((sum, name) => sum + bytes(join(path, name)), 0) : st.size;
+  } catch {
+    return 0;
+  }
+}
+
+/** Whether a `next dev` still runs from this folder: it writes its process id in .next/dev/lock while it runs. */
+function devServerRunning(devDir) {
+  try {
+    process.kill(JSON.parse(readFileSync(join(devDir, 'lock'), 'utf8')).pid, 0); // signal 0 only asks whether it exists
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM' || e.code === 'EBUSY';
+  }
+}
+
+function removeDevBuild() {
+  const devDir = join(NEXT_DIR, 'dev');
+  if (!existsSync(devDir) || devServerRunning(devDir)) return;
+  const before = bytes(devDir);
+  try {
+    rmSync(devDir, { recursive: true, force: true });
+  } catch {
+    // Windows keeps files a program has open; what is left goes next time.
+  }
+  const mb = Math.round((before - bytes(devDir)) / 2 ** 20);
+  if (mb > 0) say(`안 쓰는 개발용 파일 ${mb}MB를 지웠어요.`);
 }
 
 function fingerprint(nextVersion) {
@@ -79,6 +114,7 @@ try {
   say('필요한 파일이 아직 설치되지 않았어요. 이 폴더에서 npm install을 먼저 실행하세요.');
   process.exit(1);
 }
+removeDevBuild();
 if (needsInstall()) say('설치된 파일이 package-lock.json과 달라요. 서버를 끄고 이 폴더에서 npm install을 한 번 실행하세요.');
 
 const want = fingerprint(nextVersion);
