@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { playCheer, unlockAudio } from '@/client/sound';
+import { playCheer, playCrickets, unlockAudio } from '@/client/sound';
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
@@ -34,17 +34,20 @@ function DisplayApp() {
       window.removeEventListener('keydown', unlock);
     };
   }, []);
-  // A "Yeah!" when the fog lifts on a question someone got right, once per question.
+  // When the fog lifts, once per question: "Yeah!" if someone got it right, and crickets after a beat if
+  // students took part and nobody did (not when the room is empty, e.g. the teacher trying it alone).
   const cheered = useRef(-1);
   const seq = s?.question?.seq ?? -1;
-  const share = s?.phase === 'reveal' ? view?.reveal?.accuracy ?? 0 : 0;
+  const reveal = s?.phase === 'reveal' ? view?.reveal ?? null : null;
+  const share = reveal?.accuracy ?? 0;
+  const nobody = !!reveal && share === 0 && reveal.avatars.length > 0;
   const soundOn = view?.sound !== false;
   useEffect(() => {
-    if (!soundOn || share <= 0 || cheered.current === seq) return;
+    if (!soundOn || (share <= 0 && !nobody) || cheered.current === seq) return;
     cheered.current = seq;
-    const t = setTimeout(() => playCheer(share), 250);
+    const t = share > 0 ? setTimeout(() => playCheer(share), 250) : setTimeout(playCrickets, 700);
     return () => clearTimeout(t);
-  }, [seq, share, soundOn]);
+  }, [seq, share, nobody, soundOn]);
   // Ticking [효과음] back on plays one cheer, so the teacher hears how loud it is on the projector speakers.
   const wasOn = useRef(soundOn);
   useEffect(() => {

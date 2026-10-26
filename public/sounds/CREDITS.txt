@@ -1,0 +1,12 @@
+Classeum sound credits
+
+yeah.mp3
+  "funny kids 7 yeah" by phantastonia
+  https://freesound.org/s/457917/
+  License: CC0 1.0 (public domain)
+
+crickets.m4a
+  "cricket.wav" by xserra
+  https://freesound.org/s/73529/
+  License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  Changed: cut to 2 seconds (4.1 s to 6.1 s), mixed to mono, short fades, louder.
