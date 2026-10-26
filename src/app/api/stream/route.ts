@@ -2,6 +2,12 @@ import type { NextRequest } from 'next/server';
 import { hashToken, hub, type Client, type Role } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
 
+/**
+ * A real event, not an SSE comment (which EventSource never surfaces), so a phone can tell a quiet stream
+ * from a dead one and reconnect (live.ts). It carries the server clock too.
+ */
+const PING_MS = 10_000;
+
 // Server-Sent Events: one long-lived response per screen, carrying that screen's view.
 export async function GET(request: NextRequest) {
   const role = request.nextUrl.searchParams.get('role') as Role | null;
@@ -56,6 +62,7 @@ export async function GET(request: NextRequest) {
       client = {
         role,
         tokenHash: role === 'student' ? hashToken(token) : undefined,
+        streamId: request.nextUrl.searchParams.get('s')?.slice(0, 16) || undefined,
         send: (payload) => {
           const body = JSON.stringify(payload);
           const key = body.replace(/"serverNow":\d+/, '');
@@ -72,7 +79,7 @@ export async function GET(request: NextRequest) {
       };
       write('retry: 1500\n\n');
       h.addClient(client);
-      keepAlive = setInterval(() => write(': ping\n\n'), 15000);
+      keepAlive = setInterval(() => write(`event: ping\ndata: ${Date.now()}\n\n`), PING_MS);
       request.signal.addEventListener('abort', end);
     },
     cancel() {

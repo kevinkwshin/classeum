@@ -1,5 +1,5 @@
-// The game host for the local prototype: owns the live session, runs the clock,
-// and pushes role-specific views to every connected screen.
+// The game host, one per server process: owns the live session, runs its clock, keeps track of
+// every open screen, and pushes each one its role's view (over /api/stream). Records live in store.ts.
 import { createHash, randomInt } from 'node:crypto';
 import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
@@ -17,8 +17,16 @@ export type Role = 'teacher' | 'display' | 'student';
 export interface Client {
   role: Role;
   tokenHash?: string;
+  /**
+   * Names this stream in its phone's heartbeats, so they keep only this one alive: not a second tab, and not
+   * a stream a Wi-Fi roam left half-open. Pages from before heartbeats send none.
+   */
+  streamId?: string;
   send: (payload: unknown) => void;
-  /** Ends the stream from the server side (an older duplicate of the same phone). */
+  /**
+   * Ends the stream from the server side: an older duplicate of the same phone, or a phone that stopped
+   * beating. The page stays closed until the student looks at it again.
+   */
   close?: () => void;
   /** Ends the stream quietly when the server is stopping; the screen reconnects once it is back. */
   end?: () => void;
@@ -47,6 +55,9 @@ const CLICK_GUARD_MS = 1000;
 const FRIENDS_SHOWN = 9;
 /** Two tabs on one phone are fine; a third replaces the oldest. */
 const MAX_STREAMS_PER_DEVICE = 2;
+/** Phones beat every 15 s while looked at; one silent this long is locked, out of range or off. */
+const BEAT_TIMEOUT_MS = 40_000;
+const SWEEP_MS = 5_000;
 const ANIMALS = ['여우', '부엉이', '사슴', '고래', '펭귄', '다람쥐', '거북', '판다', '수달', '코알라', '호랑이', '토끼'];
 
 export function hashToken(token: string): string {
@@ -185,6 +196,9 @@ function publicQuestion(q: Question, seq: number): PublicQuestion {
 
 class Hub {
   clients = new Set<Client>();
+  /** Last heartbeat per student stream. Pages from before heartbeats never send one, so they are never swept. */
+  private beats = new WeakMap<Client, number>();
+  private sweeper: NodeJS.Timeout | null = null;
   /** When each pending request's phone was last seen waiting, for expireRequests. */
   private requestSeen = new Map<string, number>();
   live: Live | null = null;
@@ -259,6 +273,28 @@ class Hub {
     const openBefore = this.registrationOpen();
     if (!this.clients.delete(c)) return;
     this.schedulePush(openBefore !== this.registrationOpen());
+  }
+
+  /** A phone's page is open and looked at. Sent every 15 s by every phone, so it saves and pushes nothing. */
+  beat(tokenHash: string, streamId: string) {
+    if (!streamId) return;
+    const now = Date.now();
+    for (const c of this.clients) if (c.streamId === streamId && c.tokenHash === tokenHash) this.beats.set(c, now);
+    this.sweeper ??= setInterval(() => this.sweep(), SWEEP_MS).unref();
+  }
+
+  /**
+   * Ends the streams of phones that stopped beating. TCP keeps a vanished phone's stream open for minutes,
+   * and all that time it counts as connected: early close waits for it and the counts are off.
+   */
+  private sweep() {
+    const cutoff = Date.now() - BEAT_TIMEOUT_MS;
+    for (const c of [...this.clients]) {
+      const at = this.beats.get(c);
+      if (at === undefined || at >= cutoff) continue;
+      this.removeClient(c);
+      c.close?.();
+    }
   }
 
   studentOf(tokenHash?: string): StudentRec | undefined {
