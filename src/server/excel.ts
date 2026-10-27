@@ -3,7 +3,7 @@ import readExcelFile from 'read-excel-file/node';
 import type { Confusable, CustomQuestion, GrammarItem, GrammarTab, Pos, Word, WordStatus } from '@/lib/types';
 import { MAX_TEXT_ANSWER, hashString, normalizeAnswer, wordKey } from '@/lib/text';
 import { clozeOf } from './generate';
-import { GRAMMAR_TABS, grammarItem } from './grammar';
+import { GRAMMAR_TABS, TEMPLATE_EXAMPLE_ROWS, grammarItem, isTemplateExample } from './grammar';
 
 export interface ImportIssue {
   level: 'error' | 'warning';
@@ -56,7 +56,7 @@ export const GRAMMAR_HEADERS: Record<string, string> = {
   정답: '정답', 답: '정답', '정답(조각을/로)': '정답',
   해설: '해설', '시간(초)': '시간(초)', 시간: '시간(초)', 초: '시간(초)', 세트: '세트', 상태: '상태',
 };
-/** The cell that marks a template's example rows; they are never asked. */
+/** A 번호 cell that marks an example row, in templates that had a 번호 column; the examples are never asked. */
 export const EXAMPLE_MARK = '예시';
 
 function text(v: Cell | undefined): string {
@@ -366,7 +366,7 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
   return out;
 }
 
-/** One 문법 tab. Rows marked 예시 are the template's examples, and a row the same as an earlier one is skipped. */
+/** One 문법 tab. The template's example rows are skipped, and so is a row the same as an earlier one. */
 function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], seen: Map<string, string>): GrammarItem[] {
   const sheet = `문법 ${tab}`;
   if (data.length === 0) return [];
@@ -375,23 +375,21 @@ function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], se
   const out: GrammarItem[] = [];
   // Rows with nothing but a 지시문 or 해설 (filled down ahead of the questions) are skipped, with one warning.
   const leadOnly: number[] = [];
-  // The template's examples are the 예시 rows right under the header. A 예시 row further down is most likely an
-  // example copied to make a question, so it is left out with a warning rather than silently.
+  // The template's examples sit right under the header (one edited there becomes a question). An example further
+  // down is most likely one copied to make a question and not yet edited, so it is left out with a warning.
   const copiedExamples: number[] = [];
-  let examples = true;
   data.slice(1).forEach((row, i) => {
     const r = i + 2;
     const get = (col: string) => read(row, col, r);
     const label = get('번호');
-    if (label === EXAMPLE_MARK) {
-      if (!examples && row.some((c) => text(c))) copiedExamples.push(r);
-      return;
-    }
-    examples = false;
     const cells: Record<string, string> = {};
     for (const col of h.keys()) {
       const v = get(col);
       if (v) cells[col] = v;
+    }
+    if (label === EXAMPLE_MARK || isTemplateExample(tab, cells)) {
+      if (r > 1 + TEMPLATE_EXAMPLE_ROWS[tab]) copiedExamples.push(r);
+      return;
     }
     if (!['문장', '우리말', '보기1', '보기2', '보기3', '보기4', '정답'].some((c) => cells[c])) {
       if (cells['지시문'] || cells['해설']) leadOnly.push(r);
@@ -412,6 +410,7 @@ function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], se
     });
     for (const p of problems) issues.push({ level: p.level, sheet, row: r, column: p.column, message: p.message });
     if (!item) return;
+    item.questions[0].source!.row = r;
     const where = `${sheet} ${r}행`;
     if (seen.has(item.id)) {
       issues.push({ level: 'warning', sheet, row: r, message: `${seen.get(item.id)}과 같은 문제라서 건너뛰었어요.` });
@@ -425,8 +424,7 @@ function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], se
       level: 'warning',
       sheet,
       row: copiedExamples[0],
-      column: '번호',
-      message: `번호 칸이 '예시'인 줄 ${copiedExamples.length}개는 문제로 나오지 않아요 (${copiedExamples.join(', ')}행). 문제로 내려면 '예시'를 지우세요.`,
+      message: `예시와 같은 줄 ${copiedExamples.length}개는 문제로 나오지 않아요 (${copiedExamples.join(', ')}행). 문제로 쓰려면 내용을 고쳐 주세요.`,
     });
   }
   if (leadOnly.length) {

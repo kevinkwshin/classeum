@@ -1,6 +1,7 @@
 // Turns a word list into quiz questions with wrong options, without any AI.
 import type { CustomQuestion, GrammarItem, Option, Question, QuestionMode, Word } from '@/lib/types';
 import { displayMeaning, editDistance, meaningKeys, meaningStem, mulberry32, normalizeAnswer, shuffle, wordKey } from '@/lib/text';
+import { GRAMMAR_TABS } from './grammar';
 
 export interface GeneratedEvent {
   questions: Question[];
@@ -336,9 +337,10 @@ export function generateEvent(opts: {
   }
 
   // Order first, then place answers, so the no-three-in-a-row rule holds in the order played.
-  // Words, then grammar in the order of its tabs and rows, then the hand-written bonus questions.
-  const grammar = opts.grammar.filter((g) => g.status === '사용').flatMap((g) => g.questions);
-  const customs = opts.custom.filter((c) => c.status === '사용').map((c) => customToQuestion(c, opts.defaultSeconds));
+  // Words, then grammar a type at a time (고르기, 쓰기, 고치기, 배열), then the bonus questions of older files; within a
+  // type the order is shuffled like the words. A 고치기 row's two questions (find, then fix) stay together.
+  const grammar = GRAMMAR_TABS.flatMap((tab) => shuffle(opts.grammar.filter((g) => g.status === '사용' && g.tab === tab), rnd)).flatMap((g) => g.questions);
+  const customs = shuffle(opts.custom.filter((c) => c.status === '사용'), rnd).map((c) => customToQuestion(c, opts.defaultSeconds));
   const questions = spreadAnswers([...orderQuestions(main, byKey, rnd), ...grammar, ...customs], rnd);
 
   return { questions, retry, warnings };

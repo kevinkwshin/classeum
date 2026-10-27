@@ -404,6 +404,39 @@ function arrange(id: string, r: GrammarRow): Built {
   };
 }
 
+/**
+ * The example rows of the template (M2_L7.xlsx), by tab: recognized by their content, so the tabs need no column to
+ * mark them. A row the teacher has edited is a question of their own. The 배열 example of the first template is kept,
+ * so a file made from it still reads the same.
+ */
+const TEMPLATE_EXAMPLES: Record<GrammarTab, Record<string, string>[]> = {
+  고르기: [
+    { 문장: 'I want (to go / going) home.', 정답: 'to go' },
+    { 지시문: '바른 문장을 고르세요.', 보기1: 'He make me laugh.', 보기2: 'He makes me laugh.', 정답: '2' },
+    { 우리말: '가방 A 3kg, 가방 B 3kg', 문장: 'Bag A is as heavy as Bag B.', 정답: 'O' },
+  ],
+  쓰기: [
+    { 우리말: '그는 우유를 좋아하지 않는다.', 문장: "He [doesn't] like milk." },
+    { 지시문: 'and로 한 문장을 만드세요.', 문장: 'I like cats. I like dogs.', 정답: 'I like cats and dogs.|I like dogs and cats.' },
+  ],
+  고치기: [{ 문장: 'She [go → goes] to school every day.' }],
+  배열: [
+    { 우리말: '엄마는 내가 매일 우유를 마시게 하신다.', 정답: 'my mom / makes / me / drink / milk / every day' },
+    { 우리말: '나는 매일 아침 우유를 마신다.', 정답: 'I / drink / milk / every morning' },
+  ],
+};
+const EXAMPLE_FIELDS = ['문장', '정답', '보기1', '보기2', '보기3', '보기4', '우리말', '지시문'];
+const exampleKey = (cells: Record<string, string>) => EXAMPLE_FIELDS.map((f) => tidy(cells[f] ?? '')).join('\u0001');
+const EXAMPLE_KEYS = Object.fromEntries(GRAMMAR_TABS.map((t) => [t, new Set(TEMPLATE_EXAMPLES[t].map(exampleKey))])) as Record<GrammarTab, Set<string>>;
+
+/** How many example rows the template has right under each tab's header. */
+export const TEMPLATE_EXAMPLE_ROWS: Record<GrammarTab, number> = { 고르기: 3, 쓰기: 2, 고치기: 1, 배열: 1 };
+
+/** A row of a 문법 tab, by canonical header, that is one of the template's own examples. */
+export function isTemplateExample(tab: GrammarTab, cells: Record<string, string>): boolean {
+  return EXAMPLE_KEYS[tab].has(exampleKey(cells));
+}
+
 /** Checks one row of a 문법 tab and builds its questions; with any error, there are none. */
 export function grammarItem(tab: GrammarTab, r: GrammarRow): { item: GrammarItem | null; problems: GrammarProblem[] } {
   const id = `g:${itemId(tab, r)}`;

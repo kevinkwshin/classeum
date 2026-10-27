@@ -1,11 +1,11 @@
 // [엑셀로 받기]: an event written into the template (public/templates/M2_L7.xlsx), so the file reads like the one the
-// teacher fills in each week and goes back in through [엑셀 올리기] unchanged. Only the 단어장, 문법 and 문항 sheets
-// are rewritten (their 예시 rows stay); every other part of the file is copied byte for byte.
+// teacher fills in each week and goes back in through [엑셀 올리기] unchanged. Only the 단어장 and 문법 sheets are
+// rewritten (their example rows stay); every other part of the file is copied byte for byte.
 import { readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { GrammarTab, Question, Word } from '@/lib/types';
-import { EXAMPLE_MARK, GRAMMAR_HEADERS, QUESTION_HEADERS, WORD_HEADERS, headerKey } from './excel';
-import { GRAMMAR_TABS } from './grammar';
+import { EXAMPLE_MARK, GRAMMAR_HEADERS, WORD_HEADERS, headerKey } from './excel';
+import { GRAMMAR_TABS, isTemplateExample } from './grammar';
 import { db } from './store';
 import { entryData, readZip, withData, writeZip } from './zip';
 
@@ -76,11 +76,11 @@ function cellText(c: Cell, shared: string[], p: string): string {
 }
 
 /**
- * Empties the data rows below the header and its 예시 rows (the cells and their styles stay) and writes `rows` below
- * them. Columns are found by their header text, read the way the importer reads it. `lenient` drops values the sheet
- * has no column for (a 문법 row may have been uploaded with columns this template's tab doesn't have).
+ * Empties the data rows below the header and its example rows (the cells and their styles stay) and writes `rows`
+ * below them. Columns are found by their header text, read the way the importer reads it. `lenient` drops values the
+ * sheet has no column for (a 문법 row may have been uploaded with columns this template's tab doesn't have).
  */
-function fillSheet(xml: string, shared: string[], aliases: Record<string, string>, rows: Row[], lenient = false): string {
+function fillSheet(xml: string, shared: string[], aliases: Record<string, string>, rows: Row[], lenient = false, isExample?: (cells: Record<string, string>) => boolean): string {
   const p = prefixOf(xml, 'worksheet');
   const data = new RegExp(`(<${p}sheetData\\b[^>]*>)([\\s\\S]*?)(</${p}sheetData>)`).exec(xml);
   const all = data ? parseRows(data[2], p) : [];
@@ -100,12 +100,16 @@ function fillSheet(xml: string, shared: string[], aliases: Record<string, string
       delete row[name];
     }
   }
-  // The template's 예시 rows right under the header stay as they are; the rows are written below them.
-  const first = cols.get('번호') ?? [...header.cells.keys()].sort((a, b) => a - b)[0];
+  // The template's example rows right under the header stay as they are; the rows are written below them.
   let top = header.r;
   for (let r = header.r + 1; ; r++) {
-    const c = all.find((x) => x.r === r)?.cells.get(first);
-    if (!c || cellText(c, shared, p) !== EXAMPLE_MARK) break;
+    const row = all.find((x) => x.r === r);
+    const at = (col: number | undefined) => {
+      const c = col === undefined ? undefined : row?.cells.get(col);
+      return c ? cellText(c, shared, p) : '';
+    };
+    const cells = Object.fromEntries([...cols].map(([name, col]) => [name, at(col)]).filter(([, v]) => v));
+    if (!row || !(at(cols.get('번호')) === EXAMPLE_MARK || isExample?.(cells))) break;
     top = r;
   }
 
@@ -147,7 +151,7 @@ function fillSheet(xml: string, shared: string[], aliases: Record<string, string
   return out;
 }
 
-function workbook(words: Row[], questions: Row[], grammar: Partial<Record<GrammarTab, Row[]>> = {}): Buffer {
+function workbook(words: Row[], grammar: Partial<Record<GrammarTab, Row[]>> = {}): Buffer {
   const entries = readZip(readFileSync(TEMPLATE));
   const byName = new Map(entries.map((e) => [e.name, e]));
   const read = (path: string) => {
@@ -171,16 +175,21 @@ function workbook(words: Row[], questions: Row[], grammar: Partial<Record<Gramma
     if (target) sheets.set(unescapeXml(attr(m[1], 'name') ?? '').replace(/\s+/g, ''), target);
   }
   const changed = new Map<string, Buffer>();
-  const plan: [string, Record<string, string>, Row[], boolean][] = [
+  const plan: [string, Record<string, string>, Row[], boolean, ((cells: Record<string, string>) => boolean)?][] = [
     ['단어장', WORD_HEADERS, words, false],
-    ...GRAMMAR_TABS.map((t): [string, Record<string, string>, Row[], boolean] => [`문법${t}`, GRAMMAR_HEADERS, grammar[t] ?? [], true]),
-    ['문항', QUESTION_HEADERS, questions, false],
+    ...GRAMMAR_TABS.map((t): [string, Record<string, string>, Row[], boolean, (cells: Record<string, string>) => boolean] => [
+      `문법${t}`,
+      GRAMMAR_HEADERS,
+      grammar[t] ?? [],
+      true,
+      (cells) => isTemplateExample(t, cells),
+    ]),
   ];
-  for (const [sheet, aliases, rows, lenient] of plan) {
+  for (const [sheet, aliases, rows, lenient, isExample] of plan) {
     const path = sheets.get(sheet);
     if (!path) throw new Error(`template has no ${sheet} sheet`);
     const xml = read(path);
-    const out = fillSheet(xml, shared, aliases, rows, lenient);
+    const out = fillSheet(xml, shared, aliases, rows, lenient, isExample);
     if (out !== xml) changed.set(path, Buffer.from(out, 'utf8'));
   }
   return writeZip(entries.map((e) => (changed.has(e.name) ? withData(e, changed.get(e.name)!) : e)));
@@ -199,17 +208,17 @@ export function fileBaseOf(name: string): string {
 }
 
 /** The file name names the event when it comes back; a name that can't be a file name goes in 세트 instead. */
-function named(name: string, words: Row[], questions: Row[], grammar: Partial<Record<GrammarTab, Row[]>> = {}) {
+function named(name: string, words: Row[], grammar: Partial<Record<GrammarTab, Row[]>> = {}) {
   const base = fileBaseOf(name) || '단어장';
   const set = name && base !== name ? name : undefined;
   const withSet = (rows: Row[]) => rows.map((r) => ({ ...r, 세트: set }));
   const grammarWithSet = Object.fromEntries(Object.entries(grammar).map(([t, rows]) => [t, withSet(rows)]));
-  return { fileName: `${base}.xlsx`, data: workbook(withSet(words), withSet(questions), grammarWithSet) };
+  return { fileName: `${base}.xlsx`, data: workbook(withSet(words), grammarWithSet) };
 }
 
 /** Rows typed in [직접 작성하기], written as typed (other spellings after |, example with its [ ]). */
 export function typedWorkbook(title: string, rows: { spelling: string; meaning: string; example: string }[]) {
-  return named(title.trim(), rows.map((r) => ({ 단어: r.spelling, 뜻: r.meaning, 예문: r.example })), []);
+  return named(title.trim(), rows.map((r) => ({ 단어: r.spelling, 뜻: r.meaning, 예문: r.example })));
 }
 
 function wordRow(w: Word): Row {
@@ -226,22 +235,20 @@ function wordRow(w: Word): Row {
   };
 }
 
-function questionRow(q: Question): Row {
-  const kind = q.mode === 'CUSTOM_OX' ? 'OX' : q.mode === 'CUSTOM_TEXT' ? '단답형' : '객관식';
-  const row: Row = {
-    // A 문항ID the app made up (~…) isn't written: the file comes back as the teacher wrote it.
-    문항ID: /^custom:~/.test(q.id) ? undefined : q.id.replace(/^custom:/, ''),
-    유형: kind,
-    문제: q.prompt,
-    정답: kind === '객관식' ? q.answerIndex + 1 : kind === 'OX' ? q.options[q.answerIndex]?.label : (q.answers ?? []).join('|'),
-    해설: q.explanation,
-    '시간(초)': q.seconds,
-  };
-  q.options.slice(0, 4).forEach((o, i) => {
-    if (kind === '객관식') row[`보기${i + 1}`] = o.label;
-    row[`피드백${i + 1}`] = o.feedback;
-  });
-  return row;
+/**
+ * A question from an older file's 문항 sheet, which the template no longer has: written as the 문법 row that asks the
+ * same (객관식 and OX on 문법 고르기, 단답형 on 문법 쓰기). Uploaded again, it counts toward scores like other grammar.
+ */
+function customRow(q: Question): { tab: GrammarTab; row: Row } {
+  if (q.mode === 'CUSTOM_OX') return { tab: '고르기', row: { 문장: q.prompt, 정답: q.options[q.answerIndex]?.label, 해설: q.explanation, '시간(초)': q.seconds } };
+  if (q.mode === 'CUSTOM_MC') {
+    const row: Row = { 지시문: q.prompt, 정답: q.answerIndex + 1, 해설: q.explanation, '시간(초)': q.seconds };
+    q.options.slice(0, 4).forEach((o, i) => (row[`보기${i + 1}`] = o.label));
+    return { tab: '고르기', row };
+  }
+  // A prompt with [ ] would read as blanks in 문장, so it goes in 지시문 instead.
+  const bracket = /[[\]]/.test(q.prompt);
+  return { tab: '쓰기', row: { 문장: bracket ? undefined : q.prompt, 지시문: bracket ? q.prompt : undefined, 정답: (q.answers ?? []).join('|'), 해설: q.explanation, '시간(초)': q.seconds } };
 }
 
 /** A word whose record is gone, rebuilt from its question: the explanation keeps the whole meaning. */
@@ -274,6 +281,14 @@ export function eventWorkbook(eventId: string) {
     .map((x) => wordRow(x.w));
   // A grammar row is written back as it was typed; its questions (two for 고치기) carry it on the first one.
   const grammar: Partial<Record<GrammarTab, Row[]>> = {};
-  for (const q of e.questions) if (q.source) (grammar[q.source.tab] ??= []).push({ ...q.source.cells, 세트: undefined });
-  return named(e.name, words, e.questions.filter((q) => q.mode.startsWith('CUSTOM') && !q.grammar).map(questionRow), grammar);
+  // In the order the teacher wrote them (play shuffles each type); an older file's 문항 questions come after.
+  const sources = e.questions.filter((q) => q.source).sort((a, b) => (a.source!.row ?? 0) - (b.source!.row ?? 0));
+  for (const q of sources) (grammar[q.source!.tab] ??= []).push({ ...q.source!.cells, 세트: undefined });
+  for (const q of e.questions) {
+    if (q.mode.startsWith('CUSTOM') && !q.grammar && !q.source) {
+      const { tab, row } = customRow(q);
+      (grammar[tab] ??= []).push(row);
+    }
+  }
+  return named(e.name, words, grammar);
 }

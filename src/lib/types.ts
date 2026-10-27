@@ -99,8 +99,11 @@ export interface Question {
   noteLabel?: string;
   /** The answer stays where the teacher put it: whole-sentence options (a 해설 may say ②번) and 고치기 parts. */
   fixedOrder?: boolean;
-  /** The row as typed on its 문법 tab, on the row's first question, so [엑셀로 받기] writes it back unchanged. */
-  source?: { tab: GrammarTab; cells: Record<string, string> };
+  /**
+   * The row as typed on its 문법 tab, on the row's first question, so [엑셀로 받기] writes it back unchanged and in the
+   * teacher's order (`row`, the sheet row; the questions themselves are shuffled within each type).
+   */
+  source?: { tab: GrammarTab; cells: Record<string, string>; row?: number };
 }
 
 /** One row of a 문법 tab, checked and turned into its questions at upload (two for 고치기). */
