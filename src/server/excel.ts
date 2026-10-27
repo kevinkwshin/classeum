@@ -186,6 +186,8 @@ function parseWords(data: Cell[][], issues: ImportIssue[], sheet = '단어장', 
   const { get: read, done } = cellReader(h, sheet, issues);
   const words: Word[] = [];
   const seen = new Map<string, number>();
+  // 예문 the blank can't be found in (the word in another form, or not there once), told in one warning.
+  const noCloze: number[] = [];
   data.slice(1).forEach((row, i) => {
     const r = i + firstRow;
     const get = (cells: Cell[], col: string) => read(cells, col, r);
@@ -237,18 +239,18 @@ function parseWords(data: Cell[][], issues: ImportIssue[], sheet = '단어장', 
       unit: get(row, '단원') || undefined,
       status: status(get(row, '상태'), sheet, r, issues),
     };
-    if (example && !clozeOf(word)) {
-      const brackets = (example.match(/\[/g) ?? []).length;
-      const why =
-        brackets > 1
-          ? '[ ]는 한 번만 써 주세요.'
-          : brackets === 1
-            ? `[ ] 안의 글자가 '${spellings[0]}'과 똑같아야 해요 (cooks처럼 바뀐 형태는 쓰지 않아요).`
-            : `'${spellings[0]}' 자리를 [ ]로 감싸 주세요.`;
-      issues.push({ level: 'warning', sheet, row: r, column: '예문', message: `예문 빈칸 문제를 만들지 못했어요. ${why}` });
-    }
+    if (example && !clozeOf(word)) noCloze.push(r);
     words.push(word);
   });
+  if (noCloze.length) {
+    issues.push({
+      level: 'warning',
+      sheet,
+      row: noCloze[0],
+      column: '예문',
+      message: `예문 ${noCloze.length}개는 단어가 그대로 한 번 들어 있지 않아 빈칸 문제를 뺐어요 (${noCloze.join(', ')}행). prefers처럼 형태가 바뀐 단어는 빈칸으로 만들지 않아요. 단어가 두 번 나오면 빈칸 자리를 ___로 써 주세요.`,
+    });
+  }
   done();
   return words;
 }
@@ -395,19 +397,28 @@ function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], se
       if (cells['지시문'] || cells['해설']) leadOnly.push(r);
       return;
     }
-    const { item, problems } = grammarItem(tab, {
-      label,
-      lead: get('지시문'),
-      ko: get('우리말'),
-      sentence: get('문장'),
-      options: [1, 2, 3, 4].map((n) => get(`보기${n}`)),
-      answer: get('정답'),
-      explanation: get('해설'),
-      seconds: seconds(get('시간(초)'), sheet, r, issues),
-      set: get('세트') || undefined,
-      status: status(get('상태'), sheet, r, issues),
-      cells,
-    });
+    let built: ReturnType<typeof grammarItem>;
+    try {
+      built = grammarItem(tab, {
+        label,
+        lead: get('지시문'),
+        ko: get('우리말'),
+        sentence: get('문장'),
+        options: [1, 2, 3, 4].map((n) => get(`보기${n}`)),
+        answer: get('정답'),
+        explanation: get('해설'),
+        seconds: seconds(get('시간(초)'), sheet, r, issues),
+        set: get('세트') || undefined,
+        status: status(get('상태'), sheet, r, issues),
+        cells,
+      });
+    } catch (e) {
+      // One row the reader trips on is that row's error, not the whole file's.
+      console.error(`Classeum: ${sheet} ${r}행을 읽지 못했어요.`, e);
+      issues.push({ level: 'error', sheet, row: r, message: '이 줄을 읽지 못했어요. 문장과 정답 칸을 확인해 주세요.' });
+      return;
+    }
+    const { item, problems } = built;
     for (const p of problems) issues.push({ level: p.level, sheet, row: r, column: p.column, message: p.message });
     if (!item) return;
     item.questions[0].source!.row = r;

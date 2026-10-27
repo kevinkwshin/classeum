@@ -42,24 +42,30 @@ function overlaps(a: string | undefined, b: string | undefined, posA?: string, p
 }
 
 /**
- * Finds the blank in an example sentence. The blanked text must be exactly the word
- * (or one of its other spellings); inflected forms like "cooks" are skipped so the
- * base-form options never read wrong in the sentence.
+ * Finds the blank in an example sentence: the word as it is, found once (a whole word: not the let of Let's), or a
+ * blank written as ___ or [ ], or the word in [ ]. Inflected forms like "cooks" are skipped so the base-form options
+ * never read wrong in the sentence.
  */
-export function clozeOf(word: Word): { prompt: string } | null {
+export function clozeOf(word: Word): { prompt: string; full: string } | null {
   if (!word.example) return null;
+  const example = word.example.replace(/＿+/g, '__');
   const spellings = [word.spelling, ...word.altSpellings].map((s) => s.toLowerCase());
-  const brackets = [...word.example.matchAll(/\[([^\]]+)\]/g)];
-  if (brackets.length > 1) return null;
+  const blanks = [...example.matchAll(/_{2,}|\[\s*\]/g)];
+  const brackets = [...example.matchAll(/\[([^\]]*[^\]\s][^\]]*)\]/g)];
+  if (blanks.length + brackets.length > 1) return null;
+  const at = (m: RegExpMatchArray) => ({ prompt: example.slice(0, m.index) + '_____' + example.slice(m.index! + m[0].length), full: example.slice(0, m.index) + word.spelling + example.slice(m.index! + m[0].length) });
+  const base = word.spelling.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // The word itself, as a whole word: a possessive 's may follow (customer's), Let's is no place for 'let'.
+  const after = word.spelling.toLowerCase() === 'let' ? "(?![A-Za-z'’-])" : "(?![A-Za-z-]|['’](?![sS](?![A-Za-z])))";
+  const matches = [...example.matchAll(new RegExp(`(?<![A-Za-z'’-])${base}${after}`, 'gi'))];
+  // A blank for some other word while the word is still in the sentence is no question about the word.
+  if (blanks.length === 1) return matches.length ? null : at(blanks[0]);
   if (brackets.length === 1) {
     if (!spellings.includes(brackets[0][1].trim().toLowerCase())) return null;
-    return { prompt: word.example.replace(/\[[^\]]+\]/, '_____') };
+    return { prompt: example.replace(/\[[^\]]+\]/, '_____'), full: example.replace(/[[\]]/g, '') };
   }
-  const base = word.spelling.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const matches = [...word.example.matchAll(new RegExp(`\\b${base}\\b`, 'gi'))];
   if (matches.length !== 1) return null;
-  const m = matches[0];
-  return { prompt: word.example.slice(0, m.index) + '_____' + word.example.slice((m.index ?? 0) + m[0].length) };
+  return { prompt: at(matches[0]).prompt, full: example };
 }
 
 function candidatesFor(target: Word, setWords: Word[], bank: Word[]): Candidate[] {
@@ -163,7 +169,7 @@ function buildWordQuestion(
     const cz = clozeOf(target);
     if (!cz) return null;
     prompt = cz.prompt;
-    explanation = `${target.example?.replace(/[[\]]/g, '')} · ${target.spelling} = ${target.meaning}`;
+    explanation = `${cz.full} · ${target.spelling} = ${target.meaning}`;
   }
   const distractors = pickDistractors(target, mode, setWords, bank, rnd);
   if (distractors.length < 2) return null;

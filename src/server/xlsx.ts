@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { GrammarTab, Question, Word } from '@/lib/types';
 import { EXAMPLE_MARK, GRAMMAR_HEADERS, WORD_HEADERS, headerKey } from './excel';
-import { GRAMMAR_TABS, isTemplateExample } from './grammar';
+import { GRAMMAR_TABS, isTemplateExample, pairCells } from './grammar';
 import { db } from './store';
 import { entryData, readZip, withData, writeZip } from './zip';
 
@@ -287,23 +287,9 @@ export function eventWorkbook(eventId: string) {
   const grammar: Partial<Record<GrammarTab, Row[]>> = {};
   // In the order the teacher wrote them (play shuffles each type); an older file's 문항 questions come after.
   const sources = e.questions.filter((q) => q.source).sort((a, b) => (a.source!.row ?? 0) - (b.source!.row ?? 0));
-  for (const q of sources) {
-    const row: Row = { ...q.source!.cells, 세트: undefined };
-    // The template has a 우리말 column on 배열 only; elsewhere an older file's 우리말 goes on a line above the 문장,
-    // which reads back as the same question.
-    if (q.source!.tab !== '배열' && row.우리말) {
-      const lead = String(row.지시문 ?? '');
-      if (q.source!.tab === '고르기' && !row.문장 && [1, 2, 3, 4].some((n) => row[`보기${n}`]) && (!lead || /[가-힣]/.test(lead))) {
-        // 문장 고르기 with no 문장: the question goes on the bottom line (it would otherwise take the 우리말 for it).
-        row.문장 = `${row.우리말}\n${lead || '바른 문장을 고르세요.'}`;
-        delete row.지시문;
-      } else {
-        row.문장 = [row.우리말, row.문장].filter(Boolean).join('\n');
-      }
-      delete row.우리말;
-    }
-    (grammar[q.source!.tab] ??= []).push(row);
-  }
+  // As the template writes a row: a 문장 + 정답 pair, the 우리말 on a line above 문장 (pairCells keeps a rewrite only
+  // when it reads back as the same question).
+  for (const q of sources) (grammar[q.source!.tab] ??= []).push({ ...pairCells(q.source!.tab, q.source!.cells), 세트: undefined });
   for (const q of e.questions) {
     if (q.mode.startsWith('CUSTOM') && !q.grammar && !q.source) {
       const { tab, row } = customRow(q);
