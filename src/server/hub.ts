@@ -1,7 +1,7 @@
 // The game host, one per server process: owns the live session, runs its clock, keeps track of
 // every open screen, and pushes each one its role's view (over /api/stream). Records live in store.ts.
 import { createHash, randomInt } from 'node:crypto';
-import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, GrammarItem, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
+import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, GrammarItem, GrammarTab, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
@@ -128,9 +128,28 @@ interface Live {
   /** Students whose attendance stamp was added by this session (not earlier the same day). */
   stamped: Set<string>;
   mainCount: number;
+  /** The main round's questions: the event's, minus the types left out in the lobby. */
+  mainList: Question[];
+  /** Types left out in the lobby ('오늘 낼 문제'). */
+  off: Set<Section>;
+  /** The 10-question rest (관문); the teacher can switch it off in the lobby. */
+  breaks: boolean;
+  /** Main-round questions passed over with 건너뛰기 or 다음 유형: not asked, so not in the reward count either. */
+  skipped: Set<string>;
   /** While the projector plays the 놀이 방법 demo (lobby only): when it ends, or 0. */
   howtoUntil: number;
 }
+
+/** The kinds of question an event asks, in the order they come: words, the four 문법 tabs, an older file's 문항. */
+export type Section = 'words' | GrammarTab | 'bonus';
+const SECTIONS: Section[] = ['words', ...GRAMMAR_TABS, 'bonus'];
+const SECTION_LABEL: Record<Section, string> = { words: '단어', 고르기: '문법 고르기', 쓰기: '문법 쓰기', 고치기: '문법 고치기', 배열: '문법 배열', bonus: '보너스 문항' };
+const sectionOf = (q: Question): Section => (q.wordKey ? 'words' : q.grammar ? q.grammar.tab : 'bonus');
+/** Questions as the teacher wrote them: a 고치기 row's find and fix are one (and so is a row whose fix alone is left). */
+const rowsOf = (list: Question[]) => new Set(list.map((q) => q.id.replace(/:(find|fix)$/, ''))).size;
+/** About a minute for the summary, and another for the retry round when it is on and has words to ask. */
+const estimateSecOf = (questions: Question[], retryRound?: boolean) =>
+  Math.round(questions.reduce((sum, q) => sum + playSeconds(q), 0) + 60 + (retryRound && questions.some((q) => q.wordKey) ? 60 : 0));
 
 type Generated = ReturnType<typeof generateEvent>;
 
@@ -203,6 +222,11 @@ function publicQuestion(q: Question, seq: number): PublicQuestion {
 /** Word and grammar questions count toward accuracy, rewards and streaks; the 문항 sheet's bonus questions don't. */
 function scored(q: Question | null | undefined): boolean {
   return !!q && (!!q.wordKey || !!q.grammar);
+}
+
+/** Scored questions the session set out to ask: the main round's, minus the ones skipped. */
+function plannedOf(live: { mainList: Question[]; skipped: Set<string> }): number {
+  return live.mainList.filter((q) => scored(q) && !live.skipped.has(q.id)).length;
 }
 
 /** The right answer as words: a grammar question's filled gaps ('let, exchange'), or the first accepted answer. */
@@ -408,6 +432,18 @@ class Hub {
     return live.list[live.index];
   }
 
+  /** The type being asked now, how many of its questions are left to ask, and what comes after it (null: the results). */
+  private sectionInfo(): { key: Section; label: string; left: number; next: string | null } | null {
+    const live = this.live;
+    if (!live || live.round !== 'main' || live.index < 0 || live.index >= live.list.length) return null;
+    const sec = sectionOf(live.list[live.index]);
+    const from = live.phase === 'intro' || live.phase === 'moving' ? live.index : live.index + 1;
+    let end = live.index + 1;
+    while (end < live.list.length && sectionOf(live.list[end]) === sec) end++;
+    const next = end < live.list.length ? SECTION_LABEL[sectionOf(live.list[end])] : db().events[live.eventId]?.retryRound && this.retryWords().length > 0 ? '다시 도전' : null;
+    return { key: sec, label: SECTION_LABEL[sec], left: rowsOf(live.list.slice(from, end)), next };
+  }
+
   /** The current question is the first grammar question after the words. */
   private grammarStarts(): boolean {
     const live = this.live;
@@ -551,8 +587,7 @@ class Hub {
         count: e.questions.length,
         warnings: e.warnings,
         reward: e.reward,
-        // About a minute for the summary, and another for the retry round when it is on.
-        estimateSec: Math.round(e.questions.reduce((sum, q) => sum + playSeconds(q), 0) + 60 + (e.retryRound ? 60 : 0)),
+        estimateSec: estimateSecOf(e.questions, e.retryRound),
         seconds: mostCommon(e.questions.map((q) => q.seconds)),
         fileName: e.fileName ?? null,
         typed: !!e.typed,
@@ -592,7 +627,18 @@ class Hub {
         // For the 종료 confirmation: word questions finished (counting one being answered now) and planned.
         // (종료 during 'moving' locks the current question, so it counts; in intro it doesn't.)
         mainDone: live.mainStats.size + (live.round === 'main' && live.phase === 'moving' && scored(q) ? 1 : 0),
-        mainPlanned: db().events[live.eventId]?.questions.filter(scored).length ?? 0,
+        mainPlanned: plannedOf(live),
+        // For 다음 유형: what is being asked now, how many of it are left (this one too until it is answered), and what comes next.
+        section: this.sectionInfo(),
+        // The lobby's 오늘 낼 문제: each type with how many rows it has and whether it is in.
+        plan:
+          live.phase === 'lobby'
+            ? {
+                sections: SECTIONS.map((key) => ({ key, label: SECTION_LABEL[key], count: rowsOf(db().events[live.eventId]?.questions.filter((q) => sectionOf(q) === key) ?? []), on: !live.off.has(key) })).filter((x) => x.count > 0),
+                estimateSec: estimateSecOf(live.mainList, db().events[live.eventId]?.retryRound),
+                breaks: live.breaks,
+              }
+            : null,
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + playSeconds(x), 0)),
       };
     }
@@ -1239,6 +1285,10 @@ class Hub {
       studentSummary: new Map(),
       stamped: new Set(),
       mainCount: event.questions.length,
+      mainList: event.questions,
+      off: new Set(),
+      breaks: true,
+      skipped: new Set(),
       howtoUntil: 0,
     };
     for (const id of this.connectedStudents()) if (db().students[id]?.look) this.join(id);
@@ -1426,7 +1476,7 @@ class Hub {
     if (live.phase === 'reveal' && live.round === 'main') {
       const done = live.index + 1;
       const remaining = live.list.length - done;
-      if (done % BLOCK === 0 && remaining >= 3) {
+      if (live.breaks && done % BLOCK === 0 && remaining >= 3) {
         const stats = [...live.mainStats.values()];
         const c = stats.reduce((a, s) => a + s.correct, 0);
         const t = stats.reduce((a, s) => a + s.total, 0);
@@ -1451,6 +1501,12 @@ class Hub {
       this.beginQuestion();
       return;
     }
+    this.endOfList();
+  }
+
+  /** Past the round's last question: the 다시 도전 round when it is on and has words to ask, otherwise the results. */
+  private endOfList() {
+    const live = this.live!;
     if (live.round === 'main' && db().events[live.eventId]?.retryRound) {
       const retry = this.buildRetry();
       if (retry.length > 0) {
@@ -1468,11 +1524,15 @@ class Hub {
     this.finish();
   }
 
+  /** Words most of the class missed (under 70%) so far: what the 다시 도전 round would ask. */
+  private retryWords() {
+    return [...this.live!.mainStats.entries()].filter(([, s]) => s.wordKey && s.total > 0 && s.correct / s.total < 0.7);
+  }
+
   private buildRetry(): Question[] {
     const live = this.live!;
     const event = db().events[live.eventId];
-    const list = [...live.mainStats.entries()]
-      .filter(([, s]) => s.wordKey && s.total > 0 && s.correct / s.total < 0.7)
+    const list = this.retryWords()
       .sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total)
       .slice(0, 5)
       .map(([qid, s]) => event.retry[s.wordKey!] ?? live.list.find((q) => q.id === qid)!)
@@ -1487,8 +1547,9 @@ class Hub {
     const d = db();
     const event = d.events[live.eventId];
     const mainCount = live.mainStats.size;
-    // Ended early (종료) before half the scored questions: answers are kept, but nobody is judged for rewards.
-    const planned = db().events[live.eventId]?.questions.filter(scored).length ?? mainCount;
+    // Ended early (종료) before half the scored questions: answers are kept, but nobody is judged for rewards. The
+    // questions left out in the lobby or skipped were never going to be asked, so they don't count.
+    const planned = plannedOf(live);
     const shortQuiz = mainCount < Math.ceil(planned / 2);
     const history = new Map<string, number[]>();
     for (const s of d.sessions) {
@@ -1559,7 +1620,7 @@ class Hub {
       if (tookPart.has(id)) d.lastSummary[id] = { ...summary, sessionId: live.id, eventId: live.eventId, eventName: event.name, at: Date.now() };
     }
     // A run stopped before anyone answered a word question leaves no empty column in the stats.
-    if (mainCount > 0 && tookPart.size > 0) d.sessions.push({ id: live.id, eventId: live.eventId, classId: live.classId, startedAt: live.startedAt, endedAt: Date.now(), mainCount, perStudent });
+    if (mainCount > 0 && tookPart.size > 0) d.sessions.push({ id: live.id, eventId: live.eventId, classId: live.classId, startedAt: live.startedAt, endedAt: Date.now(), mainCount, planned, perStudent });
     live.summary = { accuracy: totalConnected ? totalCorrect / totalConnected : 0, rewarded, judged: judgedCount };
     // A screen covered with B would otherwise hide the class summary, and the summary has no cover button.
     live.blank = false;
@@ -1668,7 +1729,25 @@ class Hub {
     const live = this.live;
     if (!live) return;
     const now = Date.now();
-    switch (action) {
+    // 오늘 낼 문제 in the lobby: 'section:words', 'section:고르기', …; the last type in can't be left out.
+    // 'skip-section:<type>' carries the type the teacher confirmed.
+    const [verb, arg] = action.startsWith('skip-section:') ? ['skip-section', action.slice('skip-section:'.length)] : [action, ''];
+    if (action.startsWith('section:')) {
+      const key = action.slice('section:'.length) as Section;
+      const event = db().events[live.eventId];
+      if (live.phase !== 'lobby' || !event || !SECTIONS.includes(key)) return;
+      const off = new Set(live.off);
+      if (off.has(key)) off.delete(key);
+      else off.add(key);
+      const list = event.questions.filter((q) => !off.has(sectionOf(q)));
+      if (list.length === 0) return;
+      live.off = off;
+      live.mainList = live.list = list;
+      live.mainCount = list.length;
+      this.schedulePush(true);
+      return;
+    }
+    switch (verb) {
       case 'start':
         this.start();
         return;
@@ -1698,12 +1777,42 @@ class Hub {
           else if (live.phaseEndsAt) live.phaseEndsAt += 5000;
         }
         break;
+      case 'skip-section': {
+        // 다음 유형 ('skip-section:<type>'): the rest of this type is passed over, and the next type begins (or the
+        // retry round or the results, after the last one). If the quiz has moved on to another type since the teacher
+        // confirmed, nothing is skipped (the quiz stays paused, as the confirm left it).
+        if (live.round !== 'main' || now - live.lastSkipAt < 800) break;
+        if (now - (live.phase === 'moving' ? live.questionAt : live.phaseAt) < CLICK_GUARD_MS) break;
+        if (live.phase !== 'intro' && live.phase !== 'moving' && live.phase !== 'reveal' && live.phase !== 'checkpoint') break;
+        const sec = sectionOf(live.list[live.index]);
+        if (sec !== arg) break;
+        let end = live.index + 1;
+        while (end < live.list.length && sectionOf(live.list[end]) === sec) end++;
+        // The question on screen is skipped too, unless it has been answered already.
+        for (let i = live.phase === 'intro' || live.phase === 'moving' ? live.index : live.index + 1; i < end; i++) live.skipped.add(live.list[i].id);
+        live.lastSkipAt = now;
+        live.paused = null;
+        live.reveal = null;
+        live.checkpoint = null;
+        if (end < live.list.length) {
+          live.index = end;
+          this.beginQuestion();
+        } else {
+          live.index = live.list.length - 1;
+          this.endOfList();
+        }
+        return;
+      }
+      case 'breaks':
+        if (live.phase === 'lobby') live.breaks = !live.breaks;
+        break;
       case 'skip':
         // A double click or a quick second S would land on the question that just began; ignore it.
         if (now - live.lastSkipAt < 800) break;
         if (now - (live.phase === 'moving' ? live.questionAt : live.phaseAt) < CLICK_GUARD_MS) break;
         if (live.phase === 'intro' || live.phase === 'moving' || live.phase === 'reveal' || live.phase === 'checkpoint') live.lastSkipAt = now;
         if (live.phase === 'intro' || live.phase === 'moving') {
+          if (live.round === 'main') live.skipped.add(live.list[live.index].id);
           live.paused = null;
           live.phase = 'reveal';
           live.reveal = null;
@@ -1838,7 +1947,7 @@ function classRuns(e: EventRec, sessions: SessionSummaryRec[]) {
     const connected = s.perStudent.reduce((n, p) => n + p.connected, 0);
     const correct = s.perStudent.reduce((n, p) => n + p.correct, 0);
     const prev = out.get(s.classId);
-    out.set(s.classId, { classId: s.classId, last: s.endedAt, runs: (prev?.runs ?? 0) + 1, accuracy: connected ? correct / connected : 0, partial: s.mainCount < Math.ceil(planned / 2) });
+    out.set(s.classId, { classId: s.classId, last: s.endedAt, runs: (prev?.runs ?? 0) + 1, accuracy: connected ? correct / connected : 0, partial: s.mainCount < Math.ceil((s.planned ?? planned) / 2) });
   }
   return [...out.values()];
 }

@@ -96,6 +96,10 @@ export interface TeacherLive extends SessionPublic {
   mainDone: number;
   mainPlanned: number;
   remainingSec: number;
+  /** The type being asked now (단어, 문법 고르기, …), how many of it are left, and what comes next ('다시 도전', or null: the results). */
+  section: { key: string; label: string; left: number; next: string | null } | null;
+  /** In the lobby, 오늘 낼 문제: each type with its row count and whether it is in, the time, and the 10-question rest. */
+  plan: { sections: { key: string; label: string; count: number; on: boolean }[]; estimateSec: number; breaks: boolean } | null;
 }
 
 export interface TeacherView {

@@ -43,7 +43,8 @@ function DisplayApp() {
   const paused = !!s?.paused;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      // Shift+S (다음 유형) asks for confirmation on the teacher screen, so it isn't taken here.
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || (e.shiftKey && e.code === 'KeyS')) return;
       const action = shortcutAction(e.code, paused);
       if (action) {
         e.preventDefault();

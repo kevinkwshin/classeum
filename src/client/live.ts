@@ -165,9 +165,10 @@ export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'disp
 
 /**
  * Projector and teacher shortcuts by physical key (e.code), so S and B work with the
- * Korean input source on too.
+ * Korean input source on too. Shift+S (다음 유형) is the teacher screen's only: it asks first.
  */
-export function shortcutAction(code: string, paused: boolean): string | undefined {
+export function shortcutAction(code: string, paused: boolean, shift = false): string | undefined {
+  if (shift && code === 'KeyS') return 'skip-section';
   const map: Record<string, string> = {
     Space: paused ? 'resume' : 'pause',
     Enter: 'close-now',

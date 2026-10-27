@@ -87,6 +87,8 @@ export interface SessionSummaryRec {
   startedAt: number;
   endedAt: number;
   mainCount: number;
+  /** Scored questions the session set out to ask (left out in the lobby or skipped ones don't count); older records lack it. */
+  planned?: number;
   perStudent: { studentId: string; connected: number; correct: number; judged: boolean }[];
 }
 

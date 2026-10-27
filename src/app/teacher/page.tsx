@@ -785,8 +785,26 @@ function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: {
   return null;
 }
 
+/** '단어로', '문법 배열로', '보너스 문항으로': 으로 after a final consonant other than ㄹ. */
+function toward(label: string): string {
+  const code = label.charCodeAt(label.length - 1) - 0xac00;
+  const final = code >= 0 && code < 11172 ? code % 28 : 0;
+  return `${label}${final !== 0 && final !== 8 ? '으로' : '로'}`;
+}
+
 function Console({ view, live, act, serverNow }: { view: TeacherView; live: TeacherLive; act: Send; serverNow: () => number }) {
   const control = useCallback((action: string) => act({ type: 'control', action }).catch(() => undefined), [act]);
+  // 다음 유형 passes over the rest of a type in one go, so it asks first (the button and Shift+S alike). The quiz is
+  // held while the dialog is open, so it can't move on to another type underneath.
+  const skipSection = useCallback(() => {
+    const s = live.section;
+    if (!s || s.left === 0) return;
+    const wasPaused = !!live.paused;
+    if (!wasPaused) control('pause');
+    const after = s.next ? '건너뛴 문제는 기록과 보상 기준에서 빠져요.' : '건너뛴 문제는 빼고, 지금까지 낸 문제로 보상을 판정해요.';
+    if (confirm(`남은 ${s.label} ${s.left}문제를 건너뛰고 ${s.next ? toward(s.next) : '마무리로'} 넘어갈까요?\n${after}`)) control(`skip-section:${s.key}`);
+    else if (!wasPaused) control('resume');
+  }, [live.section, live.paused, control]);
   const running = live.phase !== 'lobby' && live.phase !== 'summary';
   // Hidden until the reveal, in case the laptop screen ends up mirrored on the projector; asked again for each question.
   const [shownSeq, setShownSeq] = useState<number | null>(null);
@@ -802,15 +820,16 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
       const t = e.target as HTMLElement | null;
       const typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((t as HTMLInputElement).type)));
       if (typing) return;
-      const action = shortcutAction(e.code, live.paused);
+      const action = shortcutAction(e.code, live.paused, e.shiftKey);
       if (action) {
         e.preventDefault();
-        control(action);
+        if (action === 'skip-section') skipSection();
+        else control(action);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [running, live.paused, control]);
+  }, [running, live.paused, control, skipSection]);
 
   if (live.phase === 'lobby') return <Lobby view={view} live={live} act={act} control={control} />;
   if (live.phase === 'summary') {
@@ -961,6 +980,15 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           <Btn kind="ghost" onClick={() => control(live.paused ? 'resume' : 'pause')}>{live.paused ? '다시 시작' : '멈춤'} <span className="text-xs text-ink-3">Space</span></Btn>
           <Btn kind="ghost" disabled={live.phase !== 'moving'} onClick={() => control('add-time')}>+5초 <span className="text-xs text-ink-3">↑</span></Btn>
           <Btn kind="ghost" onClick={() => control('skip')}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
+          {/* The rest of this type at once: words → 문법 고르기 → 쓰기 → 고치기 → 배열. */}
+          {live.round === 'main' && live.section && live.section.left > 0 && (
+            <Btn kind="ghost" onClick={skipSection} title={`남은 ${live.section.label} ${live.section.left}문제 건너뛰기 (Shift+S)`}>
+              <span className="flex flex-col items-start leading-tight">
+                <span>{live.section.next ? `${toward(live.section.next)} →` : '마무리로 →'} <span className="text-xs text-ink-3">⇧S</span></span>
+                <span className="text-xs font-semibold text-ink-3">남은 {live.section.label} {live.section.left}개 건너뛰기</span>
+              </span>
+            </Btn>
+          )}
           {live.round === 'retry' && <Btn kind="ghost" onClick={() => control('skip-retry')}>다시 도전 건너뛰기</Btn>}
         </div>
         {/* Separate keys: a fresh button each time, so a double click can't carry over to the other action. */}
@@ -1006,17 +1034,52 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
         </div>
       </div>
       <div className="flex gap-5">
-        <Card className="flex-1">
-          <div className="mb-4 flex items-baseline justify-between"><h2 className="text-lg font-bold">들어온 학생</h2><span className="tabular text-2xl font-extrabold">{joined.length}</span></div>
-          <div className="flex flex-wrap gap-2">
-            {joined.map((s) => (
-              <div key={s.id} className="flex items-center gap-2 rounded-xl bg-bg py-1.5 pl-1.5 pr-3">
-                <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
-                <span className="text-sm font-semibold">{s.number} {s.name}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
+        {/* The right column is where the floating 등록 요청 card sits, so the controls stay on the left. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-5">
+          {live.plan && (
+            // 오늘 낼 문제: a type left out here isn't asked today, and doesn't count toward the reward bar.
+            <Card className="flex flex-wrap items-center gap-2.5 !py-4">
+              <h2 className="mr-2 text-lg font-bold">오늘 낼 문제</h2>
+              {live.plan.sections.map((s, _, all) => {
+                // One type has to stay in.
+                const last = s.on && all.filter((x) => x.on).length === 1;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    aria-pressed={s.on}
+                    aria-disabled={last}
+                    title={last ? '하나는 남아야 해요' : undefined}
+                    onClick={(e) => {
+                      if (!last) control(`section:${s.key}`);
+                      e.currentTarget.blur();
+                    }}
+                    className={`flex h-10 items-center gap-1.5 rounded-full border px-4 text-[15px] font-bold transition-colors ${s.on ? 'border-ink bg-ink text-white' : 'border-[#D5D8DF] bg-white text-ink-3'} ${last ? 'cursor-not-allowed' : ''}`}
+                  >
+                    <span aria-hidden>{s.on ? '✓' : '+'}</span>
+                    {s.label} <span className="tabular">{s.count}</span>
+                  </button>
+                );
+              })}
+              <span className="ml-1 text-sm font-semibold text-ink-3">약 {Math.max(1, Math.round(live.plan.estimateSec / 60))}분</span>
+              <label className="ml-auto flex items-center gap-2 text-[15px] font-bold">
+                <input type="checkbox" checked={live.plan.breaks} onChange={(e) => { control('breaks'); e.currentTarget.blur(); }} className="h-4 w-4 accent-ink" />
+                10문제마다 쉬기
+              </label>
+            </Card>
+          )}
+          <Card className="flex-1">
+            <div className="mb-4 flex items-baseline justify-between"><h2 className="text-lg font-bold">들어온 학생</h2><span className="tabular text-2xl font-extrabold">{joined.length}</span></div>
+            <div className="flex flex-wrap gap-2">
+              {joined.map((s) => (
+                <div key={s.id} className="flex items-center gap-2 rounded-xl bg-bg py-1.5 pl-1.5 pr-3">
+                  <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
+                  <span className="text-sm font-semibold">{s.number} {s.name}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
         <Card className="w-80 shrink-0">
           <h2 className="mb-3 text-lg font-bold">아직 안 들어옴</h2>
           <div className="flex flex-wrap gap-1.5">{notJoined.map((s) => <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">{s.number} {s.name}{!s.hasDevice ? ' ·미등록' : ''}</span>)}</div>
