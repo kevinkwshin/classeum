@@ -31,6 +31,8 @@ if not exist node_modules\.package-lock.json (
     pause
     exit /b 1
   )
+  rem The first start also puts a shortcut with the Classeum icon on the desktop.
+  call "%~dp0바로가기 만들기.bat" quiet
 )
 
 echo.
