@@ -8,7 +8,7 @@ import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, to
 import { zoneOf } from '@/lib/field';
 import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
-import { gradeGrammar } from './grammar';
+import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
@@ -1089,6 +1089,8 @@ class Hub {
         reviewCount: g.words.filter((w) => w.status === '검토').length,
         customCount: g.custom.length,
         grammarCount: g.grammar.filter((x) => x.status === '사용').length,
+        // Rows of each 문법 tab, in the order they are asked.
+        grammarByTab: Object.fromEntries(GRAMMAR_TABS.map((t) => [t, g.grammar.filter((x) => x.status === '사용' && x.tab === t).length])),
         questions: gen.questions.map((q) => ({ prompt: q.prompt, modeLabel: q.modeLabel, options: q.options.map((o) => o.label), answerIndex: q.answerIndex, answers: q.answers })),
         warnings: gen.warnings,
       };

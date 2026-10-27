@@ -293,7 +293,7 @@ interface UploadResult {
   issues?: { level: 'error' | 'warning'; sheet: string; row?: number; column?: string; message: string }[];
   hasErrors?: boolean;
   rosterCount?: number;
-  groups?: { name: string; wordCount: number; reviewCount: number; customCount: number; grammarCount: number; warnings: string[]; questions: { prompt: string; modeLabel: string; options: string[]; answerIndex: number; answers?: string[] }[] }[];
+  groups?: { name: string; wordCount: number; reviewCount: number; customCount: number; grammarCount: number; grammarByTab: Record<string, number>; warnings: string[]; questions: { prompt: string; modeLabel: string; options: string[]; answerIndex: number; answers?: string[] }[] }[];
 }
 
 type TypedRow = { spelling: string; meaning: string; example: string };
@@ -744,7 +744,7 @@ function UploadPreview({ result, typed = false, onClose, onCreate }: { result: U
             <div key={g.name} className="rounded-2xl bg-bg p-4">
               <div className="mb-2 flex items-baseline gap-3">
                 <div className="text-lg font-bold">{g.name}</div>
-                <div className="text-sm text-ink-3">단어 {g.wordCount}{g.reviewCount ? ` · 검토 ${g.reviewCount}` : ''}{g.grammarCount ? ` · 문법 ${g.grammarCount}` : ''}{g.customCount ? ` · 직접 문항 ${g.customCount}` : ''}{result.rosterCount ? ` · 명단 ${result.rosterCount}명` : ''}</div>
+                <div className="text-sm text-ink-3">단어 {g.wordCount}{g.reviewCount ? ` · 검토 ${g.reviewCount}` : ''}{g.grammarCount ? ` · 문법 ${Object.entries(g.grammarByTab).filter(([, n]) => n > 0).map(([t, n]) => `${t} ${n}`).join(' · ')}` : ''}{g.customCount ? ` · 직접 문항 ${g.customCount}` : ''}{result.rosterCount ? ` · 명단 ${result.rosterCount}명` : ''}</div>
               </div>
               {g.warnings.length > 0 && <ul className="mb-2 list-disc pl-5 text-sm text-ink-2">{g.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
               <ol className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
