@@ -1,7 +1,7 @@
 // Reads the Classeum Excel template (단어장 / 문법 고르기·쓰기·고치기·배열 / 문항 / 명단 sheets) and validates it.
 import readExcelFile from 'read-excel-file/node';
 import type { Confusable, CustomQuestion, GrammarItem, GrammarTab, Pos, Word, WordStatus } from '@/lib/types';
-import { MAX_TEXT_ANSWER, normalizeAnswer, wordKey } from '@/lib/text';
+import { MAX_TEXT_ANSWER, hashString, normalizeAnswer, wordKey } from '@/lib/text';
 import { clozeOf } from './generate';
 import { GRAMMAR_TABS, grammarItem } from './grammar';
 
@@ -260,22 +260,39 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
   const { get: read, done } = cellReader(h, sheet, issues);
   const out: CustomQuestion[] = [];
   const ids = new Set<string>();
+  // Rows without a 문항ID, by 세트 and content: where the first one went in `out`, and its row.
+  const unnamed = new Map<string, { at: number; row: number }>();
   data.slice(1).forEach((row, i) => {
     const r = i + 2;
     const get = (cells: Cell[], col: string) => read(cells, col, r);
-    const id = get(row, '문항ID');
+    const typed = get(row, '문항ID');
     const prompt = get(row, '문제');
-    if (!id && !prompt) return;
-    if (!id) {
-      issues.push({ level: 'error', sheet, row: r, column: '문항ID', message: '문항ID가 비어 있어요.' });
-      return;
-    }
-    if (ids.has(id)) {
-      issues.push({ level: 'error', sheet, row: r, column: '문항ID', message: `문항ID '${id}'가 두 번 나와요.` });
-      return;
-    }
-    ids.add(id);
+    if (!typed && !prompt) return;
+    // Each cell is read once, so a date-mangled cell is counted once in the warning.
     const kind = get(row, '유형');
+    const answerRaw = get(row, '정답');
+    const labels = [1, 2, 3, 4].map((n) => get(row, `보기${n}`));
+    const set = get(row, '세트') || undefined;
+    // 문항ID is optional. Without one, the content names the question; the ~ marks the name as made up, so
+    // [엑셀로 받기] leaves the cell empty again and an edited copy of the row gets a name of its own.
+    const id = typed || `~${hashString([kind, prompt, ...labels, answerRaw].join('\u0001')).toString(36)}`;
+    const key = `${set ?? ''}\u0001${id}`;
+    let replace = -1;
+    if (typed) {
+      if (ids.has(id)) {
+        issues.push({ level: 'error', sheet, row: r, column: '문항ID', message: `문항ID '${id}'가 두 번 나와요.` });
+        return;
+      }
+      ids.add(id);
+    } else if (unnamed.has(key)) {
+      const first = unnamed.get(key)!;
+      const used = status(get(row, '상태'), sheet, r, []) === '사용';
+      if (!used || out[first.at].status === '사용') {
+        issues.push({ level: 'warning', sheet, row: r, column: '문제', message: `${first.row}행과 같은 문항이라서 건너뛰었어요.` });
+        return;
+      }
+      replace = first.at;
+    }
     if (kind !== '객관식' && kind !== 'OX' && kind !== '단답형') {
       issues.push({ level: 'error', sheet, row: r, column: '유형', message: `유형 '${kind}'는 객관식, OX, 단답형 중 하나여야 해요.` });
       return;
@@ -284,7 +301,6 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
       issues.push({ level: 'error', sheet, row: r, column: '문제', message: '문제가 비어 있어요.' });
       return;
     }
-    const answerRaw = get(row, '정답');
     if (!answerRaw) {
       issues.push({ level: 'error', sheet, row: r, column: '정답', message: '정답이 비어 있어요.' });
       return;
@@ -295,7 +311,7 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
     let feedback = ['피드백1', '피드백2', '피드백3', '피드백4'].map((c) => get(row, c));
     if (kind === '객관식') {
       // Keep each option tied to its own column so a blank 보기2 doesn't shift the answer or feedback.
-      const cols = [1, 2, 3, 4].map((n) => ({ label: get(row, `보기${n}`), feedback: get(row, `피드백${n}`), col: n - 1 }));
+      const cols = labels.map((label, k) => ({ label, feedback: feedback[k], col: k }));
       const kept = cols.filter((c) => c.label);
       if (kept.length < 2) {
         issues.push({ level: 'error', sheet, row: r, column: '보기1', message: '객관식은 보기가 2개 이상 있어야 해요.' });
@@ -325,7 +341,7 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
         return;
       }
     }
-    out.push({
+    const question: CustomQuestion = {
       id,
       kind,
       prompt,
@@ -335,9 +351,16 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
       explanation: get(row, '해설') || undefined,
       feedback,
       seconds: seconds(get(row, '시간(초)'), sheet, r, issues),
-      set: get(row, '세트') || undefined,
+      set,
       status: status(get(row, '상태'), sheet, r, issues),
-    });
+    };
+    if (replace >= 0) {
+      out[replace] = question;
+      unnamed.set(key, { at: replace, row: r });
+    } else {
+      if (!typed) unnamed.set(key, { at: out.length, row: r });
+      out.push(question);
+    }
   });
   done();
   return out;
@@ -352,11 +375,19 @@ function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], se
   const out: GrammarItem[] = [];
   // Rows with nothing but a 지시문 or 해설 (filled down ahead of the questions) are skipped, with one warning.
   const leadOnly: number[] = [];
+  // The template's examples are the 예시 rows right under the header. A 예시 row further down is most likely an
+  // example copied to make a question, so it is left out with a warning rather than silently.
+  const copiedExamples: number[] = [];
+  let examples = true;
   data.slice(1).forEach((row, i) => {
     const r = i + 2;
     const get = (col: string) => read(row, col, r);
     const label = get('번호');
-    if (label === EXAMPLE_MARK) return;
+    if (label === EXAMPLE_MARK) {
+      if (!examples && row.some((c) => text(c))) copiedExamples.push(r);
+      return;
+    }
+    examples = false;
     const cells: Record<string, string> = {};
     for (const col of h.keys()) {
       const v = get(col);
@@ -389,6 +420,15 @@ function parseGrammar(tab: GrammarTab, data: Cell[][], issues: ImportIssue[], se
     seen.set(item.id, where);
     out.push(item);
   });
+  if (copiedExamples.length) {
+    issues.push({
+      level: 'warning',
+      sheet,
+      row: copiedExamples[0],
+      column: '번호',
+      message: `번호 칸이 '예시'인 줄 ${copiedExamples.length}개는 문제로 나오지 않아요 (${copiedExamples.join(', ')}행). 문제로 내려면 '예시'를 지우세요.`,
+    });
+  }
   if (leadOnly.length) {
     const rows = leadOnly.length === 1 ? `${leadOnly[0]}행` : `${leadOnly[0]}~${leadOnly[leadOnly.length - 1]}행`;
     issues.push({ level: 'warning', sheet, row: leadOnly[0], message: `문제 없이 지시문·해설만 있는 줄 ${leadOnly.length}개는 건너뛰었어요 (${rows}).` });

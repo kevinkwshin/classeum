@@ -229,7 +229,8 @@ function wordRow(w: Word): Row {
 function questionRow(q: Question): Row {
   const kind = q.mode === 'CUSTOM_OX' ? 'OX' : q.mode === 'CUSTOM_TEXT' ? '단답형' : '객관식';
   const row: Row = {
-    문항ID: q.id.replace(/^custom:/, ''),
+    // A 문항ID the app made up (~…) isn't written: the file comes back as the teacher wrote it.
+    문항ID: /^custom:~/.test(q.id) ? undefined : q.id.replace(/^custom:/, ''),
     유형: kind,
     문제: q.prompt,
     정답: kind === '객관식' ? q.answerIndex + 1 : kind === 'OX' ? q.options[q.answerIndex]?.label : (q.answers ?? []).join('|'),
