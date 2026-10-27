@@ -5,6 +5,7 @@ import { musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, usePr
 import type { DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
+import { GrammarCard, zoneLabels } from '@/components/GrammarCard';
 import { FullscreenHint } from '@/components/FullscreenHint';
 import { HowTo } from '@/components/HowTo';
 import { PixelAvatar } from '@/components/PixelAvatar';
@@ -210,6 +211,7 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
   const reveal = s.phase === 'reveal' ? view.reveal : null;
   const total = s.round === 'retry' ? s.total : s.mainCount;
   const isText = q.kind === 'text';
+  const g = q.grammar;
   const countdown = s.phase === 'intro' && s.index === 0;
   const urgent = s.phase === 'moving' && !s.paused && ms <= 3000;
   return (
@@ -221,15 +223,20 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
           <div className="tabular text-3xl font-extrabold">{s.index + 1}<span className="text-[#A3A8B4]"> / {total}</span></div>
           <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">{s.round === 'retry' ? '다시 도전' : q.modeLabel}</div>
         </div>
-        <div className="flex items-baseline gap-6">
-          <div
-            key={q.seq}
-            className={`max-w-[56vw] text-center font-extrabold leading-tight tracking-tight ${countdown ? 'invisible' : 'cls-drop-in'} ${q.prompt.length > 24 ? 'text-[3.2vw]' : 'text-[4.6vw]'}`}
-          >
-            {q.prompt}
+        {/* A grammar question has its own card below, across the whole width. */}
+        {g ? (
+          <div />
+        ) : (
+          <div className="flex items-baseline gap-6">
+            <div
+              key={q.seq}
+              className={`max-w-[56vw] text-center font-extrabold leading-tight tracking-tight ${countdown ? 'invisible' : 'cls-drop-in'} ${q.prompt.length > 24 ? 'text-[3.2vw]' : 'text-[4.6vw]'}`}
+            >
+              {q.prompt}
+            </div>
+            {reveal && q.mode !== 'CUSTOM_TEXT' && q.mode !== 'CUSTOM_OX' && <div className="cls-slide-up text-[3vw] font-bold text-good">{reveal.correctLabel}</div>}
           </div>
-          {reveal && q.mode !== 'CUSTOM_TEXT' && q.mode !== 'CUSTOM_OX' && <div className="cls-slide-up text-[3vw] font-bold text-good">{reveal.correctLabel}</div>}
-        </div>
+        )}
         <div className="flex justify-end whitespace-nowrap">
           {reveal ? (
             <div className="cls-pop tabular rounded-full bg-good px-7 py-3 text-3xl font-extrabold text-white">
@@ -248,24 +255,38 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
           )}
         </div>
       </div>
-      <div className="min-h-0 flex-1">
+      {g && (
+        // Hidden under the 3·2·1 and under the '이제 문법!' card, which opens the grammar.
+        <div key={q.seq} className={`rounded-[2vw] bg-white px-[2.5vw] py-[1.2vw] ${countdown || s.grammarStart ? 'invisible' : 'cls-drop-in'}`}>
+          <GrammarCard g={g} variant="projector" fill={reveal ? (reveal.fill ?? []) : undefined} correct={reveal && !isText ? reveal.correctIndex : undefined} />
+          {/* The rule behind the answer: the point of a grammar question, so it shows at every reveal. */}
+          {reveal?.explanation && (
+            <div className="cls-slide-up mt-[1vw] flex items-center justify-center gap-3 text-[1.8vw] font-bold text-ink-2" style={{ animationDelay: '0.8s' }}>
+              <span className="rounded-full bg-accent px-4 py-1 text-[1.3vw] font-extrabold text-white">규칙</span>
+              {reveal.explanation}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1">
+        {s.grammarStart && <GrammarStart />}
         {isText ? (
           <div className="flex h-full flex-col items-center justify-center gap-6 rounded-[36px] bg-white">
             {reveal ? (
               <>
-                <div className="cls-pop text-[5vw] font-extrabold text-good">{reveal.correctLabel}</div>
+                <div className={`cls-pop px-[2vw] text-center font-extrabold text-good ${reveal.correctLabel.length > 24 ? 'text-[3vw]' : 'text-[5vw]'}`}>{reveal.correctLabel}</div>
                 {reveal.textWrong && reveal.textWrong.length > 0 && <div className="text-3xl text-ink-3">자주 나온 답: {reveal.textWrong.join(', ')}</div>}
               </>
             ) : (
               <>
-                <div className="text-4xl font-bold text-ink-2">폰에 답을 써 주세요</div>
+                <div className="text-4xl font-bold text-ink-2">{g?.chips ? '폰에서 조각을 순서대로 눌러 주세요' : '폰에 답을 써 주세요'}</div>
                 <div className="tabular text-6xl font-extrabold">✓ {view.settled ?? 0} / {view.participants ?? 0}</div>
               </>
             )}
           </div>
         ) : (
           <Field
-            options={q.options}
+            options={zoneLabels(q)}
             fog={!reveal}
             reveal={reveal}
             avatars={reveal?.avatars}
@@ -293,6 +314,15 @@ function Play({ view, s, now }: { view: DisplayView; s: SessionPublic; now: numb
           />
         )}
       </div>
+    </div>
+  );
+}
+
+/** Between the words and the grammar: the first grammar question's intro shows this card. */
+function GrammarStart() {
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-[36px] bg-bg/80 backdrop-blur-sm">
+      <div className="cls-pop rounded-[3vw] bg-ink px-[5vw] py-[2.4vw] text-[6vw] font-extrabold tracking-tight text-white">이제 문법!</div>
     </div>
   );
 }

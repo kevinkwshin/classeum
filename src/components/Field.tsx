@@ -199,7 +199,9 @@ export function Field({
 }) {
   const { cols, rows, cells } = zoneCells(options.length);
   const avatarSize = compact ? 18 : (avatars?.length ?? 0) > 28 ? 44 : 56;
-  const labelSize = compact ? 'text-sm' : 'text-[34px]';
+  // Grammar options can be phrases ('more comfortable'); longer labels step down and wrap instead of running off.
+  const longest = Math.max(0, ...options.map((o) => o?.length ?? 0));
+  const labelSize = compact ? 'text-sm' : longest > 24 ? 'max-w-[26vw] text-[22px] leading-tight' : longest > 12 ? 'max-w-[26vw] text-[28px] leading-tight' : 'text-[34px]';
   const badgeSize = compact ? 'h-6 w-6 text-xs' : 'h-14 w-14 text-[26px]';
 
   // The projector's real size decides how tightly a crowded zone can be packed.
@@ -257,9 +259,12 @@ export function Field({
                   >
                     {isCorrect ? '✓' : z + 1}
                   </div>
-                  <div className={`font-bold ${labelSize} ${fog ? 'rounded-full bg-white px-3 py-1' : ''}`} style={{ color: faded ? undefined : 'var(--zone-ink)' }}>
-                    {label}
-                  </div>
+                  {/* An empty label (a long whole-sentence option, listed above the field) leaves the number alone. */}
+                  {label !== '' && (
+                    <div className={`font-bold ${labelSize} ${fog ? 'rounded-2xl bg-white px-3 py-1' : ''}`} style={{ color: faded ? undefined : 'var(--zone-ink)' }}>
+                      {label}
+                    </div>
+                  )}
                   {reveal && (
                     <div className={`tabular font-extrabold ${compact ? 'text-sm' : 'text-[32px]'} ${isCorrect ? 'text-ink' : 'text-ink-3'}`}>
                       <CountUp value={reveal.zoneCounts[z] ?? 0} delay={compact ? 0 : 450} />

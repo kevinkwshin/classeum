@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
 import type { StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
+import { GrammarCard, filledSentence, zoneLabels } from '@/components/GrammarCard';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { PracticeCard } from '@/components/PracticeCard';
@@ -582,16 +583,23 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
       <QuestionHeader view={view} serverNow={serverNow} />
       <div className="flex flex-col items-center gap-1 rounded-3xl bg-bg px-4 py-4">
         <div className="text-xs font-bold text-ink-3">{s.round === 'retry' ? '다시 도전' : q.modeLabel}</div>
-        <div
-          className={`text-center font-extrabold tracking-tight ${s.phase === 'intro' && s.index === 0 ? 'invisible' : 'cls-drop-in'} ${q.prompt.length > 24 ? 'text-lg leading-snug' : 'text-[34px] leading-tight'}`}
-        >
-          {q.prompt}
-        </div>
+        {q.grammar ? (
+          <div className={s.phase === 'intro' && (s.index === 0 || s.grammarStart) ? 'invisible' : 'cls-drop-in'}>
+            <GrammarCard g={q.grammar} variant="phone" />
+          </div>
+        ) : (
+          <div
+            className={`text-center font-extrabold tracking-tight ${s.phase === 'intro' && s.index === 0 ? 'invisible' : 'cls-drop-in'} ${q.prompt.length > 24 ? 'text-lg leading-snug' : 'text-[34px] leading-tight'}`}
+          >
+            {q.prompt}
+          </div>
+        )}
       </div>
       <div className="relative min-h-[220px] flex-1 overflow-hidden rounded-3xl bg-bg">
         <div className="absolute inset-0 grid gap-2 p-2" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: n === 2 ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}>
           {cells.map((z) => {
-            const label = q.options[z];
+            // Whole-sentence options are listed above; the boxes show only the words that differ, or just the number.
+            const label = zoneLabels(q)[z];
             const mine = zone === z;
             return (
               <button
@@ -606,7 +614,12 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
                     : { background: mine ? 'var(--zone-soft)' : '#FFFFFF', boxShadow: mine ? 'inset 0 0 0 4px var(--zone)' : 'inset 0 -3px 0 rgba(16,18,24,0.06)' }
                 }
               >
-                {label !== undefined && (
+                {label === '' && (
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full text-3xl font-extrabold text-white" style={{ background: 'var(--zone)' }}>
+                    {z + 1}
+                  </span>
+                )}
+                {label && (
                   <>
                     <span className="absolute left-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-extrabold text-white" style={{ background: 'var(--zone)' }}>
                       {z + 1}
@@ -648,6 +661,8 @@ function IntroOverlay({ view, serverNow }: { view: StudentView; serverNow: () =>
     <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-[2px]">
       {s.index === 0 && n > 0 ? (
         <div key={n} className="cls-count font-display text-7xl font-bold text-accent">{n}</div>
+      ) : s.grammarStart ? (
+        <div className="cls-pop rounded-3xl bg-ink px-6 py-3 text-3xl font-extrabold text-white">이제 문법!</div>
       ) : (
         <div className="cls-pop text-3xl font-extrabold">준비!</div>
       )}
@@ -655,9 +670,37 @@ function IntroOverlay({ view, serverNow }: { view: StudentView; serverNow: () =>
   );
 }
 
+/** Blank boxes travel to the server as one string, joined like this; the grader reads them as one run of words. */
+const BOX_JOIN = ' / ';
+const isEmptyAnswer = (t: string) => !t.split(BOX_JOIN).join('').trim();
+
+/**
+ * The chips a saved 배열 answer was made from, for a phone that reloads mid-question. It tries the longer chips first
+ * and backs up from a dead end ('to' before 'to the park'), keeping only a reading that uses the whole text; two 'as'
+ * chips are interchangeable. A text no chips make (an old draft) gives the longest start that fits.
+ */
+function chipsOf(text: string, chips: string[]): number[] {
+  let best: number[] = [];
+  const byLength = chips.map((_, k) => k).sort((a, b) => chips[b].length - chips[a].length);
+  const go = (rest: string, used: number[]): number[] | null => {
+    if (!rest) return used;
+    if (used.length > best.length) best = used;
+    for (const i of byLength) {
+      const c = chips[i];
+      if (used.includes(i) || !(rest === c || rest.startsWith(`${c} `))) continue;
+      const found = go(rest.slice(c.length).trim(), [...used, i]);
+      if (found) return found;
+    }
+    return null;
+  };
+  return go(text.trim(), []) ?? best;
+}
+
 function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send: Send; serverNow: () => number; drafts: Map<string, string> }) {
   const s = view.session!;
   const q = s.question!;
+  const g = q.grammar;
+  const blanks = g?.blanks ?? 0;
   const draftKey = `${s.id}:${q.seq}`;
   const [value, setValue] = useState(drafts.get(draftKey) ?? view.myText ?? '');
   // What the server holds, and whether it came from 제출: only a submitted answer counts as done
@@ -666,10 +709,13 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
   const [error, setError] = useState('');
   const latest = useRef(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const boxRefs = useRef<(HTMLInputElement | null)[]>([]);
+  // The chips tapped, in order; the text sent is made from them.
+  const [picked, setPicked] = useState<number[]>(() => (g?.chips ? chipsOf(drafts.get(draftKey) ?? view.myText ?? '', g.chips) : []));
   const active = s.phase === 'moving' && !s.paused;
   const submit = useCallback(
     (text: string, final: boolean) => {
-      if (!text.trim()) return;
+      if (isEmptyAnswer(text)) return;
       setError('');
       // 제출 cancels a pending autosave, so a late draft can't undo it.
       if (final && timer.current) {
@@ -689,9 +735,14 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
     },
     [send, q.seq],
   );
+  const change = (text: string) => {
+    setValue(text);
+    latest.current = text;
+    drafts.set(draftKey, text);
+  };
   // While typing, the latest text is saved at most every 0.3 s (not only after a pause).
   useEffect(() => {
-    if (!active || value === saved.text || !value.trim() || timer.current) return;
+    if (!active || value === saved.text || isEmptyAnswer(value) || timer.current) return;
     timer.current = setTimeout(() => {
       timer.current = null;
       submit(latest.current, false);
@@ -703,6 +754,21 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
     },
     [],
   );
+  const boxes = blanks > 1 ? Array.from({ length: blanks }, (_, i) => value.split(BOX_JOIN)[i] ?? '') : [];
+  const pick = (next: number[]) => {
+    setPicked(next);
+    change(next.map((i) => g!.chips![i]).join(' '));
+  };
+  // A Korean keyboard left on is the usual reason a right answer looks wrong (unless the answer is Korean).
+  const hangul = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(value) && !!g && !g.hangulOk;
+  const inputProps = {
+    autoCapitalize: 'none',
+    autoCorrect: 'off',
+    spellCheck: false,
+    lang: 'en',
+    inputMode: 'text' as const,
+    disabled: !active,
+  };
   return (
     <form
       className="flex flex-1 flex-col gap-5 px-5 pb-6 pt-8"
@@ -712,29 +778,102 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
       }}
     >
       <QuestionHeader view={view} serverNow={serverNow} />
-      <div className="cls-drop-in rounded-3xl bg-bg px-4 py-6 text-center text-xl font-bold leading-snug">{q.prompt}</div>
-      <input
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          latest.current = e.target.value;
-          drafts.set(draftKey, e.target.value);
-        }}
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck={false}
-        lang="en"
-        inputMode="text"
-        enterKeyHint="send"
-        maxLength={MAX_TEXT_ANSWER}
-        disabled={!active}
-        aria-label="답 쓰기"
-        className="h-16 rounded-2xl border-2 border-ink px-4 text-2xl font-bold outline-none"
-      />
-      {error && <div className="text-sm font-semibold text-bad">{error}</div>}
-      <button type="submit" disabled={!active || !value.trim()} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
-        {saved.final && saved.text === value ? '제출했어요 · 고칠 수 있어요' : '제출'}
-      </button>
+      {g ? (
+        <div className={`flex flex-col gap-1 rounded-3xl bg-bg px-4 py-5 ${s.phase === 'intro' && (s.index === 0 || s.grammarStart) ? 'invisible' : 'cls-drop-in'}`}>
+          <div className="text-center text-xs font-bold text-ink-3">{q.modeLabel}</div>
+          <GrammarCard g={g} variant="phone" />
+        </div>
+      ) : (
+        <div className="cls-drop-in rounded-3xl bg-bg px-4 py-6 text-center text-xl font-bold leading-snug">{q.prompt}</div>
+      )}
+      {/* The answer area, under the same 3·2·1 / 준비! / 이제 문법! as the field questions while the question opens. */}
+      <div className="relative flex flex-col gap-5">
+        {g?.chips ? (
+          <div className="flex flex-col gap-3">
+            {/* The sentence so far: tap a chip to send it back. */}
+            <div className="flex min-h-[64px] flex-wrap content-start gap-2 rounded-2xl border-2 border-ink p-2.5">
+              {picked.length === 0 && <span className="self-center px-1 text-base font-semibold text-ink-3">조각을 순서대로 눌러요</span>}
+              {picked.map((i, k) => (
+                <button
+                  key={`${i}-${k}`}
+                  type="button"
+                  disabled={!active}
+                  onClick={() => pick(picked.filter((_, j) => j !== k))}
+                  className="cls-pop rounded-xl bg-ink px-3 py-2 text-lg font-extrabold text-white"
+                >
+                  {g.chips![i]}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {g.chips.map((c, i) =>
+                picked.includes(i) ? (
+                  <span key={i} className="rounded-xl border-2 border-dashed border-[#D5D8DF] px-3 py-2 text-lg font-extrabold text-transparent">
+                    {c}
+                  </span>
+                ) : (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={!active}
+                    onClick={() => {
+                      buzz(15);
+                      pick([...picked, i]);
+                    }}
+                    className="rounded-xl border-2 border-[#D5D8DF] bg-white px-3 py-2 text-lg font-extrabold active:scale-95"
+                  >
+                    {c}
+                  </button>
+                ),
+              )}
+            </div>
+            {picked.length > 0 && (
+              <button type="button" disabled={!active} onClick={() => pick([])} className="self-center text-sm font-bold text-ink-3 underline underline-offset-4">
+                다시 놓기
+              </button>
+            )}
+          </div>
+        ) : blanks > 1 ? (
+          <div className="flex flex-col gap-2">
+            {boxes.map((b, i) => (
+              <label key={i} className="flex items-center gap-3">
+                <span className="w-6 text-center text-xl font-extrabold text-ink-3">{'①②③④'[i]}</span>
+                <input
+                  ref={(el) => {
+                    boxRefs.current[i] = el;
+                  }}
+                  value={b}
+                  onChange={(e) => {
+                    const next = [...boxes];
+                    // '/' is what joins the boxes, so it can't be typed inside one.
+                    next[i] = e.target.value.replace(/\//g, '');
+                    change(next.join(BOX_JOIN));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && i < blanks - 1) {
+                      e.preventDefault();
+                      boxRefs.current[i + 1]?.focus();
+                    }
+                  }}
+                  {...inputProps}
+                  enterKeyHint={i < blanks - 1 ? 'next' : 'send'}
+                  maxLength={Math.floor(MAX_TEXT_ANSWER / blanks) - 3}
+                  aria-label={`빈칸 ${i + 1}`}
+                  className="h-14 min-w-0 flex-1 rounded-2xl border-2 border-ink px-4 text-xl font-bold outline-none"
+                />
+              </label>
+            ))}
+          </div>
+        ) : (
+          <input value={value} onChange={(e) => change(e.target.value)} {...inputProps} enterKeyHint="send" maxLength={MAX_TEXT_ANSWER} aria-label="답 쓰기" className="h-16 rounded-2xl border-2 border-ink px-4 text-2xl font-bold outline-none" />
+        )}
+        {hangul && <div className="text-sm font-semibold text-accent">한글로 쓰고 있어요. 한/영 키를 확인해요</div>}
+        {error && <div className="text-sm font-semibold text-bad">{error}</div>}
+        <button type="submit" disabled={!active || isEmptyAnswer(value)} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
+          {saved.final && saved.text === value ? '제출했어요 · 고칠 수 있어요' : '제출'}
+        </button>
+        {s.phase === 'intro' && <IntroOverlay view={view} serverNow={serverNow} />}
+      </div>
     </form>
   );
 }
@@ -784,8 +923,21 @@ function Result({ view }: { view: StudentView }) {
         <Reaction kind={kind} look={look} size={96} delay={150} bubble={reactionLine(kind, `${view.me?.id}:${s.question?.seq}`)} />
       </div>
       <div className="cls-slide-up rounded-3xl bg-good p-6 text-white [@media(max-height:700px)]:px-5 [@media(max-height:700px)]:py-4">
-        <div className="text-sm font-semibold text-[#CDEFDF]">{s.question?.prompt}</div>
-        <div className="mt-1 text-[32px] font-extrabold leading-tight">{r.correctLabel}</div>
+        {s.question?.grammar ? (
+          // The sentence with the answer in place, which is what the student should take away.
+          <div className="text-base font-semibold leading-snug text-[#CDEFDF]">{(s.question.grammar.parts.length > 0 && filledSentence(s.question.grammar, r.fill)) || s.question.grammar.ko || s.question.prompt}</div>
+        ) : (
+          <div className="text-sm font-semibold text-[#CDEFDF]">{s.question?.prompt}</div>
+        )}
+        {s.question?.grammar?.step === 'find' ? (
+          // The answer of a find step is the wrong part: shown as what was wrong, not as something to learn.
+          <div className="mt-1 flex items-baseline gap-2 font-extrabold leading-tight">
+            <span className="text-base text-[#CDEFDF]">틀린 곳</span>
+            <span className={`line-through decoration-[#FFB4B4] decoration-[3px] ${r.correctLabel.length > 24 ? 'text-xl' : 'text-[32px]'}`}>{r.correctLabel}</span>
+          </div>
+        ) : (
+          <div className={`mt-1 font-extrabold leading-tight ${r.correctLabel.length > 24 ? 'text-xl' : 'text-[32px]'}`}>{r.correctLabel}</div>
+        )}
       </div>
       <div className={`flex items-center justify-between rounded-3xl px-5 py-4 ${r.correct ? 'bg-good-soft' : 'cls-shake bg-bad-soft'}`} style={{ animationDelay: '0.25s' }}>
         <div>
@@ -803,7 +955,8 @@ function Result({ view }: { view: StudentView }) {
       <CorrectFriends friends={r.friends} me={r.correct ? look : null} />
       {kind === 'sleep' && <div className="px-1 text-base leading-relaxed text-ink-2">{writing ? '다음엔 꼭 써 봐요!' : '출발선에서 졸았어요. 다음엔 칸으로 쏙!'}</div>}
       {!r.correct && r.feedback && <div className="px-1 text-base leading-relaxed text-ink-2">네가 고른 {r.feedback}</div>}
-      {!r.correct && r.explanation && <div className="px-1 text-sm leading-relaxed text-ink-3">{r.explanation}</div>}
+      {/* A grammar question's rule is worth reading right or wrong; a word's meaning only when it was missed. */}
+      {(!r.correct || !!s.question?.grammar) && r.explanation && <div className="px-1 text-sm leading-relaxed text-ink-3">{r.explanation}</div>}
       <div className="mt-auto text-center text-sm text-ink-3 [@media(max-height:700px)]:hidden">다음 문제를 기다려요</div>
     </div>
   );
@@ -851,9 +1004,10 @@ function Notes({ eventName, wrong, practice, send, onBack }: { eventName: string
         {wrong.length === 0 && <div className="py-10 text-center text-ink-3">틀린 문제가 없어요!</div>}
         {wrong.map((w, i) => (
           <div key={w.questionId} className="cls-slide-up flex flex-col gap-2 rounded-2xl bg-white p-4" style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}>
+            {w.ko && <div className="text-sm font-semibold text-ink-2">{w.ko}</div>}
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-baseline gap-2">
-                <div className="text-2xl font-extrabold">{w.spelling ?? w.prompt}</div>
+              <div className={`flex gap-2 ${w.spelling ? 'items-baseline' : 'flex-col'}`}>
+                <div className={`font-extrabold ${!w.spelling && w.prompt.length > 24 ? 'text-lg leading-snug' : 'text-2xl'}`}>{w.spelling ?? w.prompt}</div>
                 <div className="text-base font-bold text-good">{w.meaning ?? w.correctLabel}</div>
               </div>
               {w.spelling && (
@@ -864,11 +1018,12 @@ function Notes({ eventName, wrong, practice, send, onBack }: { eventName: string
             </div>
             <div className="text-sm text-ink-3">내 답 <span className={`font-bold text-bad ${w.mineLabel.startsWith('(') ? '' : 'line-through'}`}>{w.mineLabel}</span>{w.feedback ? ` · ${w.feedback}` : ''}</div>
             {w.example && <div className="rounded-lg bg-bg px-3 py-2 text-sm leading-relaxed text-ink-2">{w.example}{w.exampleMeaning ? ` ${w.exampleMeaning}` : ''}</div>}
+            {w.rule && <div className="rounded-lg bg-bg px-3 py-2 text-sm leading-relaxed text-ink-2">규칙 · {w.rule}</div>}
           </div>
         ))}
       </div>
       <div className="flex flex-col gap-2 px-4 pb-6 pt-3">
-        {practice.length > 0 && <Button kind="dark" onClick={() => setPracticing(true)}>틀린 단어 다시 풀기</Button>}
+        {practice.length > 0 && <Button kind="dark" onClick={() => setPracticing(true)}>틀린 문제 다시 풀기</Button>}
         <Button kind="ghost" onClick={onBack}>돌아가기</Button>
       </div>
     </div>
@@ -960,10 +1115,18 @@ function Practice({ questions, send, onDone }: { questions: Question[]; send: Se
   return (
     <div className="flex flex-1 flex-col gap-4 px-5 pb-6 pt-8">
       <div className="flex items-center justify-between text-sm font-bold text-ink-3"><span>다시 풀기</span><span className="tabular">남은 {queue.length}</span></div>
-      <div className="rounded-3xl bg-bg px-4 py-6 text-center">
-        <div className="text-xs font-bold text-ink-3">{q.modeLabel}</div>
-        <div className="mt-1 text-3xl font-extrabold">{q.prompt}</div>
-      </div>
+      {q.grammar ? (
+        // A grammar question needs its 우리말, gap or underlines; whole sentences are already on the buttons below.
+        <div className="flex flex-col gap-1 rounded-3xl bg-bg px-4 py-5">
+          <div className="text-center text-xs font-bold text-ink-3">{q.modeLabel}</div>
+          <GrammarCard g={{ ...q.grammar, sentences: undefined }} variant="phone" fill={answered ? (q.fill ?? []) : undefined} correct={answered ? q.answerIndex : undefined} />
+        </div>
+      ) : (
+        <div className="rounded-3xl bg-bg px-4 py-6 text-center">
+          <div className="text-xs font-bold text-ink-3">{q.modeLabel}</div>
+          <div className="mt-1 text-3xl font-extrabold">{q.prompt}</div>
+        </div>
+      )}
       <div className="flex flex-col gap-2">
         {q.options.map((o, i) => (
           <button
@@ -974,11 +1137,11 @@ function Practice({ questions, send, onDone }: { questions: Question[]; send: Se
               setPicked(i);
               send({ type: 'practice', questionId: q.id, choice: i }).catch(() => undefined);
             }}
-            className={`flex h-14 items-center gap-3 rounded-2xl px-4 text-left text-base font-semibold ${
+            className={`flex min-h-14 items-center gap-3 rounded-2xl px-4 py-2 text-left text-base font-semibold leading-snug ${
               answered && i === q.answerIndex ? 'bg-good-soft ring-2 ring-good' : answered && i === picked ? 'bg-bad-soft ring-2 ring-[#E5484D]' : 'bg-bg'
             }`}
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-sm font-extrabold">{i + 1}</span>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sm font-extrabold">{i + 1}</span>
             {o.label}
           </button>
         ))}

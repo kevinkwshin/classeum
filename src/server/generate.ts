@@ -1,5 +1,5 @@
 // Turns a word list into quiz questions with wrong options, without any AI.
-import type { CustomQuestion, Option, Question, QuestionMode, Word } from '@/lib/types';
+import type { CustomQuestion, GrammarItem, Option, Question, QuestionMode, Word } from '@/lib/types';
 import { displayMeaning, editDistance, meaningKeys, meaningStem, mulberry32, normalizeAnswer, shuffle, wordKey } from '@/lib/text';
 
 export interface GeneratedEvent {
@@ -228,11 +228,15 @@ function placeAnswer(q: Question, target: number, rnd: () => number): Question {
  */
 function answerSlots(counts: number[], rnd: () => number): number[] {
   const slots: number[] = [];
-  const used = [0, 0, 0, 0];
+  // Counted per number of options, or a run of two-option grammar questions would push the next four-option
+  // answers towards ③ and ④.
+  const usedBy = new Map<number, number[]>();
   for (const count of counts) {
     const n = slots.length;
     const banned = n >= 2 && slots[n - 1] === slots[n - 2] ? slots[n - 1] : -1;
     const allowed = Array.from({ length: count }, (_, k) => k).filter((k) => k !== banned);
+    if (!usedBy.has(count)) usedBy.set(count, [0, 0, 0, 0]);
+    const used = usedBy.get(count)!;
     const low = Math.min(...allowed.map((k) => used[k]));
     const weights = allowed.map((k) => 1 / (1 + 2 * (used[k] - low)));
     let r = rnd() * weights.reduce((a, b) => a + b, 0);
@@ -246,11 +250,11 @@ function answerSlots(counts: number[], rnd: () => number): number[] {
 
 /**
  * Places each question's right answer so the slots are spread evenly in the given order
- * and never repeat three times running. OX and written questions keep their layout.
+ * and never repeat three times running. OX, written questions and options in a set order keep their layout.
  * Returns copies; the input questions are not changed.
  */
 export function spreadAnswers(sequence: Question[], rnd: () => number): Question[] {
-  const placeable = sequence.filter((q) => q.mode !== 'CUSTOM_OX' && q.mode !== 'CUSTOM_TEXT');
+  const placeable = sequence.filter((q) => q.mode !== 'CUSTOM_OX' && q.mode !== 'CUSTOM_TEXT' && !q.fixedOrder);
   const slots = answerSlots(placeable.map((q) => q.options.length), rnd);
   const slotOf = new Map(placeable.map((q, i) => [q, slots[i]]));
   return sequence.map((q) => (slotOf.has(q) ? placeAnswer(q, slotOf.get(q)!, rnd) : q));
@@ -289,6 +293,7 @@ function orderQuestions(list: Question[], words: Map<string, Word>, rnd: () => n
 
 export function generateEvent(opts: {
   words: Word[];
+  grammar: GrammarItem[];
   custom: CustomQuestion[];
   bank: Word[];
   askedBefore: Set<string>;
@@ -331,8 +336,10 @@ export function generateEvent(opts: {
   }
 
   // Order first, then place answers, so the no-three-in-a-row rule holds in the order played.
+  // Words, then grammar in the order of its tabs and rows, then the hand-written bonus questions.
+  const grammar = opts.grammar.filter((g) => g.status === '사용').flatMap((g) => g.questions);
   const customs = opts.custom.filter((c) => c.status === '사용').map((c) => customToQuestion(c, opts.defaultSeconds));
-  const questions = spreadAnswers([...orderQuestions(main, byKey, rnd), ...customs], rnd);
+  const questions = spreadAnswers([...orderQuestions(main, byKey, rnd), ...grammar, ...customs], rnd);
 
   return { questions, retry, warnings };
 }

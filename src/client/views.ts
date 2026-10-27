@@ -11,6 +11,8 @@ export interface SessionPublic {
   phase: Phase;
   round: Round;
   index: number;
+  /** The first grammar question after the words is in its intro: the screens show '이제 문법!'. */
+  grammarStart: boolean;
   total: number;
   mainCount: number;
   question: PublicQuestion | null;
@@ -136,6 +138,8 @@ export interface StudentView {
     choice: number;
     correct: boolean;
     correctLabel: string;
+    /** A grammar question's gaps filled with the right answers. */
+    fill?: string[];
     mineLabel: string | null;
     feedback?: string;
     explanation?: string;

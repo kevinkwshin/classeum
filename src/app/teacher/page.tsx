@@ -293,7 +293,7 @@ interface UploadResult {
   issues?: { level: 'error' | 'warning'; sheet: string; row?: number; column?: string; message: string }[];
   hasErrors?: boolean;
   rosterCount?: number;
-  groups?: { name: string; wordCount: number; reviewCount: number; customCount: number; warnings: string[]; questions: { prompt: string; modeLabel: string; options: string[]; answerIndex: number; answers?: string[] }[] }[];
+  groups?: { name: string; wordCount: number; reviewCount: number; customCount: number; grammarCount: number; warnings: string[]; questions: { prompt: string; modeLabel: string; options: string[]; answerIndex: number; answers?: string[] }[] }[];
 }
 
 type TypedRow = { spelling: string; meaning: string; example: string };
@@ -372,7 +372,7 @@ function Events({ view, act, notify, writing, setWriting, onStudents }: { view: 
         <div className="flex gap-2">
           <button type="button" onClick={() => setWriting(true)} className="flex h-11 w-32 items-center justify-center rounded-xl border border-[#D5D8DF] bg-white text-[15px] font-bold">직접 작성하기</button>
           {/* Saved under a name that also becomes the event's name when it comes back filled in. */}
-          <a href="/templates/week7.xlsx" download="7주차_영단어.xlsx" className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">템플릿 받기</a>
+          <a href="/templates/M2_L7.xlsx" download="M2_L7.xlsx" className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">템플릿 받기</a>
           <label className={`flex h-11 w-32 cursor-pointer items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white ${busy ? 'opacity-50' : ''}`}>
             {busy ? '읽는 중…' : '엑셀 올리기'}
             <input
@@ -744,7 +744,7 @@ function UploadPreview({ result, typed = false, onClose, onCreate }: { result: U
             <div key={g.name} className="rounded-2xl bg-bg p-4">
               <div className="mb-2 flex items-baseline gap-3">
                 <div className="text-lg font-bold">{g.name}</div>
-                <div className="text-sm text-ink-3">단어 {g.wordCount}{g.reviewCount ? ` · 검토 ${g.reviewCount}` : ''}{g.customCount ? ` · 직접 문항 ${g.customCount}` : ''}{result.rosterCount ? ` · 명단 ${result.rosterCount}명` : ''}</div>
+                <div className="text-sm text-ink-3">단어 {g.wordCount}{g.reviewCount ? ` · 검토 ${g.reviewCount}` : ''}{g.grammarCount ? ` · 문법 ${g.grammarCount}` : ''}{g.customCount ? ` · 직접 문항 ${g.customCount}` : ''}{result.rosterCount ? ` · 명단 ${result.rosterCount}명` : ''}</div>
               </div>
               {g.warnings.length > 0 && <ul className="mb-2 list-disc pl-5 text-sm text-ink-2">{g.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
               <ol className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
@@ -932,7 +932,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
                   >
                     {showAnswer && i === q.answerIndex ? '✓' : i + 1}
                   </div>
-                  <div className="w-24 shrink-0 truncate text-sm font-semibold">{o.label}</div>
+                  <div className="w-24 shrink-0 truncate text-sm font-semibold" title={o.label}>{q.grammar?.short?.[i] ?? o.label}</div>
                   <div className="h-6 flex-1 overflow-hidden rounded-lg bg-bg">
                     <div className="cls-bar h-6 rounded-r" style={{ width: `${((counts[i] ?? 0) / maxCount) * 100}%`, background: showAnswer && i === q.answerIndex ? '#0E9F6E' : 'var(--zone)' }} />
                   </div>

@@ -1,14 +1,15 @@
-// [엑셀로 받기]: words written into the teacher's own template (public/templates/week7.xlsx), so the file reads
-// like the one they fill in each week and goes back in through [엑셀 올리기] unchanged. Only the 단어장 and 문항
-// sheets are rewritten; every other part of the file is copied byte for byte.
+// [엑셀로 받기]: an event written into the template (public/templates/M2_L7.xlsx), so the file reads like the one the
+// teacher fills in each week and goes back in through [엑셀 올리기] unchanged. Only the 단어장, 문법 and 문항 sheets
+// are rewritten (their 예시 rows stay); every other part of the file is copied byte for byte.
 import { readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
-import type { Question, Word } from '@/lib/types';
-import { QUESTION_HEADERS, WORD_HEADERS, headerKey } from './excel';
+import type { GrammarTab, Question, Word } from '@/lib/types';
+import { EXAMPLE_MARK, GRAMMAR_HEADERS, QUESTION_HEADERS, WORD_HEADERS, headerKey } from './excel';
+import { GRAMMAR_TABS } from './grammar';
 import { db } from './store';
 import { entryData, readZip, withData, writeZip } from './zip';
 
-const TEMPLATE = join(process.cwd(), 'public', 'templates', 'week7.xlsx');
+const TEMPLATE = join(process.cwd(), 'public', 'templates', 'M2_L7.xlsx');
 
 type Value = string | number | undefined;
 /** One sheet row by canonical header (단어, 뜻, …), the names the importer reads. */
@@ -67,11 +68,19 @@ function cellXml(p: string, ref: string, style: string | undefined, v: Value): s
   return `<${p}c r="${ref}"${s}/>`;
 }
 
+/** A cell's text as the importer reads it: a shared string, an inline string, or the value itself. */
+function cellText(c: Cell, shared: string[], p: string): string {
+  const v = unescapeXml(new RegExp(`<${p}v>([\\s\\S]*?)</${p}v>`).exec(c.xml)?.[1] ?? '');
+  const t = attr(c.attrs, 't');
+  return ((t === 's' ? shared[Number(v)] : t === 'inlineStr' ? runText(c.xml, p) : v) ?? '').trim();
+}
+
 /**
- * Empties the data rows below the header (the cells and their styles stay) and writes `rows` from row 2 down.
- * Columns are found by their header text, read the way the importer reads it.
+ * Empties the data rows below the header and its 예시 rows (the cells and their styles stay) and writes `rows` below
+ * them. Columns are found by their header text, read the way the importer reads it. `lenient` drops values the sheet
+ * has no column for (a 문법 row may have been uploaded with columns this template's tab doesn't have).
  */
-function fillSheet(xml: string, shared: string[], aliases: Record<string, string>, rows: Row[]): string {
+function fillSheet(xml: string, shared: string[], aliases: Record<string, string>, rows: Row[], lenient = false): string {
   const p = prefixOf(xml, 'worksheet');
   const data = new RegExp(`(<${p}sheetData\\b[^>]*>)([\\s\\S]*?)(</${p}sheetData>)`).exec(xml);
   const all = data ? parseRows(data[2], p) : [];
@@ -79,22 +88,32 @@ function fillSheet(xml: string, shared: string[], aliases: Record<string, string
   if (!data || !header) throw new Error('template sheet has no header row');
   const cols = new Map<string, number>();
   for (const c of [...header.cells.values()].sort((a, b) => a.col - b.col)) {
-    const v = unescapeXml(new RegExp(`<${p}v>([\\s\\S]*?)</${p}v>`).exec(c.xml)?.[1] ?? '');
-    const t = attr(c.attrs, 't');
-    const raw = ((t === 's' ? shared[Number(v)] : t === 'inlineStr' ? runText(c.xml, p) : v) ?? '').trim();
+    const raw = cellText(c, shared, p);
     const key = headerKey(raw);
     const name = Object.hasOwn(aliases, key) ? aliases[key] : Object.hasOwn(aliases, raw) ? aliases[raw] : undefined;
     if (name && !cols.has(name)) cols.set(name, c.col);
   }
   for (const row of rows) {
-    for (const [name, v] of Object.entries(row)) if (v !== undefined && v !== '' && !cols.has(name)) throw new Error(`template has no '${name}' column`);
+    for (const [name, v] of Object.entries(row)) {
+      if (v === undefined || v === '' || cols.has(name)) continue;
+      if (!lenient) throw new Error(`template has no '${name}' column`);
+      delete row[name];
+    }
+  }
+  // The template's 예시 rows right under the header stay as they are; the rows are written below them.
+  const first = cols.get('번호') ?? [...header.cells.keys()].sort((a, b) => a - b)[0];
+  let top = header.r;
+  for (let r = header.r + 1; ; r++) {
+    const c = all.find((x) => x.r === r)?.cells.get(first);
+    if (!c || cellText(c, shared, p) !== EXAMPLE_MARK) break;
+    top = r;
   }
 
   // Every written row takes the cell styles of the template's first data row, so rows past the prepared ones
   // (which carry fewer, plainer cells) look the same as the rest.
-  const model = all.find((r) => r.r === header.r + 1);
+  const model = all.find((r) => r.r === top + 1);
   const byRow = new Map(all.map((r) => [r.r, r]));
-  const written = new Map(rows.map((row, i) => [header.r + 1 + i, row]));
+  const written = new Map(rows.map((row, i) => [top + 1 + i, row]));
   const writeRow = (r: number, row: Row) => {
     const old = byRow.get(r);
     const values = new Map([...cols].map(([name, col]) => [col, row[name]]));
@@ -110,11 +129,11 @@ function fillSheet(xml: string, shared: string[], aliases: Record<string, string
       ? `<${p}row${old.attrs}>${[...old.cells.values()].map((c) => (c.filled ? `<${p}c${c.attrs.replace(/\st=["'][^"']*["']/, '')}/>` : c.xml)).join('')}</${p}row>`
       : old.xml;
   const numbers = [...new Set([...byRow.keys(), ...written.keys()])].sort((a, b) => a - b);
-  const body = numbers.map((r) => (r <= header.r ? byRow.get(r)!.xml : written.has(r) ? writeRow(r, written.get(r)!) : clearRow(byRow.get(r)!))).join('');
+  const body = numbers.map((r) => (r <= top ? byRow.get(r)!.xml : written.has(r) ? writeRow(r, written.get(r)!) : clearRow(byRow.get(r)!))).join('');
   let out = xml.slice(0, data.index) + data[1] + body + data[3] + xml.slice(data.index + data[0].length);
 
   if (rows.length > 0) {
-    const last = header.r + rows.length;
+    const last = top + rows.length;
     out = out.replace(new RegExp(`(<${p}dimension\\b[^>]*ref=["'][A-Z]+\\d+:[A-Z]+)(\\d+)`), (m, head: string, end: string) => (Number(end) < last ? `${head}${last}` : m));
     // The template was saved scrolled down to row 26; open at the first row so the words are in view.
     const pane = new RegExp(`<${p}pane\\b[^>]*>`).exec(out)?.[0];
@@ -128,7 +147,7 @@ function fillSheet(xml: string, shared: string[], aliases: Record<string, string
   return out;
 }
 
-function workbook(words: Row[], questions: Row[]): Buffer {
+function workbook(words: Row[], questions: Row[], grammar: Partial<Record<GrammarTab, Row[]>> = {}): Buffer {
   const entries = readZip(readFileSync(TEMPLATE));
   const byName = new Map(entries.map((e) => [e.name, e]));
   const read = (path: string) => {
@@ -152,11 +171,16 @@ function workbook(words: Row[], questions: Row[]): Buffer {
     if (target) sheets.set(unescapeXml(attr(m[1], 'name') ?? '').replace(/\s+/g, ''), target);
   }
   const changed = new Map<string, Buffer>();
-  for (const [sheet, aliases, rows] of [['단어장', WORD_HEADERS, words], ['문항', QUESTION_HEADERS, questions]] as const) {
+  const plan: [string, Record<string, string>, Row[], boolean][] = [
+    ['단어장', WORD_HEADERS, words, false],
+    ...GRAMMAR_TABS.map((t): [string, Record<string, string>, Row[], boolean] => [`문법${t}`, GRAMMAR_HEADERS, grammar[t] ?? [], true]),
+    ['문항', QUESTION_HEADERS, questions, false],
+  ];
+  for (const [sheet, aliases, rows, lenient] of plan) {
     const path = sheets.get(sheet);
     if (!path) throw new Error(`template has no ${sheet} sheet`);
     const xml = read(path);
-    const out = fillSheet(xml, shared, aliases, rows);
+    const out = fillSheet(xml, shared, aliases, rows, lenient);
     if (out !== xml) changed.set(path, Buffer.from(out, 'utf8'));
   }
   return writeZip(entries.map((e) => (changed.has(e.name) ? withData(e, changed.get(e.name)!) : e)));
@@ -175,11 +199,12 @@ export function fileBaseOf(name: string): string {
 }
 
 /** The file name names the event when it comes back; a name that can't be a file name goes in 세트 instead. */
-function named(name: string, words: Row[], questions: Row[]) {
+function named(name: string, words: Row[], questions: Row[], grammar: Partial<Record<GrammarTab, Row[]>> = {}) {
   const base = fileBaseOf(name) || '단어장';
   const set = name && base !== name ? name : undefined;
   const withSet = (rows: Row[]) => rows.map((r) => ({ ...r, 세트: set }));
-  return { fileName: `${base}.xlsx`, data: workbook(withSet(words), withSet(questions)) };
+  const grammarWithSet = Object.fromEntries(Object.entries(grammar).map(([t, rows]) => [t, withSet(rows)]));
+  return { fileName: `${base}.xlsx`, data: workbook(withSet(words), withSet(questions), grammarWithSet) };
 }
 
 /** Rows typed in [직접 작성하기], written as typed (other spellings after |, example with its [ ]). */
@@ -246,5 +271,8 @@ export function eventWorkbook(eventId: string) {
     .filter((x): x is { w: Word; at: number } => !!x.w)
     .sort((a, b) => a.at - b.at)
     .map((x) => wordRow(x.w));
-  return named(e.name, words, e.questions.filter((q) => q.mode.startsWith('CUSTOM')).map(questionRow));
+  // A grammar row is written back as it was typed; its questions (two for 고치기) carry it on the first one.
+  const grammar: Partial<Record<GrammarTab, Row[]>> = {};
+  for (const q of e.questions) if (q.source) (grammar[q.source.tab] ??= []).push({ ...q.source.cells, 세트: undefined });
+  return named(e.name, words, e.questions.filter((q) => q.mode.startsWith('CUSTOM') && !q.grammar).map(questionRow), grammar);
 }

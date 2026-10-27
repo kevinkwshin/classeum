@@ -1,13 +1,14 @@
 // The game host, one per server process: owns the live session, runs its clock, keeps track of
 // every open screen, and pushes each one its role's view (over /api/stream). Records live in store.ts.
 import { createHash, randomInt } from 'node:crypto';
-import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
+import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, GrammarItem, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { zoneOf } from '@/lib/field';
 import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
+import { gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
@@ -35,6 +36,8 @@ export interface Client {
 const INTRO_MS = 600;
 // The first question of each round gets a 3·2·1 on the projector and phones.
 const FIRST_INTRO_MS = 3000;
+/** The first grammar question after the words opens with an '이제 문법!' card. */
+const GRAMMAR_INTRO_MS = 2500;
 // Long enough for the landing and the 펑 / cheer reactions to play out.
 const REVEAL_MS = 4000;
 const REVEAL_LONG_MS = 6000;
@@ -134,7 +137,7 @@ type Generated = ReturnType<typeof generateEvent>;
 interface Draft {
   id: string;
   createdAt: number;
-  groups: { name: string; words: Word[]; custom: CustomQuestion[] }[];
+  groups: { name: string; words: Word[]; grammar: GrammarItem[]; custom: CustomQuestion[] }[];
   /** What the teacher previewed, reused as-is when the events are created. */
   generated: Map<string, Generated>;
   roster: { className: string; number: number; name: string }[];
@@ -193,7 +196,25 @@ function publicQuestion(q: Question, seq: number): PublicQuestion {
     options: q.options.map((o) => o.label),
     kind: q.mode === 'CUSTOM_TEXT' ? 'text' : 'field',
     seconds: q.seconds,
+    grammar: q.grammar,
   };
+}
+
+/** Word and grammar questions count toward accuracy, rewards and streaks; the 문항 sheet's bonus questions don't. */
+function scored(q: Question | null | undefined): boolean {
+  return !!q && (!!q.wordKey || !!q.grammar);
+}
+
+/** The right answer as words: a grammar question's filled gaps ('let, exchange'), or the first accepted answer. */
+function correctLabelOf(q: Question): string {
+  if (q.mode !== 'CUSTOM_TEXT') return q.options[q.answerIndex]?.label ?? '';
+  if (q.fill) return q.fill.map((f) => f || '삭제').join(', ');
+  return (q.answers ?? [])[0] ?? '';
+}
+
+/** Seconds a question takes in class with its reveal: most answer a word in under 9 s, a grammar question takes longer. */
+function playSeconds(q: Question): number {
+  return (q.grammar ? Math.round(q.seconds * 0.8) : Math.min(q.seconds, 9)) + 4;
 }
 
 class Hub {
@@ -387,6 +408,13 @@ class Hub {
     return live.list[live.index];
   }
 
+  /** The current question is the first grammar question after the words. */
+  private grammarStarts(): boolean {
+    const live = this.live;
+    if (!live || live.round !== 'main' || live.index < 1) return false;
+    return !!live.list[live.index]?.grammar && !live.list[live.index - 1]?.grammar;
+  }
+
   private sessionPublic() {
     const live = this.live;
     if (!live) return null;
@@ -401,6 +429,7 @@ class Hub {
       phase: live.phase,
       round: live.round,
       index: live.index,
+      grammarStart: live.phase === 'intro' && this.grammarStarts(),
       total: live.list.length,
       mainCount: live.mainCount,
       question: showQuestion && q ? publicQuestion(q, live.seq) : null,
@@ -523,7 +552,7 @@ class Hub {
         warnings: e.warnings,
         reward: e.reward,
         // About a minute for the summary, and another for the retry round when it is on.
-        estimateSec: Math.round(e.questions.reduce((sum, q) => sum + Math.min(q.seconds, 9) + 4, 0) + 60 + (e.retryRound ? 60 : 0)),
+        estimateSec: Math.round(e.questions.reduce((sum, q) => sum + playSeconds(q), 0) + 60 + (e.retryRound ? 60 : 0)),
         seconds: mostCommon(e.questions.map((q) => q.seconds)),
         fileName: e.fileName ?? null,
         typed: !!e.typed,
@@ -562,9 +591,9 @@ class Hub {
         accuracySoFar: answered.t ? answered.c / answered.t : null,
         // For the 종료 confirmation: word questions finished (counting one being answered now) and planned.
         // (종료 during 'moving' locks the current question, so it counts; in intro it doesn't.)
-        mainDone: live.mainStats.size + (live.round === 'main' && live.phase === 'moving' && q?.wordKey ? 1 : 0),
-        mainPlanned: db().events[live.eventId]?.questions.filter((x) => x.wordKey).length ?? 0,
-        remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + Math.min(x.seconds, 9) + 4, 0)),
+        mainDone: live.mainStats.size + (live.round === 'main' && live.phase === 'moving' && scored(q) ? 1 : 0),
+        mainPlanned: db().events[live.eventId]?.questions.filter(scored).length ?? 0,
+        remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + playSeconds(x), 0)),
       };
     }
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
@@ -630,6 +659,7 @@ class Hub {
         choice,
         correct: !!mine?.correct,
         correctLabel: live.reveal.correctLabel,
+        fill: live.reveal.fill,
         mineLabel: choice >= 0 ? q.options[choice]?.label : mine?.text ?? null,
         feedback: choice >= 0 && choice !== q.answerIndex ? q.options[choice]?.feedback : undefined,
         explanation: q.explanation,
@@ -1010,24 +1040,26 @@ class Hub {
   // ---------- events ----------
 
   /** `title` is typed in [직접 작성하기]; an upload passes its file name instead. */
-  makeDraft(result: { words: Word[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }, fileName?: string, title?: string) {
+  makeDraft(result: { words: Word[]; grammar: GrammarItem[]; questions: CustomQuestion[]; roster: { className: string; number: number; name: string }[]; issues: ImportIssue[] }, fileName?: string, title?: string) {
     // Only the name as shown in the teacher's file picker: no folders, no control characters, not too long.
     const cleanFile = fileName?.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100) || undefined;
     // Rows without a 세트 make an event named after the file ('3주차 단어장'), or after the day if the name is unknown.
     // Cut by characters, not UTF-16 units, so an emoji at the cut isn't left half there.
     const cut = (s: string) => Array.from(s.trim()).slice(0, 40).join('');
     const defaultName = (title && cut(title)) || (cleanFile && cut(cleanFile.replace(/\.xlsx?$/i, ''))) || `${shortDate()} 퀴즈`;
-    const groups = new Map<string, { words: Word[]; custom: CustomQuestion[] }>();
-    for (const w of result.words) {
-      const name = w.set || defaultName;
-      if (!groups.has(name)) groups.set(name, { words: [], custom: [] });
-      groups.get(name)!.words.push(w);
-    }
-    for (const q of result.questions) {
-      const name = q.set || (groups.size === 1 ? [...groups.keys()][0] : defaultName);
-      if (!groups.has(name)) groups.set(name, { words: [], custom: [] });
-      groups.get(name)!.custom.push(q);
-    }
+    const groups = new Map<string, { words: Word[]; grammar: GrammarItem[]; custom: CustomQuestion[] }>();
+    const group = (name: string) => {
+      if (!groups.has(name)) groups.set(name, { words: [], grammar: [], custom: [] });
+      return groups.get(name)!;
+    };
+    for (const w of result.words) group(w.set || defaultName).words.push(w);
+    // Grammar and 문항 rows without a 세트 join the words' quiz when there is just one (decided once, so the order of the
+    // rows doesn't matter). Without words, they join the grammar's 세트 when every grammar row has the same one.
+    const grammarSets = new Set(result.grammar.map((g) => g.set ?? ''));
+    const target =
+      groups.size === 1 ? [...groups.keys()][0] : groups.size === 0 && grammarSets.size === 1 && !grammarSets.has('') ? [...grammarSets][0] : defaultName;
+    for (const g of result.grammar) group(g.set || target).grammar.push(g);
+    for (const q of result.questions) group(q.set || target).custom.push(q);
     const draft: Draft = { id: newId('draft'), createdAt: Date.now(), groups: [...groups].map(([name, g]) => ({ name, ...g })), generated: new Map(), roster: result.roster, issues: result.issues, fileName: cleanFile, typed: title !== undefined };
     this.drafts.set(draft.id, draft);
     return draft;
@@ -1043,7 +1075,7 @@ class Hub {
     const cached = draft.generated.get(g.name);
     if (cached) return cached;
     const others = draft.groups.filter((x) => x !== g).flatMap((x) => x.words.filter((w) => w.status === '사용'));
-    const gen = generateEvent({ words: g.words, custom: g.custom, bank: [...this.bankFor(draft), ...others], askedBefore: this.askedWords(), seed: hashString(draft.id + g.name), defaultSeconds: DEFAULT_SECONDS });
+    const gen = generateEvent({ words: g.words, grammar: g.grammar, custom: g.custom, bank: [...this.bankFor(draft), ...others], askedBefore: this.askedWords(), seed: hashString(draft.id + g.name), defaultSeconds: DEFAULT_SECONDS });
     draft.generated.set(g.name, gen);
     return gen;
   }
@@ -1056,6 +1088,7 @@ class Hub {
         wordCount: g.words.filter((w) => w.status === '사용').length,
         reviewCount: g.words.filter((w) => w.status === '검토').length,
         customCount: g.custom.length,
+        grammarCount: g.grammar.filter((x) => x.status === '사용').length,
         questions: gen.questions.map((q) => ({ prompt: q.prompt, modeLabel: q.modeLabel, options: q.options.map((o) => o.label), answerIndex: q.answerIndex, answers: q.answers })),
         warnings: gen.warnings,
       };
@@ -1250,7 +1283,7 @@ class Hub {
     live.correctOrder = [];
     live.reveal = null;
     live.checkpoint = null;
-    live.phaseEndsAt = Date.now() + (live.index === 0 ? FIRST_INTRO_MS : INTRO_MS);
+    live.phaseEndsAt = Date.now() + (live.index === 0 ? FIRST_INTRO_MS : this.grammarStarts() ? GRAMMAR_INTRO_MS : INTRO_MS);
     this.schedulePush(true);
   }
 
@@ -1311,8 +1344,8 @@ class Hub {
     const now = Date.now();
     const connected = this.connectedStudents();
     const counted = [...live.joined].filter((id) => connected.has(id) || live.positions.has(id) || live.texts.has(id));
-    // Streaks follow the scored questions only (main-round words), like the score beside them on the summary.
-    const scored = live.round === 'main' && !!q.wordKey;
+    // Streaks follow the scored questions only (main-round words and grammar), like the score beside them on the summary.
+    const counts = live.round === 'main' && scored(q);
     const zoneCounts = q.options.map(() => 0);
     let correct = 0;
     let unanswered = 0;
@@ -1325,7 +1358,7 @@ class Hub {
         text = live.texts.get(id);
         if (text) {
           const typed = normalizeAnswer(text);
-          ok = (q.answers ?? []).some((a) => normalizeAnswer(a) === typed);
+          ok = q.grammar ? gradeGrammar(q, text) : (q.answers ?? []).some((a) => normalizeAnswer(a) === typed);
           if (!ok) textWrong.set(typed, (textWrong.get(typed) ?? 0) + 1);
         } else unanswered++;
       } else {
@@ -1337,14 +1370,14 @@ class Hub {
       if (ok) correct++;
       const prevStreak = live.streak.get(id) ?? 0;
       const streak = ok ? prevStreak + 1 : 0;
-      if (scored) {
+      if (counts) {
         live.streak.set(id, streak);
         if (streak > (live.bestStreak.get(id) ?? 0)) live.bestStreak.set(id, streak);
       }
-      live.choices.set(id, { choice, correct: ok, text, streak: scored ? streak : 0, broke: scored && !ok ? prevStreak : 0 });
+      live.choices.set(id, { choice, correct: ok, text, streak: counts ? streak : 0, broke: counts && !ok ? prevStreak : 0 });
       db().responses.push({ sessionId: live.id, eventId: live.eventId, questionId: q.id, wordKey: q.wordKey, round: live.round, studentId: id, choice, text, correct: ok, at: now });
-      // Hand-written bonus questions don't count toward accuracy, rewards or the retry round.
-      if (live.round === 'main' && q.wordKey) {
+      // The 문항 sheet's bonus questions don't count toward accuracy or rewards (grammar does).
+      if (counts) {
         const r = live.perStudent.get(id) ?? { connected: 0, correct: 0 };
         r.connected++;
         if (ok) r.correct++;
@@ -1353,7 +1386,8 @@ class Hub {
     }
     live.correctOrder = [...live.choices].filter(([, c]) => c.correct).map(([id]) => id).sort((x, y) => hashString(x + live.seq) - hashString(y + live.seq));
     const accuracy = counted.length ? correct / counted.length : 0;
-    if (live.round === 'main' && q.wordKey) live.mainStats.set(q.id, { correct, total: counted.length, wordKey: q.wordKey });
+    // Only words come back in the retry round (buildRetry reads wordKey); grammar is in the stats for the rest.
+    if (counts) live.mainStats.set(q.id, { correct, total: counted.length, wordKey: q.wordKey });
     let topWrong: RevealInfo['topWrong'];
     if (accuracy < 0.6 && q.mode !== 'CUSTOM_TEXT') {
       let best = -1;
@@ -1365,7 +1399,7 @@ class Hub {
     const long = accuracy < 0.6 && counted.length > 0;
     live.reveal = {
       correctIndex: q.answerIndex,
-      correctLabel: q.mode === 'CUSTOM_TEXT' ? (q.answers ?? [])[0] ?? '' : q.options[q.answerIndex]?.label ?? '',
+      correctLabel: correctLabelOf(q),
       zoneCounts,
       unanswered,
       accuracy,
@@ -1376,6 +1410,7 @@ class Hub {
       // Only answers several students gave, so nobody's own typo ends up on the projector.
       textWrong: q.mode === 'CUSTOM_TEXT' ? [...textWrong].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t]) => t) : undefined,
       long,
+      fill: q.fill,
     };
     live.phase = 'reveal';
     live.phaseAt = now;
@@ -1450,8 +1485,8 @@ class Hub {
     const d = db();
     const event = d.events[live.eventId];
     const mainCount = live.mainStats.size;
-    // Ended early (종료) before half the word questions: answers are kept, but nobody is judged for rewards.
-    const planned = db().events[live.eventId]?.questions.filter((q) => q.wordKey).length ?? mainCount;
+    // Ended early (종료) before half the scored questions: answers are kept, but nobody is judged for rewards.
+    const planned = db().events[live.eventId]?.questions.filter(scored).length ?? mainCount;
     const shortQuiz = mainCount < Math.ceil(planned / 2);
     const history = new Map<string, number[]>();
     for (const s of d.sessions) {
@@ -1559,7 +1594,10 @@ class Hub {
         spelling: word?.spelling,
         meaning: word?.meaning,
         prompt: q.prompt,
-        correctLabel: q.mode === 'CUSTOM_TEXT' ? (q.answers ?? [])[0] ?? '' : q.options[q.answerIndex]?.label ?? '',
+        // A 고치기 find step's answer is the wrong word; the note shows it with its fix ('fastly → fast').
+        correctLabel: q.noteLabel ?? correctLabelOf(q),
+        ko: q.grammar?.ko,
+        rule: q.grammar ? q.explanation : undefined,
         mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? (q.mode === 'CUSTOM_TEXT' ? '(못 썼어요)' : '(못 골랐어요)'),
         feedback: r.choice >= 0 ? shown.options[r.choice]?.feedback : undefined,
         example: word?.example?.replace(/[[\]]/g, ''),
@@ -1791,7 +1829,7 @@ class Hub {
  */
 function classRuns(e: EventRec, sessions: SessionSummaryRec[]) {
   const classes = db().classes;
-  const planned = e.questions.filter((q) => q.wordKey).length;
+  const planned = e.questions.filter(scored).length;
   const out = new Map<string, { classId: string; last: number; runs: number; accuracy: number; partial: boolean }>();
   for (const s of [...sessions].sort((a, b) => a.endedAt - b.endedAt)) {
     if (!own(classes, s.classId)) continue;
