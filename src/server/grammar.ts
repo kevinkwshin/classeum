@@ -4,6 +4,8 @@
 //   쓰기    [answer] where each blank goes ([as|so] for other answers), or 정답 for a whole answer
 //   고치기  [fastly → fast] around the wrong part ([to →] to take it out); [word] marks a decoy, 4 parts in all
 //   배열    정답 written in chunks, the clerk / let / me / try on / the scarf
+// What students see first (facts to check, the 우리말 뜻) goes on lines above the sentence in the same 문장 cell; the
+// 우리말 column of older files still works, and stays on 배열.
 import type { GrammarItem, GrammarPart, GrammarShow, GrammarTab, Question, WordStatus } from '@/lib/types';
 import { MAX_TEXT_ANSWER, hashString, mulberry32, normalizeAnswer, shuffle } from '@/lib/text';
 
@@ -412,12 +414,16 @@ function arrange(id: string, r: GrammarRow): Built {
 const TEMPLATE_EXAMPLES: Record<GrammarTab, Record<string, string>[]> = {
   고르기: [
     { 문장: 'I want (to go / going) home.', 정답: 'to go' },
+    { 문장: '바른 문장을 고르세요.', 보기1: 'He make me laugh.', 보기2: 'He makes me laugh.', 정답: '2' },
+    { 문장: '가방 A 3kg, 가방 B 3kg\nBag A is as heavy as Bag B.', 정답: 'O' },
+    // The templates before the 문장 cell took 우리말 and the question.
     { 지시문: '바른 문장을 고르세요.', 보기1: 'He make me laugh.', 보기2: 'He makes me laugh.', 정답: '2' },
     { 우리말: '가방 A 3kg, 가방 B 3kg', 문장: 'Bag A is as heavy as Bag B.', 정답: 'O' },
   ],
   쓰기: [
-    { 우리말: '그는 우유를 좋아하지 않는다.', 문장: "He [doesn't] like milk." },
+    { 문장: "그는 우유를 좋아하지 않는다.\nHe [doesn't] like milk." },
     { 지시문: 'and로 한 문장을 만드세요.', 문장: 'I like cats. I like dogs.', 정답: 'I like cats and dogs.|I like dogs and cats.' },
+    { 우리말: '그는 우유를 좋아하지 않는다.', 문장: "He [doesn't] like milk." },
   ],
   고치기: [{ 문장: 'She [go → goes] to school every day.' }],
   배열: [
@@ -437,8 +443,62 @@ export function isTemplateExample(tab: GrammarTab, cells: Record<string, string>
   return EXAMPLE_KEYS[tab].has(exampleKey(cells));
 }
 
+/** A tab's mark in a line of 문장: a (A / B) group, or [ ] (a blank, a part to fix, or a decoy). */
+const MARK: Partial<Record<GrammarTab, RegExp>> = { 고르기: /[([][^()[\]]*\/[^()[\]]*[)\]]/, 쓰기: /\[[^[\]]*\]/, 고치기: /\[[^[\]]*\]/ };
+const HANGUL = /[가-힣]/;
+
+/**
+ * Lines of a 문장 cell, with a sentence that was broken across lines (pasted from a PDF or HWP) joined again: a line
+ * that starts in lowercase or with a mark carries on an English line above that doesn't end a sentence.
+ */
+function linesOf(cell: string): string[] {
+  const out: string[] = [];
+  for (const l of cell.split(/\r?\n/).map(tidy).filter(Boolean)) {
+    const prev = out[out.length - 1];
+    if (prev !== undefined && !HANGUL.test(prev) && !/[.?!]["'’”)\]]*$/.test(prev) && /^[a-z([]/.test(l)) out[out.length - 1] = `${prev} ${l}`;
+    else out.push(l);
+  }
+  return out;
+}
+
+/**
+ * A 문장 cell written on several lines (Alt+Enter) carries what students see first above the question: facts to check
+ * it against, or its 우리말 뜻. Those lines join the 우리말 column's text (older files keep that column), in order.
+ * - A row whose question needs the tab's mark (blanks, a part to fix, a (A / B) group) asks from the first marked line
+ *   to the end, so a dialogue keeps every blank and no answer is ever shown above the question.
+ * - O/X, 보기1~4 and the like ask the bottom line, whatever brackets the facts above it have.
+ * 배열 keeps its 우리말 column, and its chunks may be in 문장. A Korean question line where no English sentence is
+ * needed (문장 고르기, a 쓰기 to answer in 정답) is the question's lead or 우리말, as an older file wrote it. Either way the
+ * row reads as the older layout did, so its id stays the same.
+ */
+function given(tab: GrammarTab, r: GrammarRow): GrammarRow {
+  let out = r;
+  const lines = linesOf(r.sentence);
+  if (tab !== '배열' && lines.length > 1) {
+    // With a 정답 to write, a [ ] is a blank only if what it holds is in the 정답: a [보기] or [조건] box is not.
+    const answers = tab === '쓰기' ? alternatives(r.answer).map(normalizeAnswer).filter(Boolean) : [];
+    const blank = (l: string) => [...l.matchAll(BRACKET)].some((m) => alternatives(m[1], /[|/]/).some((a) => answers.some((x) => x.includes(normalizeAnswer(a)))));
+    const first = lines.findIndex((l) => (answers.length ? blank(l) : MARK[tab]!.test(l)));
+    const needs = tab !== '고르기' || (!r.options.some((o) => tidy(o)) && !oxAnswer(r.answer));
+    const at = needs && first >= 0 ? first : lines.length - 1;
+    out = { ...r, ko: [r.ko, ...lines.slice(0, at)].filter(Boolean).join('\n'), sentence: lines.slice(at).join(' ') };
+  }
+  const sentence = tidy(out.sentence);
+  // 문장 고르기: the question when 지시문 is empty (어법상 바른 문장을 고르세요.), otherwise shown above the options.
+  if (tab === '고르기' && out.options.some((o) => tidy(o)) && !MARK.고르기!.test(sentence) && HANGUL.test(sentence)) {
+    out = out.lead ? { ...out, ko: [out.ko, sentence].filter(Boolean).join('\n'), sentence: '' } : { ...out, lead: sentence, sentence: '' };
+  }
+  // 쓰기 with only Korean to answer in English (정답): the 우리말 of an 영작 question.
+  if (tab === '쓰기' && !MARK.쓰기!.test(sentence) && HANGUL.test(sentence) && !/[A-Za-z]/.test(sentence)) {
+    out = { ...out, ko: [out.ko, sentence].filter(Boolean).join('\n'), sentence: '' };
+  }
+  return out;
+}
+
 /** Checks one row of a 문법 tab and builds its questions; with any error, there are none. */
-export function grammarItem(tab: GrammarTab, r: GrammarRow): { item: GrammarItem | null; problems: GrammarProblem[] } {
+export function grammarItem(tab: GrammarTab, row: GrammarRow): { item: GrammarItem | null; problems: GrammarProblem[] } {
+  // Read the same whether the 우리말 sits in its own column or on a line above the sentence.
+  const r = given(tab, row);
   const id = `g:${itemId(tab, r)}`;
   const built = tab === '고르기' ? choose(id, r) : tab === '쓰기' ? write(id, r) : tab === '고치기' ? fix(id, r) : arrange(id, r);
   if (built.questions.length === 0) return { item: null, problems: built.problems };

@@ -59,7 +59,8 @@ export function GrammarCard({ g, fill, correct, variant }: { g: GrammarShow; fil
   return (
     <div className="flex flex-col items-center gap-[0.4em] text-center">
       <div className={size.lead}>{g.lead}</div>
-      {g.ko && <div className={`${size.ko} break-keep`}>{g.ko}</div>}
+      {/* One line each, as the teacher wrote them above the sentence. */}
+      {g.ko && <div className={`${size.ko} whitespace-pre-line break-keep`}>{g.ko}</div>}
       {g.parts.length > 0 && (
         <div className={`${size.sentence(n)} font-extrabold leading-snug tracking-tight [overflow-wrap:anywhere]`}>
           {g.parts.map((p, i) => {

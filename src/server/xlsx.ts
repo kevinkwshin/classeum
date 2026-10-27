@@ -1,4 +1,4 @@
-// [엑셀로 받기]: an event written into the template (public/templates/M2_L7.xlsx), so the file reads like the one the
+// [엑셀로 받기]: an event written into the template (templates/M2_L7.xlsx), so the file reads like the one the
 // teacher fills in each week and goes back in through [엑셀 올리기] unchanged. Only the 단어장 and 문법 sheets are
 // rewritten (their example rows stay); every other part of the file is copied byte for byte.
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,8 @@ import { GRAMMAR_TABS, isTemplateExample } from './grammar';
 import { db } from './store';
 import { entryData, readZip, withData, writeZip } from './zip';
 
-const TEMPLATE = join(process.cwd(), 'public', 'templates', 'M2_L7.xlsx');
+/** The one template: [템플릿 받기] serves it (src/app/templates/M2_L7.xlsx/route.ts) and [엑셀로 받기] writes into it. */
+export const TEMPLATE = join(process.cwd(), 'templates', 'M2_L7.xlsx');
 
 type Value = string | number | undefined;
 /** One sheet row by canonical header (단어, 뜻, …), the names the importer reads. */
@@ -123,7 +124,10 @@ function fillSheet(xml: string, shared: string[], aliases: Record<string, string
     const values = new Map([...cols].map(([name, col]) => [col, row[name]]));
     const used = [...new Set([...(model?.cells.keys() ?? []), ...(old?.cells.keys() ?? []), ...values.keys()])].sort((a, b) => a - b);
     const cells = used.map((col) => cellXml(p, `${colName(col)}${r}`, attr(model?.cells.get(col)?.attrs ?? old?.cells.get(col)?.attrs ?? '', 's'), values.get(col)));
-    const attrs = ((model ?? old)?.attrs ?? '').replace(/\s(r|spans)=["'][^"']*["']/g, '');
+    let attrs = ((model ?? old)?.attrs ?? '').replace(/\s(r|spans)=["'][^"']*["']/g, '');
+    // A cell on several lines (facts or 우리말 above the 문장) gets a row tall enough to show them all.
+    const lines = Math.max(1, ...[...values.values()].map((v) => (typeof v === 'string' ? v.split('\n').length : 1)));
+    if (lines > 1) attrs = `${attrs.replace(/\s(ht|customHeight)=["'][^"']*["']/g, '')} ht="${17 * lines + 2}" customHeight="1"`;
     const spans = used.length ? ` spans="${used[0]}:${used[used.length - 1]}"` : '';
     return `<${p}row r="${r}"${spans}${attrs}>${cells.join('')}</${p}row>`;
   };
@@ -283,7 +287,23 @@ export function eventWorkbook(eventId: string) {
   const grammar: Partial<Record<GrammarTab, Row[]>> = {};
   // In the order the teacher wrote them (play shuffles each type); an older file's 문항 questions come after.
   const sources = e.questions.filter((q) => q.source).sort((a, b) => (a.source!.row ?? 0) - (b.source!.row ?? 0));
-  for (const q of sources) (grammar[q.source!.tab] ??= []).push({ ...q.source!.cells, 세트: undefined });
+  for (const q of sources) {
+    const row: Row = { ...q.source!.cells, 세트: undefined };
+    // The template has a 우리말 column on 배열 only; elsewhere an older file's 우리말 goes on a line above the 문장,
+    // which reads back as the same question.
+    if (q.source!.tab !== '배열' && row.우리말) {
+      const lead = String(row.지시문 ?? '');
+      if (q.source!.tab === '고르기' && !row.문장 && [1, 2, 3, 4].some((n) => row[`보기${n}`]) && (!lead || /[가-힣]/.test(lead))) {
+        // 문장 고르기 with no 문장: the question goes on the bottom line (it would otherwise take the 우리말 for it).
+        row.문장 = `${row.우리말}\n${lead || '바른 문장을 고르세요.'}`;
+        delete row.지시문;
+      } else {
+        row.문장 = [row.우리말, row.문장].filter(Boolean).join('\n');
+      }
+      delete row.우리말;
+    }
+    (grammar[q.source!.tab] ??= []).push(row);
+  }
   for (const q of e.questions) {
     if (q.mode.startsWith('CUSTOM') && !q.grammar && !q.source) {
       const { tab, row } = customRow(q);

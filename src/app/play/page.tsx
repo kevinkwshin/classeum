@@ -925,7 +925,7 @@ function Result({ view }: { view: StudentView }) {
       <div className="cls-slide-up rounded-3xl bg-good p-6 text-white [@media(max-height:700px)]:px-5 [@media(max-height:700px)]:py-4">
         {s.question?.grammar ? (
           // The sentence with the answer in place, which is what the student should take away.
-          <div className="text-base font-semibold leading-snug text-[#CDEFDF]">{(s.question.grammar.parts.length > 0 && filledSentence(s.question.grammar, r.fill)) || s.question.grammar.ko || s.question.prompt}</div>
+          <div className="whitespace-pre-line text-base font-semibold leading-snug text-[#CDEFDF]">{(s.question.grammar.parts.length > 0 && filledSentence(s.question.grammar, r.fill)) || s.question.grammar.ko || s.question.prompt}</div>
         ) : (
           <div className="text-sm font-semibold text-[#CDEFDF]">{s.question?.prompt}</div>
         )}
@@ -1004,7 +1004,7 @@ function Notes({ eventName, wrong, practice, send, onBack }: { eventName: string
         {wrong.length === 0 && <div className="py-10 text-center text-ink-3">틀린 문제가 없어요!</div>}
         {wrong.map((w, i) => (
           <div key={w.questionId} className="cls-slide-up flex flex-col gap-2 rounded-2xl bg-white p-4" style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}>
-            {w.ko && <div className="text-sm font-semibold text-ink-2">{w.ko}</div>}
+            {w.ko && <div className="whitespace-pre-line text-sm font-semibold text-ink-2">{w.ko}</div>}
             <div className="flex items-center justify-between gap-2">
               <div className={`flex gap-2 ${w.spelling ? 'items-baseline' : 'flex-col'}`}>
                 <div className={`font-extrabold ${!w.spelling && w.prompt.length > 24 ? 'text-lg leading-snug' : 'text-2xl'}`}>{w.spelling ?? w.prompt}</div>
