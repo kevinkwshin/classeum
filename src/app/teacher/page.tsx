@@ -880,7 +880,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
         </div>
         <div className="flex gap-2">
           <MusicSwitch dark on={live.music} onToggle={() => control('music')} />
-          <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>화면 가리기 B</button>
+          <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>잠시 멈춤 B</button>
           <button
             type="button"
             onClick={() => {

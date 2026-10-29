@@ -1642,8 +1642,7 @@ class Hub {
       const base = r.questionId.replace(/#retry$/, '');
       latest.set(r.wordKey ?? base, r);
     }
-    const wrong: WrongNote[] = [];
-    const practice: Question[] = [];
+    const notes: { note: WrongNote; practice?: Question; rate: number }[] = [];
     for (const r of latest.values()) {
       if (r.correct) continue;
       const q = [...event.questions, ...Object.values(event.retry)].find((x) => x.id === r.questionId.replace(/#retry$/, ''));
@@ -1651,25 +1650,32 @@ class Hub {
       // Retry copies have their answers re-placed, so read the choice against the copy that was played.
       const shown = live.list.find((x) => x.id === r.questionId) ?? q;
       const word = r.wordKey ? d.words[r.wordKey] : undefined;
-      wrong.push({
-        questionId: q.id,
-        wordKey: r.wordKey,
-        spelling: word?.spelling,
-        meaning: word?.meaning,
-        prompt: q.prompt,
-        // A 고치기 find step's answer is the wrong word; the note shows it with its fix ('fastly → fast').
-        correctLabel: q.noteLabel ?? correctLabelOf(q),
-        ko: q.grammar?.ko,
-        rule: q.grammar ? q.explanation : undefined,
-        mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? (q.mode === 'CUSTOM_TEXT' ? '(못 썼어요)' : '(못 골랐어요)'),
-        feedback: r.choice >= 0 ? shown.options[r.choice]?.feedback : undefined,
-        example: word?.example?.replace(/[[\]]/g, ''),
-        exampleMeaning: word?.exampleMeaning,
-      });
+      const stats = live.mainStats.get(q.id);
       const p = (r.wordKey && event.retry[r.wordKey]) || q;
-      if (p.mode !== 'CUSTOM_TEXT') practice.push(p);
+      notes.push({
+        // The class's share of right answers on it this session; one without a count (a bonus question) goes last.
+        rate: stats && stats.total > 0 ? stats.correct / stats.total : 1,
+        practice: p.mode !== 'CUSTOM_TEXT' ? p : undefined,
+        note: {
+          questionId: q.id,
+          wordKey: r.wordKey,
+          spelling: word?.spelling,
+          meaning: word?.meaning,
+          prompt: q.prompt,
+          // A 고치기 find step's answer is the wrong word; the note shows it with its fix ('fastly → fast').
+          correctLabel: q.noteLabel ?? correctLabelOf(q),
+          ko: q.grammar?.ko,
+          rule: q.grammar ? q.explanation : undefined,
+          mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? (q.mode === 'CUSTOM_TEXT' ? '(못 썼어요)' : '(못 골랐어요)'),
+          feedback: r.choice >= 0 ? shown.options[r.choice]?.feedback : undefined,
+          example: word?.example?.replace(/[[\]]/g, ''),
+          exampleMeaning: word?.exampleMeaning,
+        },
+      });
     }
-    return { wrong, practice };
+    // What the class found hardest comes first (the lowest share of right answers); equal ones keep the play order.
+    notes.sort((a, b) => a.rate - b.rate);
+    return { wrong: notes.map((x) => x.note), practice: notes.flatMap((x) => (x.practice ? [x.practice] : [])) };
   }
 
   // ---------- inputs during play ----------
