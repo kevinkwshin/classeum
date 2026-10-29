@@ -120,7 +120,8 @@ interface Live {
   bestStreak: Map<string, number>;
   /** Who got this question right, shuffled per question, so each phone's friends row is a slice of it. */
   correctOrder: string[];
-  mainStats: Map<string, { correct: number; total: number; wordKey?: string }>;
+  /** Main-round scored questions: how many got them right, and the wrong answer most of the others gave. */
+  mainStats: Map<string, { correct: number; total: number; wordKey?: string; topWrong?: string }>;
   perStudent: Map<string, StudentResult>;
   checkpoint: { kind: 'block' | 'retry'; accuracy: number; done: number; total: number } | null;
   summary: { accuracy: number; rewarded: number; judged: number } | null;
@@ -640,6 +641,7 @@ class Hub {
               }
             : null,
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + playSeconds(x), 0)),
+        hardest: live.phase === 'summary' ? this.hardest() : null,
       };
     }
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
@@ -1438,8 +1440,13 @@ class Hub {
     }
     live.correctOrder = [...live.choices].filter(([, c]) => c.correct).map(([id]) => id).sort((x, y) => hashString(x + live.seq) - hashString(y + live.seq));
     const accuracy = counted.length ? correct / counted.length : 0;
-    // Only words come back in the retry round (buildRetry reads wordKey); grammar is in the stats for the rest.
-    if (counts) live.mainStats.set(q.id, { correct, total: counted.length, wordKey: q.wordKey });
+    // Only words come back in the retry round (buildRetry reads wordKey); grammar is in the stats for the rest. The
+    // most common wrong answer is for the teacher's list at the end: a box, or typing several students gave.
+    if (counts) {
+      const wrongZone = zoneCounts.reduce((best, n, i) => (i !== q.answerIndex && n > 0 && (best < 0 || n > zoneCounts[best]) ? i : best), -1);
+      const typed = [...textWrong].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1])[0]?.[0];
+      live.mainStats.set(q.id, { correct, total: counted.length, wordKey: q.wordKey, topWrong: q.mode === 'CUSTOM_TEXT' ? typed : q.options[wrongZone]?.label });
+    }
     let topWrong: RevealInfo['topWrong'];
     if (accuracy < 0.6 && q.mode !== 'CUSTOM_TEXT') {
       let best = -1;
@@ -1630,6 +1637,19 @@ class Hub {
     live.index = -1;
     flush();
     this.schedulePush(true);
+  }
+
+  /** The quiz's scored questions for the teacher at the end, what the class missed most first (then in play order). */
+  private hardest(): { id: string; kind: string; text: string; answer: string; accuracy: number; total: number; topWrong: string | null }[] {
+    const live = this.live!;
+    const order = new Map(live.mainList.map((q, i) => [q.id, i]));
+    return [...live.mainStats]
+      .flatMap(([id, s]) => {
+        const q = live.mainList.find((x) => x.id === id);
+        if (!q || s.total === 0) return [];
+        return [{ id, kind: q.modeLabel, text: q.prompt, answer: q.noteLabel ?? correctLabelOf(q), accuracy: s.correct / s.total, total: s.total, topWrong: s.topWrong ?? null }];
+      })
+      .sort((a, b) => a.accuracy - b.accuracy || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   }
 
   /** `answers`: the student's main and retry answers this session, oldest first (finish() groups them in one pass). */

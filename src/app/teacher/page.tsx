@@ -845,6 +845,31 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
         </div>
         <p className="text-ink-3">학생들은 각자 폰에서 결과와 오답 노트를 보고 있어요. 학생별 기록은 통계에 쌓였어요.</p>
         <Btn onClick={() => act({ type: 'close-session' })}>아레나 닫기</Btn>
+        {live.hardest && live.hardest.length > 0 && (
+          // What the class missed most this time, to go over together before closing.
+          <Card className="w-full max-w-5xl !p-2">
+            <div className="flex items-baseline justify-between px-4 pb-1 pt-3">
+              <h2 className="text-lg font-bold">많이 틀린 문제</h2>
+              <span className="text-sm text-ink-3">반 정답률이 낮은 순 · {live.hardest.length}문제</span>
+            </div>
+            <table className="w-full text-left text-[15px]">
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="w-20 px-4 py-2">정답률</th><th>문제</th><th>정답</th><th className="pr-4">많이 고른 오답</th></tr></thead>
+              <tbody>
+                {live.hardest.map((h) => (
+                  <tr key={h.id} className="border-t border-[#EEF0F3] align-top">
+                    <td className={`tabular px-4 py-2.5 font-extrabold ${h.accuracy < 0.6 ? 'text-bad' : ''}`}>{Math.round(h.accuracy * 100)}%</td>
+                    <td className="py-2.5 pr-4">
+                      <span className="mr-2 whitespace-nowrap rounded-full bg-bg px-2 py-0.5 text-xs font-bold text-ink-2">{h.kind}</span>
+                      <span className="break-keep">{h.text}</span>
+                    </td>
+                    <td className="py-2.5 pr-4 font-bold">{h.answer}</td>
+                    <td className="py-2.5 pr-4 text-ink-2">{h.topWrong ?? '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        )}
       </div>
     );
   }
@@ -1249,6 +1274,8 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
   const [data, setData] = useState<{ classId: string; stats: StatsData } | null>(null);
   const [mode, setMode] = useState<'students' | 'words'>('students');
   const [picked, setPicked] = useState<string | null>(null);
+  // 학생별: by number, or the lowest average first (no quiz yet goes last).
+  const [order, setOrder] = useState<'number' | 'missed'>('number');
   useEffect(() => {
     let stop = false;
     fetch(`/api/stats?class=${encodeURIComponent(classId)}`)
@@ -1260,7 +1287,11 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
     };
   }, [classId]);
   const stats = data && data.classId === classId ? data.stats : null;
-  const student = useMemo(() => stats?.students.find((s) => s.id === picked) ?? stats?.students[0], [stats, picked]);
+  const students = useMemo(
+    () => (!stats ? [] : order === 'number' ? stats.students : [...stats.students].sort((a, b) => (a.average ?? 2) - (b.average ?? 2) || b.missed.length - a.missed.length)),
+    [stats, order],
+  );
+  const student = useMemo(() => students.find((s) => s.id === picked) ?? students[0], [students, picked]);
   const pct = (v: number | null | undefined) => (v === null || v === undefined ? '-' : `${Math.round(v * 100)}%`);
   if (classes.length === 0) return <div className="p-8 text-ink-3">반 관리에서 반을 먼저 만들어 주세요.</div>;
   if (!stats) return <div className="p-8 text-ink-3">불러오는 중…</div>;
@@ -1298,18 +1329,28 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
         </Card>
       ) : (
         <div className="flex gap-5">
-          <Card className="w-[520px] shrink-0 !p-2">
+          <Card className="w-[560px] shrink-0 !p-2">
+            <div className="flex justify-end px-2 pt-1">
+              <div className="flex gap-1 rounded-lg bg-[#E9EBEF] p-0.5">
+                {(['number', 'missed'] as const).map((o) => (
+                  <button key={o} type="button" aria-pressed={order === o} onClick={() => setOrder(o)} title={o === 'missed' ? '평균 정답률이 낮은 학생부터' : undefined} className={`h-7 rounded-md px-2.5 text-xs ${order === o ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>
+                    {o === 'number' ? '번호 순' : '많이 틀린 순'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <table className="w-full text-left text-[15px]">
-              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>출석</th><th className="text-right">최근</th><th className="text-center">최근 5회</th><th className="pr-4 text-right">자주 틀림</th></tr></thead>
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>출석</th><th className="text-right">평균</th><th className="text-right">최근</th><th className="text-center">최근 5회</th><th className="pr-4 text-right">자주 틀림</th></tr></thead>
               <tbody>
-                {stats.students.map((s) => {
+                {students.map((s) => {
                   const recent = s.sessions.slice(-5);
                   const last = [...s.sessions].reverse().find((x) => x.accuracy !== null)?.accuracy ?? null;
                   return (
                     <tr key={s.id} onClick={() => setPicked(s.id)} className={`cursor-pointer border-t border-[#EEF0F3] ${student?.id === s.id ? 'bg-bg' : ''}`}>
                       <td className="px-4 py-2.5 font-semibold"><span className="tabular mr-1.5 text-[#A3A8B4]">{s.number}</span>{s.name}</td>
                       <td className="tabular text-sm text-ink-2">{s.attendance}</td>
-                      <td className="tabular text-right font-extrabold">{pct(last)}</td>
+                      <td className={`tabular text-right font-extrabold ${s.average !== null && s.average < 0.6 ? 'text-bad' : ''}`}>{pct(s.average)}</td>
+                      <td className="tabular text-right font-semibold text-ink-2">{pct(last)}</td>
                       <td><div className="flex h-6 items-end justify-center gap-[3px]">{recent.map((x) => <div key={x.sessionId} title={`${x.eventName} ${pct(x.accuracy)}`} className="w-2.5 rounded-t-[3px]" style={{ height: x.accuracy === null ? 3 : Math.max(3, x.accuracy * 24), background: x.accuracy === null ? '#E3E5EA' : '#101218' }} />)}</div></td>
                       <td className={`tabular pr-4 text-right text-sm font-bold ${s.missed.length >= 5 ? 'text-bad' : 'text-ink-2'}`}>{s.missed.length}</td>
                     </tr>
