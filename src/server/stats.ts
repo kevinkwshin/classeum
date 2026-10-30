@@ -1,4 +1,5 @@
 // Per-student and per-word statistics for the teacher, computed from stored responses.
+import { answerLabelOf, correctLabelOf } from './answers';
 import { db, type ResponseRec } from './store';
 
 /** Class names in the order people expect ('2반' before '10반'). One collator: localeCompare with options builds one per call. */
@@ -115,6 +116,46 @@ export function computeStats(classId?: string): { students: StudentStats[]; word
     }))
     .sort((a, b) => a.accuracy - b.accuracy);
   return { students, words };
+}
+
+export interface QuizMistakes {
+  sessionId: string;
+  eventName: string;
+  date: number;
+  /** The student's scored questions that quiz and how many they got right. */
+  total: number;
+  correct: number;
+  /** In play order: the question, what the student answered, the right answer, and whether 다시 도전 fixed it. */
+  wrong: { questionId: string; kind: string; text: string; mine: string; answer: string; fixedInRetry: boolean }[];
+  /** The quiz's event was deleted, so its questions can't be shown. */
+  gone: boolean;
+}
+
+/** One student's quizzes, the latest first, each with the questions they got wrong (words and grammar). */
+export function studentMistakes(studentId: string): QuizMistakes[] {
+  const d = db();
+  const mine = d.responses.filter((r) => r.studentId === studentId);
+  return d.sessions
+    .filter((ses) => ses.perStudent.some((p) => p.studentId === studentId))
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .map((ses) => {
+      const p = ses.perStudent.find((x) => x.studentId === studentId)!;
+      const event = Object.hasOwn(d.events, ses.eventId) ? d.events[ses.eventId] : undefined;
+      const answers = mine.filter((r) => r.sessionId === ses.id);
+      // A word got right in 다시 도전 (the retry copy may have its own id, so by word).
+      const fixed = new Set(answers.filter((r) => r.round === 'retry' && r.correct && r.wordKey).map((r) => r.wordKey));
+      const order = new Map((event?.questions ?? []).map((q, i) => [q.id, i]));
+      const wrong = answers
+        .filter((r) => r.round === 'main' && !r.correct)
+        .flatMap((r) => {
+          const q = event?.questions.find((x) => x.id === r.questionId);
+          // Scored questions only (words and grammar), as in the score beside them.
+          if (!q || (!q.wordKey && !q.grammar)) return [];
+          return [{ questionId: q.id, kind: q.modeLabel, text: q.prompt, mine: answerLabelOf(q, r), answer: q.noteLabel ?? correctLabelOf(q), fixedInRetry: !!r.wordKey && fixed.has(r.wordKey) }];
+        })
+        .sort((a, b) => (order.get(a.questionId) ?? 0) - (order.get(b.questionId) ?? 0));
+      return { sessionId: ses.id, eventName: event?.name ?? '삭제된 이벤트', date: ses.startedAt, total: p.connected, correct: p.correct, wrong, gone: !event };
+    });
 }
 
 /** CSV with a BOM so Korean Excel opens it as UTF-8. */

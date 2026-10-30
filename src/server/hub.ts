@@ -8,6 +8,7 @@ import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, to
 import { zoneOf } from '@/lib/field';
 import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
+import { answerLabelOf, correctLabelOf } from './answers';
 import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
@@ -120,6 +121,8 @@ interface Live {
   bestStreak: Map<string, number>;
   /** Who got this question right, shuffled per question, so each phone's friends row is a slice of it. */
   correctOrder: string[];
+  /** At the end: the questions the class missed most first, with who missed them (worked out once, in finish()). */
+  hardest: HardestRow[];
   /** Main-round scored questions: how many got them right, and the wrong answer most of the others gave. */
   mainStats: Map<string, { correct: number; total: number; wordKey?: string; topWrong?: string }>;
   perStudent: Map<string, StudentResult>;
@@ -230,17 +233,13 @@ function plannedOf(live: { mainList: Question[]; skipped: Set<string> }): number
   return live.mainList.filter((q) => scored(q) && !live.skipped.has(q.id)).length;
 }
 
-/** The right answer as words: a grammar question's filled gaps ('let, exchange'), or the first accepted answer. */
-function correctLabelOf(q: Question): string {
-  if (q.mode !== 'CUSTOM_TEXT') return q.options[q.answerIndex]?.label ?? '';
-  if (q.fill) return q.fill.map((f) => f || '삭제').join(', ');
-  return (q.answers ?? [])[0] ?? '';
-}
-
 /** Seconds a question takes in class with its reveal: most answer a word in under 9 s, a grammar question takes longer. */
 function playSeconds(q: Question): number {
   return (q.grammar ? Math.round(q.seconds * 0.8) : Math.min(q.seconds, 9)) + 4;
 }
+
+/** One scored question at the end: the class's share of right answers, and the students who missed it with their answers. */
+type HardestRow = { id: string; kind: string; text: string; answer: string; accuracy: number; total: number; topWrong: string | null; missed: { number: number; name: string; mine: string }[] };
 
 class Hub {
   clients = new Set<Client>();
@@ -641,7 +640,7 @@ class Hub {
               }
             : null,
         remainingSec: Math.round(live.list.slice(live.index + 1).reduce((s, x) => s + playSeconds(x), 0)),
-        hardest: live.phase === 'summary' ? this.hardest() : null,
+        hardest: live.phase === 'summary' ? live.hardest : null,
       };
     }
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
@@ -1284,6 +1283,7 @@ class Hub {
       perStudent: new Map(),
       checkpoint: null,
       summary: null,
+      hardest: [],
       studentSummary: new Map(),
       stamped: new Set(),
       mainCount: event.questions.length,
@@ -1629,6 +1629,7 @@ class Hub {
     // A run stopped before anyone answered a word question leaves no empty column in the stats.
     if (mainCount > 0 && tookPart.size > 0) d.sessions.push({ id: live.id, eventId: live.eventId, classId: live.classId, startedAt: live.startedAt, endedAt: Date.now(), mainCount, planned, perStudent });
     live.summary = { accuracy: totalConnected ? totalCorrect / totalConnected : 0, rewarded, judged: judgedCount };
+    live.hardest = this.hardest();
     // A screen covered with B would otherwise hide the class summary, and the summary has no cover button.
     live.blank = false;
     live.pausedByBlank = false;
@@ -1639,15 +1640,32 @@ class Hub {
     this.schedulePush(true);
   }
 
-  /** The quiz's scored questions for the teacher at the end, what the class missed most first (then in play order). */
-  private hardest(): { id: string; kind: string; text: string; answer: string; accuracy: number; total: number; topWrong: string | null }[] {
+  /**
+   * The quiz's scored questions for the teacher at the end, what the class missed most first (then in play order),
+   * each with the students who missed it and what they answered (shown when the teacher opens the row).
+   */
+  private hardest(): HardestRow[] {
     const live = this.live!;
+    const d = db();
     const order = new Map(live.mainList.map((q, i) => [q.id, i]));
+    const missedOf = new Map<string, ResponseRec[]>();
+    for (const r of d.responses) {
+      if (r.sessionId !== live.id || r.round !== 'main' || r.correct) continue;
+      const list = missedOf.get(r.questionId);
+      if (list) list.push(r);
+      else missedOf.set(r.questionId, [r]);
+    }
     return [...live.mainStats]
       .flatMap(([id, s]) => {
         const q = live.mainList.find((x) => x.id === id);
         if (!q || s.total === 0) return [];
-        return [{ id, kind: q.modeLabel, text: q.prompt, answer: q.noteLabel ?? correctLabelOf(q), accuracy: s.correct / s.total, total: s.total, topWrong: s.topWrong ?? null }];
+        const missed = (missedOf.get(id) ?? [])
+          .flatMap((r) => {
+            const st = Object.hasOwn(d.students, r.studentId) ? d.students[r.studentId] : undefined;
+            return st ? [{ number: st.number, name: st.name, mine: answerLabelOf(q, r) }] : [];
+          })
+          .sort((a, b) => a.number - b.number);
+        return [{ id, kind: q.modeLabel, text: q.prompt, answer: q.noteLabel ?? correctLabelOf(q), accuracy: s.correct / s.total, total: s.total, topWrong: s.topWrong ?? null, missed }];
       })
       .sort((a, b) => a.accuracy - b.accuracy || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   }
@@ -1686,7 +1704,7 @@ class Hub {
           correctLabel: q.noteLabel ?? correctLabelOf(q),
           ko: q.grammar?.ko,
           rule: q.grammar ? q.explanation : undefined,
-          mineLabel: r.choice >= 0 ? shown.options[r.choice]?.label ?? '' : r.text ?? (q.mode === 'CUSTOM_TEXT' ? '(못 썼어요)' : '(못 골랐어요)'),
+          mineLabel: answerLabelOf(shown, r),
           feedback: r.choice >= 0 ? shown.options[r.choice]?.feedback : undefined,
           example: word?.example?.replace(/[[\]]/g, ''),
           exampleMeaning: word?.exampleMeaning,

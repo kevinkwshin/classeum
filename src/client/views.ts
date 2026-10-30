@@ -97,7 +97,7 @@ export interface TeacherLive extends SessionPublic {
   mainPlanned: number;
   remainingSec: number;
   /** At the end: each scored question with the class's share of right answers, the lowest first. */
-  hardest: { id: string; kind: string; text: string; answer: string; accuracy: number; total: number; topWrong: string | null }[] | null;
+  hardest: { id: string; kind: string; text: string; answer: string; accuracy: number; total: number; topWrong: string | null; missed: { number: number; name: string; mine: string }[] }[] | null;
   /** The type being asked now (단어, 문법 고르기, …), how many of it are left, and what comes next ('다시 도전', or null: the results). */
   section: { key: string; label: string; left: number; next: string | null } | null;
   /** In the lobby, 오늘 낼 문제: each type with its row count and whether it is in, the time, and the 10-question rest. */

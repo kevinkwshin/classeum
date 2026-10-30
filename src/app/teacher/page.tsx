@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
@@ -808,6 +808,14 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
   const running = live.phase !== 'lobby' && live.phase !== 'summary';
   // Hidden until the reveal, in case the laptop screen ends up mirrored on the projector; asked again for each question.
   const [shownSeq, setShownSeq] = useState<number | null>(null);
+  // The end screen's questions opened to show who missed them (names stay folded in case the screen is mirrored).
+  const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
+  const toggleRow = (id: string) => setOpenRows((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   const showAnswer = live.phase === 'reveal' || (shownSeq !== null && shownSeq === live.question?.seq);
   const setShowAnswer = () => setShownSeq(live.question?.seq ?? null);
   useTicker(running, 250);
@@ -850,22 +858,42 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           <Card className="w-full max-w-5xl !p-2">
             <div className="flex items-baseline justify-between px-4 pb-1 pt-3">
               <h2 className="text-lg font-bold">많이 틀린 문제</h2>
-              <span className="text-sm text-ink-3">반 정답률이 낮은 순 · {live.hardest.length}문제</span>
+              <span className="text-sm text-ink-3">반 정답률이 낮은 순 · {live.hardest.length}문제 · 줄을 누르면 틀린 학생</span>
             </div>
             <table className="w-full text-left text-[15px]">
-              <thead className="text-xs font-bold text-ink-3"><tr><th className="w-20 px-4 py-2">정답률</th><th>문제</th><th>정답</th><th className="pr-4">많이 고른 오답</th></tr></thead>
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="w-20 px-4 py-2">정답률</th><th>문제</th><th>정답</th><th>많이 고른 오답</th><th className="pr-4 text-right">틀린 학생</th></tr></thead>
               <tbody>
-                {live.hardest.map((h) => (
-                  <tr key={h.id} className="border-t border-[#EEF0F3] align-top">
-                    <td className={`tabular px-4 py-2.5 font-extrabold ${h.accuracy < 0.6 ? 'text-bad' : ''}`}>{Math.round(h.accuracy * 100)}%</td>
-                    <td className="py-2.5 pr-4">
-                      <span className="mr-2 whitespace-nowrap rounded-full bg-bg px-2 py-0.5 text-xs font-bold text-ink-2">{h.kind}</span>
-                      <span className="break-keep">{h.text}</span>
-                    </td>
-                    <td className="py-2.5 pr-4 font-bold">{h.answer}</td>
-                    <td className="py-2.5 pr-4 text-ink-2">{h.topWrong ?? '-'}</td>
-                  </tr>
-                ))}
+                {live.hardest.map((h) => {
+                  const open = openRows.has(h.id);
+                  return (
+                    <Fragment key={h.id}>
+                      <tr onClick={() => h.missed.length && toggleRow(h.id)} className={`border-t border-[#EEF0F3] align-top ${h.missed.length ? 'cursor-pointer hover:bg-bg' : ''} ${open ? 'bg-bg' : ''}`}>
+                        <td className={`tabular px-4 py-2.5 font-extrabold ${h.accuracy < 0.6 ? 'text-bad' : ''}`}>{Math.round(h.accuracy * 100)}%</td>
+                        <td className="py-2.5 pr-4">
+                          <span className="mr-2 whitespace-nowrap rounded-full bg-bg px-2 py-0.5 text-xs font-bold text-ink-2">{h.kind}</span>
+                          <span className="break-keep">{h.text}</span>
+                        </td>
+                        <td className="py-2.5 pr-4 font-bold">{h.answer}</td>
+                        <td className="py-2.5 pr-4 text-ink-2">{h.topWrong ?? '-'}</td>
+                        <td className="tabular whitespace-nowrap py-2.5 pr-4 text-right text-sm font-bold text-ink-2">{h.missed.length ? `${h.missed.length}명 ${open ? '▴' : '▾'}` : '-'}</td>
+                      </tr>
+                      {open && (
+                        <tr className="bg-bg">
+                          <td />
+                          <td colSpan={4} className="pb-3 pr-4">
+                            <div className="flex flex-wrap gap-1.5">
+                              {h.missed.map((m) => (
+                                <span key={`${m.number}-${m.name}`} className="rounded-full bg-white px-3 py-1 text-sm">
+                                  <span className="tabular mr-1 text-ink-3">{m.number}</span><span className="font-semibold">{m.name}</span><span className="ml-1.5 text-bad">{m.mine}</span>
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </Card>
@@ -1269,6 +1297,75 @@ interface StatsData {
   words: { key: string; word: string; meaning: string; attempts: number; accuracy: number; topWrong: string | null }[];
 }
 
+interface QuizMistakes {
+  sessionId: string;
+  eventName: string;
+  date: number;
+  total: number;
+  correct: number;
+  wrong: { questionId: string; kind: string; text: string; mine: string; answer: string; fixedInRetry: boolean }[];
+  gone: boolean;
+}
+
+/** One student's quizzes, the latest first: what they got wrong in the one picked, what they answered, and the answer. */
+function StudentMistakes({ studentId }: { studentId: string }) {
+  const [data, setData] = useState<{ studentId: string; quizzes: QuizMistakes[] } | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => {
+    let stop = false;
+    fetch(`/api/stats?student=${encodeURIComponent(studentId)}`)
+      .then((r) => r.json())
+      .then((d: { quizzes: QuizMistakes[] }) => !stop && setData({ studentId, quizzes: d.quizzes }))
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [studentId]);
+  const quizzes = data && data.studentId === studentId ? data.quizzes : null;
+  const quiz = quizzes?.find((x) => x.sessionId === picked) ?? quizzes?.[0];
+  return (
+    <Card>
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="font-bold">퀴즈별 틀린 문제</h2>
+        {quiz && !quiz.gone && <span className="tabular text-sm text-ink-3">{quiz.total}문제 중 {quiz.correct}개 맞힘</span>}
+      </div>
+      {!quizzes ? (
+        <div className="text-sm text-ink-3">불러오는 중…</div>
+      ) : quizzes.length === 0 ? (
+        <div className="text-sm text-ink-3">아직 푼 퀴즈가 없어요.</div>
+      ) : (
+        <>
+          <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+            {quizzes.map((x) => (
+              <button key={x.sessionId} type="button" aria-pressed={x.sessionId === quiz?.sessionId} onClick={() => setPicked(x.sessionId)} className={`h-8 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm ${x.sessionId === quiz?.sessionId ? 'border-ink bg-ink font-bold text-white' : 'border-[#D5D8DF] bg-white font-semibold text-ink-2'}`}>
+                {x.eventName} · {dayOf(x.date)}
+              </button>
+            ))}
+          </div>
+          {quiz?.gone ? (
+            <div className="text-sm text-ink-3">이벤트를 지워서 문제를 볼 수 없어요.</div>
+          ) : !quiz || quiz.wrong.length === 0 ? (
+            <div className="text-sm text-ink-3">틀린 문제가 없어요.</div>
+          ) : (
+            <table className="w-full text-left text-[15px]">
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="py-2 pr-3">문제</th><th className="pr-3">학생 답</th><th>정답</th></tr></thead>
+              <tbody>
+                {quiz.wrong.map((w) => (
+                  <tr key={w.questionId} className="border-t border-[#EEF0F3] align-top">
+                    <td className="py-2 pr-3"><span className="mr-2 whitespace-nowrap rounded-full bg-bg px-2 py-0.5 text-xs font-bold text-ink-2">{w.kind}</span><span className="break-keep">{w.text}</span></td>
+                    <td className="py-2 pr-3 font-semibold text-bad">{w.mine}</td>
+                    <td className="py-2 font-bold">{w.answer}{w.fixedInRetry && <span className="ml-1.5 whitespace-nowrap rounded-full bg-good-soft px-2 py-0.5 text-xs font-bold text-good">다시 도전에서 맞힘</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 function Stats({ classes }: { classes: TeacherView['classes'] }) {
   const [classId, setClassId] = useClassChoice(classes);
   const [data, setData] = useState<{ classId: string; stats: StatsData } | null>(null);
@@ -1380,6 +1477,7 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
                 </div>
                 <div className="mt-1.5 flex gap-4 text-center text-xs text-ink-3">{student.sessions.slice(-8).map((x) => <div key={x.sessionId} className="min-w-0 flex-1 truncate">{x.eventName}</div>)}</div>
               </Card>
+              <StudentMistakes key={student.id} studentId={student.id} />
               <div className="grid grid-cols-2 gap-4">
                 <Card><h2 className="mb-3 font-bold">자주 틀리는 단어</h2><div className="flex flex-wrap gap-2">{student.missed.map((m) => <span key={m.word} className="rounded-full bg-bad-soft px-3 py-1.5 text-sm font-bold">{m.word} <span className="text-bad">×{m.count}</span></span>)}{student.missed.length === 0 && <span className="text-sm text-ink-3">없음</span>}</div></Card>
                 <Card><h2 className="mb-3 font-bold">이제 맞히는 단어</h2><div className="flex flex-wrap gap-2">{student.fixed.map((w) => <span key={w} className="rounded-full bg-good-soft px-3 py-1.5 text-sm font-bold text-good">{w}</span>)}{student.fixed.length === 0 && <span className="text-sm text-ink-3">없음</span>}</div></Card>
