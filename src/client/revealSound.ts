@@ -90,9 +90,12 @@ export function musicLevel(phase: Phase | undefined, blank: boolean | undefined,
   return phase === 'lobby' || phase === 'summary' ? MUSIC_FULL : MUSIC_SOFT;
 }
 
-/** The 아고라's song: fuller in the 대기실 and while students write, softly once the answers show or writing is closed. */
+/**
+ * The 아고라's song: fuller in the 대기실, while students write and at the 끝; softly while the teacher reads a topic
+ * out (준비), once the answers show, or with writing closed.
+ */
 export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal): number {
-  return phase === 'lobby' || (phase === 'writing' && reveal === 'hidden') ? MUSIC_FULL : MUSIC_SOFT;
+  return phase === 'lobby' || phase === 'end' || (phase === 'writing' && reveal === 'hidden') ? MUSIC_FULL : MUSIC_SOFT;
 }
 
 /** Background music at `level` (0 for none), easing between levels and fading out when it stops; `src` picks the song. */

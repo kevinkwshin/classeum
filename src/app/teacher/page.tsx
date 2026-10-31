@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import type { TeacherAgoraLive, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
+import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
+import type { TeacherAgora, TeacherAgoraLive, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { AGORA_MUSIC_SRC, AGORA_MUSIC_TITLE, MUSIC_TITLE } from '@/client/sound';
@@ -13,7 +13,7 @@ import { AgoraGuide, SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
-import { COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TOPIC_MAX, type TopicSort } from '@/lib/agora';
+import { COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TITLE_MAX, TOPIC_MAX, TOPICS_MAX, agoraMinutes, type TopicSort } from '@/lib/agora';
 
 type Send = (a: Record<string, unknown>) => Promise<unknown>;
 type Tab = 'arena' | 'students' | 'agora';
@@ -491,8 +491,6 @@ function Events({ view, act, notify, writing, setWriting, onStudents, title }: {
   );
 }
 
-const dayOf = (at: number) => new Date(at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }).replace(/\.\s?/g, '/').replace(/\/$/, '');
-
 /**
  * Which classes have had this quiz, for a teacher who rotates one week's quiz through several classes.
  * The class picked for 대기실 열기 is outlined, and a note warns when it has already played it.
@@ -507,7 +505,7 @@ function ClassRuns({ view, event, chosen }: { view: TeacherView; event: TeacherE
         {/* Green: had it; grey: not yet. The day, accuracy and runs are in the tooltip. */}
         {view.classes.map((c) => {
           const r = runs.get(c.id);
-          const detail = r ? `${dayOf(r.last)}${r.partial ? ' · 중간에 끝냄' : ` · 정답률 ${Math.round(r.accuracy * 100)}%`}${r.runs > 1 ? ` · ${r.runs}번` : ''}` : '아직 안 했어요';
+          const detail = r ? `${formatDay(r.last)}${r.partial ? ' · 중간에 끝냄' : ` · 정답률 ${Math.round(r.accuracy * 100)}%`}${r.runs > 1 ? ` · ${r.runs}번` : ''}` : '아직 안 했어요';
           return (
             <span
               key={c.id}
@@ -521,7 +519,7 @@ function ClassRuns({ view, event, chosen }: { view: TeacherView; event: TeacherE
       </div>
       {again && (
         <div className="text-sm font-semibold text-[#8A6100]">
-          {view.classes.find((c) => c.id === chosen)?.name}은 {dayOf(again.last)}에 이 퀴즈를 {again.partial ? '일부만 ' : ''}했어요. 다시 열어도 돼요.
+          {view.classes.find((c) => c.id === chosen)?.name}은 {formatDay(again.last)}에 이 퀴즈를 {again.partial ? '일부만 ' : ''}했어요. 다시 열어도 돼요.
         </div>
       )}
     </div>
@@ -1342,184 +1340,380 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
 
 // ---------- 아고라 ----------
 
-type TopicDraft = { text: string; note: string; columns: number; sort: TopicSort; minutes: number | null };
-const NEW_TOPIC: TopicDraft = { text: '', note: '', columns: 2, sort: 'number', minutes: DEFAULT_MINUTES };
+/** A row of the [새 아고라] table: a topic's question, 보조 설명 and settings, with the id of a topic the 아고라 already has. */
+type TopicRow = { id?: string; text: string; note: string; minutes: number | null; columns: number; sort: TopicSort };
+/** The [새 아고라] window's content: a new 아고라 (agoraId null) or the one being changed. */
+type AgoraDraft = { agoraId: string | null; title: string; rows: TopicRow[] };
+const blankRow = (): TopicRow => ({ text: '', note: '', minutes: DEFAULT_MINUTES, columns: 2, sort: 'number' });
+const rowOf = (t: TeacherTopic): TopicRow => ({ id: t.id, text: t.text, note: t.note, minutes: t.minutes, columns: t.columns, sort: t.sort });
+const newDraft = (): AgoraDraft => ({ agoraId: null, title: '', rows: [blankRow(), blankRow(), blankRow()] });
 const minutesLabel = (minutes: number | null) => (minutes ? `입력 시간 ${minutes}분` : '시간 제한 없음');
+const sortLabel = (sort: TopicSort) => (sort === 'time' ? '낸 순서' : '번호순');
 const byNumber = (a: { number: number }, b: { number: number }) => a.number - b.number;
 
+/** What was being typed for a new 아고라 survives closing the window or reloading the page, on this laptop only. */
+const AGORA_DRAFT_KEY = 'classeum.agoraDraft';
+function loadAgoraDraft(): AgoraDraft {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AGORA_DRAFT_KEY) ?? 'null') as AgoraDraft | null;
+    if (saved && typeof saved.title === 'string' && Array.isArray(saved.rows) && saved.rows.length) return { ...saved, agoraId: null };
+  } catch {
+    // Private window or a damaged draft: start empty.
+  }
+  return newDraft();
+}
+function keepAgoraDraft(draft: AgoraDraft | null) {
+  try {
+    if (draft) localStorage.setItem(AGORA_DRAFT_KEY, JSON.stringify(draft));
+    else localStorage.removeItem(AGORA_DRAFT_KEY);
+  } catch {
+    // Private window: the draft just isn't kept.
+  }
+}
+
+/** When a class did an 아고라, for 다시 보기: its run, or its latest answer from before runs were kept (the server's lessonOf). */
+function lessonDay(agora: TeacherAgora, classId: string, classOf: (studentId: string) => string | undefined): number | null {
+  const times = agora.topics.flatMap((t) => t.answers.filter((a) => classOf(a.studentId) === classId).map((a) => a.createdAt));
+  if (!times.length) return null;
+  return agora.runs.find((r) => r.classId === classId)?.at ?? Math.max(...times);
+}
+
 /**
- * The 아고라 tab, laid out as the arena's events: the topics, the newest first, each made once and opened for today's
+ * The 아고라 tab, laid out as the arena's events: every 아고라, the newest first, each made once and opened for today's
  * class with [대기실 열기]. While one is open its 대기실 is here; from [쓰기 시작] AgoraConsole takes the whole screen.
  */
 function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStudents: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
-  // The form, for a new topic (topicId null) or the one being changed.
-  const [form, setForm] = useState<{ topicId: string | null; draft: TopicDraft } | null>(null);
+  const [draft, setDraft] = useState<AgoraDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const change = (next: (d: AgoraDraft) => AgoraDraft) =>
+    setDraft((d) => {
+      if (!d) return d;
+      const out = next(d);
+      if (!out.agoraId) keepAgoraDraft(out);
+      return out;
+    });
   const live = view.agora.live;
   if (live) return <AgoraLobby view={view} live={live} act={act} />;
-  const topics = view.agora.topics;
-  const topic = topics.find((t) => t.id === selected) ?? topics[0] ?? null;
+  const agoras = view.agora.agoras;
+  const agora = agoras.find((a) => a.id === selected) ?? agoras[0] ?? null;
+  const editing = draft?.agoraId ? agoras.find((a) => a.id === draft.agoraId) : undefined;
+  const startNew = () => setDraft(loadAgoraDraft());
   const save = () => {
-    if (!form) return;
-    const sent = form.topicId ? act({ type: 'agora-edit', topicId: form.topicId, ...form.draft }) : act({ type: 'agora-add', ...form.draft });
-    sent
+    if (!draft) return;
+    // A topic taken out of the table (or emptied) takes its answers with it.
+    const kept = new Set(draft.rows.filter((r) => r.text.trim() || r.note.trim()).map((r) => r.id));
+    const lost = (editing?.topics ?? []).filter((t) => !kept.has(t.id)).reduce((n, t) => n + t.answers.length, 0);
+    if (lost && !confirm(`뺀 주제의 학생 답 ${lost}개도 함께 지워지고 되돌릴 수 없어요. 저장할까요?`)) return;
+    const topics = draft.rows.map(({ id, text, note, minutes, columns, sort }) => ({ id, text, note, minutes, columns, sort }));
+    setBusy(true);
+    act(draft.agoraId ? { type: 'agora-edit', agoraId: draft.agoraId, title: draft.title, topics } : { type: 'agora-add', title: draft.title, topics })
       .then((res) => {
-        const id = (res as { topicId?: string }).topicId;
+        const id = (res as { agoraId?: string }).agoraId;
         if (id) setSelected(id);
-        setForm(null);
+        if (!draft.agoraId) keepAgoraDraft(null);
+        setDraft(null);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setBusy(false));
   };
   return (
     <div className="flex flex-col gap-5 p-8">
       {/* Same height as the other tabs' header rows, so titles line up across tabs. */}
       <div className="flex min-h-11 items-center justify-between">
-        <h1 className="text-2xl font-bold">주제</h1>
-        <button type="button" onClick={() => setForm({ topicId: null, draft: NEW_TOPIC })} className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">
-          새 주제
+        <h1 className="text-2xl font-bold">아고라</h1>
+        <button type="button" onClick={startNew} className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">
+          새 아고라
         </button>
       </div>
       {/* Until the first 아고라, as 수업 준비 does for the arena; hidden while requests wait, as that card is. */}
-      {view.requests.length === 0 && <AgoraGuide view={view} onNew={() => setForm({ topicId: null, draft: NEW_TOPIC })} />}
-      {topics.length === 0 && !form ? (
+      {view.requests.length === 0 && <AgoraGuide view={view} onNew={startNew} />}
+      {agoras.length === 0 ? (
         <Card className="flex flex-col items-center gap-3 py-16 text-center">
-          <div className="text-xl font-bold">아직 주제가 없어요</div>
-          <div className="text-ink-3">[새 주제]로 질문을 써 두면, 수업 때 오늘 반을 골라 [대기실 열기]로 시작해요.</div>
+          <div className="text-xl font-bold">아직 아고라가 없어요</div>
+          <div className="text-ink-3">[새 아고라]로 제목과 주제를 써 두면, 수업 때 오늘 반을 골라 [대기실 열기]로 시작해요.</div>
         </Card>
       ) : (
         <div className="flex gap-5">
-          {topics.length > 0 && (
-            <div className="flex w-80 shrink-0 flex-col gap-2">
-              {topics.map((t) => {
-                const on = form ? form.topicId === t.id : topic?.id === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => {
-                      setSelected(t.id);
-                      setForm(null);
-                    }}
-                    className={`rounded-2xl p-4 text-left ${on ? 'bg-ink text-white' : 'bg-white'}`}
-                  >
-                    <div className="line-clamp-2 break-keep text-lg font-bold leading-snug [overflow-wrap:anywhere]">{t.text}</div>
-                    <div className={`text-sm ${on ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>
-                      {minutesLabel(t.minutes)} · {t.columns}열{view.classes.length > 0 ? ` · ${t.runs.length}/${view.classes.length}반` : ''}
+          <div className="flex w-80 shrink-0 flex-col gap-2">
+            {agoras.map((a) => {
+              const on = a.id === agora?.id;
+              return (
+                <button key={a.id} type="button" onClick={() => setSelected(a.id)} className={`rounded-2xl p-4 text-left ${on ? 'bg-ink text-white' : 'bg-white'}`}>
+                  <div className="line-clamp-2 break-keep text-lg font-bold leading-snug [overflow-wrap:anywhere]">{a.title}</div>
+                  <div className={`text-sm ${on ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>
+                    주제 {a.topics.length}개 · 약 {agoraMinutes(a.topics)}분{view.classes.length > 0 ? ` · ${a.runs.length}/${view.classes.length}반` : ''}
+                  </div>
+                  {/* The classes that have done it, as on the arena's event cards. */}
+                  {a.runs.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {view.classes
+                        .filter((c) => a.runs.some((r) => r.classId === c.id))
+                        .map((c) => (
+                          <span key={c.id} className={`rounded-full px-2 py-0.5 text-xs font-bold ${on ? 'bg-[#24272F] text-[#7FD8A6]' : 'bg-good-soft text-good'}`}>
+                            {c.name}
+                          </span>
+                        ))}
                     </div>
-                    {/* The classes that have done it, as on the arena's event cards. */}
-                    {t.runs.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {view.classes
-                          .filter((c) => t.runs.some((r) => r.classId === c.id))
-                          .map((c) => (
-                            <span key={c.id} className={`rounded-full px-2 py-0.5 text-xs font-bold ${on ? 'bg-[#24272F] text-[#7FD8A6]' : 'bg-good-soft text-good'}`}>
-                              {c.name}
-                            </span>
-                          ))}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {form ? (
-            <div className="flex min-w-0 flex-1 flex-col gap-5">
-              <TopicForm key={form.topicId ?? 'new'} draft={form.draft} setDraft={(draft) => setForm({ ...form, draft })} isNew={!form.topicId} onSave={save} onCancel={() => setForm(null)} />
-            </div>
-          ) : (
-            topic && (
-              <TopicDetail
-                key={topic.id}
-                view={view}
-                topic={topic}
-                act={act}
-                onStudents={onStudents}
-                onEdit={() => setForm({ topicId: topic.id, draft: { text: topic.text, note: topic.note, columns: topic.columns, sort: topic.sort, minutes: topic.minutes } })}
-              />
-            )
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {agora && (
+            <AgoraDetail key={agora.id} view={view} agora={agora} act={act} onStudents={onStudents} onEdit={() => setDraft({ agoraId: agora.id, title: agora.title, rows: [...agora.topics.map(rowOf), blankRow()] })} />
           )}
         </div>
       )}
+      {draft && <AgoraEditor draft={draft} change={change} busy={busy} onClose={() => setDraft(null)} onSave={save} />}
     </div>
   );
 }
 
-/** A topic, as the arena's EventDetail: what it asks, today's class and [대기실 열기], the classes that did it, and their answers. */
-function TopicDetail({ view, topic, act, onStudents, onEdit }: { view: TeacherView; topic: TeacherTopic; act: Send; onStudents: () => void; onEdit: () => void }) {
+const CELL = 'w-full resize-none rounded-lg bg-bg px-3 py-2 leading-snug outline-none [field-sizing:content] focus:bg-white focus:ring-2 focus:ring-ink/20';
+const PICK = 'h-10 w-full rounded-lg border border-[#D5D8DF] bg-white px-2 text-sm font-bold';
+
+/**
+ * [새 아고라] and [수정]: the arena's [직접 작성하기] window for an 아고라, a title and a table with a topic on each row:
+ * its question, 보조 설명, and its own 입력 시간, 열 and 순서. The class does the topics in the table's order; rows left
+ * empty are left out.
+ */
+function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDraft; change: (next: (d: AgoraDraft) => AgoraDraft) => void; busy: boolean; onClose: () => void; onSave: () => void }) {
+  const filled = draft.rows.filter((r) => r.text.trim()).length;
+  const setRow = (i: number, patch: Partial<TopicRow>) => change((d) => ({ ...d, rows: d.rows.map((r, k) => (k === i ? { ...r, ...patch } : r)) }));
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8">
+      <div className="flex max-h-full w-full max-w-5xl flex-col gap-4 overflow-hidden rounded-[24px] bg-white p-7">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">{draft.agoraId ? '아고라 고치기' : '새 아고라'}</h2>
+          <span className="rounded-full bg-good-soft px-3 py-1 text-sm font-bold text-good">주제 {filled}</span>
+        </div>
+        <input
+          value={draft.title}
+          onChange={(e) => change((d) => ({ ...d, title: e.target.value }))}
+          placeholder="제목 (예: 7과 let 토론)"
+          maxLength={TITLE_MAX}
+          autoFocus
+          aria-label="제목"
+          className="h-12 shrink-0 rounded-xl border border-[#D5D8DF] px-4 text-lg font-bold outline-none focus:border-ink"
+        />
+        <p className="text-sm text-ink-3">한 줄에 주제 하나. 질문과 예시 문장을 쓰고, 주제마다 입력 시간 · 프로젝터 열 · 카드 순서를 골라요. 수업에서는 위에서부터 차례로 해요.</p>
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-[#EEF0F3]">
+          <table className="w-full table-fixed text-[15px]">
+            <colgroup>
+              <col className="w-10" />
+              <col className="w-[34%]" />
+              <col />
+              <col className="w-28" />
+              <col className="w-20" />
+              <col className="w-28" />
+              <col className="w-10" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 bg-bg text-left text-sm text-ink-3">
+              <tr>
+                <th className="py-2 pl-3 font-semibold">#</th>
+                <th className="py-2 font-semibold">주제 (질문)</th>
+                <th className="py-2 font-semibold">보조 설명 · 예시 문장 (선택)</th>
+                <th className="py-2 font-semibold">입력 시간</th>
+                <th className="py-2 font-semibold">열</th>
+                <th className="py-2 font-semibold">카드 순서</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {draft.rows.map((r, i) => (
+                <tr key={i} className="border-t border-[#EEF0F3] align-top">
+                  <td className="tabular pl-3 pt-3.5 text-sm text-ink-3">{i + 1}</td>
+                  <td className="py-1.5 pr-2">
+                    <textarea
+                      value={r.text}
+                      onChange={(e) => setRow(i, { text: e.target.value })}
+                      rows={2}
+                      maxLength={TOPIC_MAX}
+                      placeholder={i === 0 ? '주말에 가족이 허락해 준 일을 let으로 한 문장 써 보세요' : ''}
+                      aria-label={`${i + 1}번 주제`}
+                      className={`${CELL} font-bold`}
+                    />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <textarea
+                      value={r.note}
+                      onChange={(e) => setRow(i, { note: e.target.value })}
+                      rows={2}
+                      maxLength={NOTE_MAX}
+                      placeholder={i === 0 ? '예) My mom let me play games after dinner.' : ''}
+                      aria-label={`${i + 1}번 보조 설명`}
+                      className={CELL}
+                    />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <select value={r.minutes ?? 0} onChange={(e) => setRow(i, { minutes: Number(e.target.value) || null })} aria-label={`${i + 1}번 입력 시간`} className={PICK}>
+                      {MINUTE_CHOICES.map((m) => (
+                        <option key={m} value={m}>{m}분</option>
+                      ))}
+                      <option value={0}>제한 없음</option>
+                    </select>
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <select value={r.columns} onChange={(e) => setRow(i, { columns: Number(e.target.value) })} aria-label={`${i + 1}번 프로젝터 열`} className={PICK}>
+                      {COLUMN_CHOICES.map((n) => (
+                        <option key={n} value={n}>{n}열</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <select value={r.sort} onChange={(e) => setRow(i, { sort: e.target.value === 'time' ? 'time' : 'number' })} aria-label={`${i + 1}번 카드 순서`} className={PICK}>
+                      <option value="number">번호순</option>
+                      <option value="time">낸 순서</option>
+                    </select>
+                  </td>
+                  <td className="pt-1.5">
+                    <button
+                      type="button"
+                      aria-label={`${i + 1}번 줄 지우기`}
+                      onClick={() => change((d) => ({ ...d, rows: d.rows.length > 1 ? d.rows.filter((_, k) => k !== i) : [blankRow()] }))}
+                      className="h-10 w-8 rounded-lg text-ink-3 hover:bg-bg"
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex gap-2">
+            <Btn kind="ghost" disabled={draft.rows.length >= TOPICS_MAX} title={draft.rows.length >= TOPICS_MAX ? `주제는 ${TOPICS_MAX}개까지예요` : undefined} onClick={() => change((d) => ({ ...d, rows: [...d.rows, blankRow()] }))}>
+              주제 추가
+            </Btn>
+            {!draft.agoraId && (
+              <Btn kind="ghost" onClick={() => { if (confirm('쓴 내용을 모두 지울까요?')) change(() => newDraft()); }}>
+                비우기
+              </Btn>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Btn kind="ghost" onClick={onClose}>닫기</Btn>
+            <Btn disabled={busy || !draft.title.trim() || filled === 0} onClick={onSave}>
+              {busy ? '저장 중…' : draft.agoraId ? '저장' : '만들기'}
+            </Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An 아고라, as the arena's EventDetail: its topics, today's class and [대기실 열기], the classes that did it, and their
+ * answers by class and topic, with [다시 보기] to open the shown class's answers again in a later lesson.
+ */
+function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherView; agora: TeacherAgora; act: Send; onStudents: () => void; onEdit: () => void }) {
   const [classId, setClassId] = useClassChoice(view.classes);
-  // The class whose answers show below, when the teacher picks another one.
+  // The class and topic whose answers show below, when the teacher picks others.
   const [answersOf, setAnswersOf] = useState<string | null>(null);
-  const runs = new Map(topic.runs.map((r) => [r.classId, r.at]));
+  const [topicAt, setTopicAt] = useState(0);
+  const runs = new Map(agora.runs.map((r) => [r.classId, r.at]));
   const byId = new Map(view.students.map((s) => [s.id, s]));
-  const answers = topic.answers
-    .map((a) => ({ a, s: byId.get(a.studentId) }))
-    .filter((r): r is { a: TeacherTopic['answers'][number]; s: TeacherStudent } => !!r.s);
-  const classesWith = view.classes.filter((c) => answers.some((r) => r.s.classId === c.id));
+  const classOf = (studentId: string) => byId.get(studentId)?.classId;
+  const total = agora.topics.reduce((n, t) => n + t.answers.length, 0);
+  const classesWith = view.classes.filter((c) => agora.topics.some((t) => t.answers.some((a) => classOf(a.studentId) === c.id)));
   const shownClass = classesWith.find((c) => c.id === answersOf) ?? classesWith.find((c) => c.id === classId) ?? classesWith[0];
-  const rows = answers.filter((r) => r.s.classId === shownClass?.id).sort((x, y) => byNumber(x.s, y.s));
+  const topic = agora.topics[Math.min(topicAt, agora.topics.length - 1)];
+  const rows = topic.answers
+    .map((a) => ({ a, s: byId.get(a.studentId) }))
+    .filter((r): r is { a: TeacherTopic['answers'][number]; s: TeacherStudent } => !!r.s && r.s.classId === shownClass?.id)
+    .sort((x, y) => byNumber(x.s, y.s));
+  const lesson = shownClass ? lessonDay(agora, shownClass.id, classOf) : null;
   const remove = () => {
-    const extra = topic.answers.length ? `\n학생 답 ${topic.answers.length}개도 함께 지워지고 되돌릴 수 없어요.` : '';
-    if (confirm(`이 주제를 지울까요?${extra}`)) act({ type: 'agora-delete', topicId: topic.id }).catch(() => undefined);
+    const extra = total ? `\n학생 답 ${total}개도 함께 지워지고 되돌릴 수 없어요.` : '';
+    if (confirm(`이 아고라를 지울까요?${extra}`)) act({ type: 'agora-delete', agoraId: agora.id }).catch(() => undefined);
+  };
+  // The projector window opens first, inside the click: Safari blocks one opened after the await.
+  const open = (type: 'agora-open' | 'agora-review', forClass: string) => {
+    if (!view.displayOn) openProjector();
+    act({ type, agoraId: agora.id, classId: forClass }).catch(() => undefined);
   };
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5">
-      <Card className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-        <div className="min-w-0 flex-[1_1_20rem]">
-          <div className="whitespace-pre-wrap break-keep text-2xl font-bold leading-snug [overflow-wrap:anywhere]">{topic.text}</div>
-          {topic.note && <div className="mt-1 whitespace-pre-wrap font-semibold text-ink-3 [overflow-wrap:anywhere]">{topic.note}</div>}
-          <div className="mt-0.5 text-sm text-ink-3">
-            {minutesLabel(topic.minutes)} · 프로젝터 {topic.columns}열 · {topic.sort === 'time' ? '낸 순서' : '번호순'} · {dayOf(topic.createdAt)} 만듦
+      <Card className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+          <div className="min-w-0 flex-[1_1_16rem]">
+            <div className="break-keep text-2xl font-bold leading-snug [overflow-wrap:anywhere]">{agora.title}</div>
+            <div className="mt-0.5 text-sm text-ink-3">
+              주제 {agora.topics.length}개 · 약 {agoraMinutes(agora.topics)}분 · {formatDay(agora.createdAt)} 만듦
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
+            <Btn kind="ghost" onClick={onEdit}>수정</Btn>
+            <Btn kind="ghost" onClick={remove}>지우기</Btn>
+            {view.classes.length === 0 ? (
+              <Btn onClick={onStudents}>반 만들기 →</Btn>
+            ) : (
+              <>
+                <label className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-ink-3">오늘 반</span>
+                  <select value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
+                    {view.classes.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <Btn kind="accent" disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : undefined} onClick={() => open('agora-open', classId)}>
+                  대기실 열기
+                </Btn>
+              </>
+            )}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
-          <Btn kind="ghost" onClick={onEdit}>수정</Btn>
-          <Btn kind="ghost" onClick={remove}>지우기</Btn>
-          {view.classes.length === 0 ? (
-            <Btn onClick={onStudents}>반 만들기 →</Btn>
-          ) : (
-            <>
-              <label className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-ink-3">오늘 반</span>
-                <select value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
-                  {view.classes.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </label>
-              {/* The projector window opens first, inside the click: Safari blocks one opened after the await. */}
-              <Btn
-                kind="accent"
-                disabled={!!view.live}
-                title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : undefined}
-                onClick={() => {
-                  if (!view.displayOn) openProjector();
-                  act({ type: 'agora-open', topicId: topic.id, classId }).catch(() => undefined);
-                }}
-              >
-                대기실 열기
-              </Btn>
-            </>
-          )}
-        </div>
-        <TopicRuns view={view} runs={runs} chosen={classId} />
+        <ol className="flex flex-col">
+          {agora.topics.map((t, i) => (
+            <li key={t.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0 first:pt-0">
+              <span className="tabular flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-sm font-extrabold text-white">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="whitespace-pre-wrap break-keep font-bold leading-snug [overflow-wrap:anywhere]">{t.text}</div>
+                <div className="mt-0.5 text-[13px] text-ink-3 [overflow-wrap:anywhere]">
+                  {t.note ? `${t.note} · ` : ''}
+                  {minutesLabel(t.minutes)} · {t.columns}열 · {sortLabel(t.sort)}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <AgoraRuns view={view} runs={runs} chosen={classId} />
       </Card>
       {shownClass && (
         <Card className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold">
-              답 <span className="ml-1 text-sm font-semibold text-ink-3">{runs.has(shownClass.id) ? `${dayOf(runs.get(shownClass.id) ?? 0)} 수업` : ''}</span>
-            </h2>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h2 className="text-lg font-bold">답</h2>
+              {lesson !== null && <span className="text-sm font-semibold text-ink-3">{formatDay(lesson)} 수업</span>}
+              {/* The class's answers on the projector again, in a later lesson: the 다시 보기 대기실. */}
+              <Btn disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : `${shownClass.name}의 답을 프로젝터에 다시 열어요`} onClick={() => open('agora-review', shownClass.id)} className="!h-9 px-3 text-sm">
+                다시 보기
+              </Btn>
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {classesWith.map((c) => (
                 <button key={c.id} type="button" aria-pressed={c.id === shownClass.id} onClick={() => setAnswersOf(c.id)} className={`h-9 rounded-xl px-3 text-sm font-bold ${c.id === shownClass.id ? 'bg-ink text-white' : 'bg-bg text-ink-2'}`}>
                   {c.name}
-                  <span className={`tabular ml-1.5 ${c.id === shownClass.id ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>{answers.filter((r) => r.s.classId === c.id).length}</span>
+                  <span className={`tabular ml-1.5 ${c.id === shownClass.id ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>{new Set(agora.topics.flatMap((t) => t.answers.filter((a) => classOf(a.studentId) === c.id).map((a) => a.studentId))).size}</span>
                 </button>
               ))}
             </div>
           </div>
+          {agora.topics.length > 1 && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="주제">
+              {agora.topics.map((t, i) => (
+                <button key={t.id} type="button" aria-pressed={t.id === topic.id} title={t.text} onClick={() => setTopicAt(i)} className={`h-9 rounded-full border px-3.5 text-sm font-bold ${t.id === topic.id ? 'border-ink bg-ink text-white' : 'border-[#D5D8DF] bg-white text-ink-3'}`}>
+                  주제 {i + 1}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex flex-col">
+            {rows.length === 0 && <div className="py-2 text-sm text-ink-3">이 주제에 쓴 답이 없어요</div>}
             {rows.map(({ a, s }) => (
               <div key={s.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0">
                 <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={30} seed={s.id} />
@@ -1528,6 +1722,8 @@ function TopicDetail({ view, topic, act, onStudents, onEdit }: { view: TeacherVi
                     <span className="tabular mr-1 text-ink-3">{s.number}</span>
                     {s.name}
                   </div>
+                  {/* 다시 쓰기 changed it: what it first said, struck through, above what it says now. */}
+                  {a.first !== null && <div className="whitespace-pre-wrap text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.first}</s></div>}
                   <div className="whitespace-pre-wrap text-[15px] [overflow-wrap:anywhere]">{a.text}</div>
                 </div>
                 <button
@@ -1549,8 +1745,8 @@ function TopicDetail({ view, topic, act, onStudents, onEdit }: { view: TeacherVi
   );
 }
 
-/** Which classes have done this topic, as ClassRuns shows for an event; the class picked for [대기실 열기] is outlined. */
-function TopicRuns({ view, runs, chosen }: { view: TeacherView; runs: Map<string, number>; chosen: string }) {
+/** Which classes have done this 아고라, as ClassRuns shows for an event; the class picked for [대기실 열기] is outlined. */
+function AgoraRuns({ view, runs, chosen }: { view: TeacherView; runs: Map<string, number>; chosen: string }) {
   if (view.classes.length === 0) return null;
   const again = runs.get(chosen);
   return (
@@ -1559,7 +1755,7 @@ function TopicRuns({ view, runs, chosen }: { view: TeacherView; runs: Map<string
         {view.classes.map((c) => {
           const at = runs.get(c.id);
           return (
-            <span key={c.id} title={`${c.name} · ${at ? dayOf(at) : '아직 안 했어요'}`} className={`rounded-full px-3 py-1 text-sm font-semibold ${at ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'} ${c.id === chosen ? 'ring-2 ring-ink/70' : ''}`}>
+            <span key={c.id} title={`${c.name} · ${at ? formatDay(at) : '아직 안 했어요'}`} className={`rounded-full px-3 py-1 text-sm font-semibold ${at ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'} ${c.id === chosen ? 'ring-2 ring-ink/70' : ''}`}>
               {c.name}
             </span>
           );
@@ -1567,34 +1763,39 @@ function TopicRuns({ view, runs, chosen }: { view: TeacherView; runs: Map<string
       </div>
       {again !== undefined && (
         <div className="text-sm font-semibold text-[#8A6100]">
-          {view.classes.find((c) => c.id === chosen)?.name}은 {dayOf(again)}에 이 주제를 했어요. 다시 열면 그 반 답에 이어서 써요.
+          {view.classes.find((c) => c.id === chosen)?.name}은 {formatDay(again)}에 이 아고라를 했어요. 다시 열면 그 반 답에 이어서 써요.
         </div>
       )}
     </div>
   );
 }
 
-/** The 아고라's 대기실, laid out as the arena's: today's 입력 시간·열·순서, who has come in, and [쓰기 시작]. */
+/**
+ * The 아고라's 대기실, laid out as the arena's: what comes up (the topics in order, or the lesson looked at again), who has
+ * come in, and [쓰기 시작], or in 다시 보기 [함께 보기].
+ */
 function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgoraLive; act: Send }) {
-  const topic = view.agora.topics.find((t) => t.id === live.topicId);
-  if (!topic) return null;
+  const agora = view.agora.agoras.find((a) => a.id === live.agoraId);
+  if (!agora) return null;
+  const review = live.review !== null;
   const inRoom = new Set(live.joined);
   const mine = view.students.filter((s) => s.classId === live.classId);
   const joined = mine.filter((s) => inRoom.has(s.id)).sort(byNumber);
   const notJoined = mine.filter((s) => !inRoom.has(s.id)).sort(byNumber);
-  const set = (input: Record<string, unknown>) => act({ type: 'agora-settings', ...input }).catch(() => undefined);
   return (
     <div className="flex flex-col gap-5 p-8">
       {/* Top-aligned, so 쓰기 시작 stays above the floating 기기 등록 요청 card, as in the arena's 대기실. */}
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-sm text-ink-3">대기실</div>
-          <h1 className="break-keep text-2xl font-bold">{live.className} · 아고라</h1>
+        <div className="min-w-0">
+          <div className="text-sm text-ink-3">{review ? `대기실 · 다시 보기 · ${formatDay(live.review ?? 0)} 수업` : '대기실'}</div>
+          <h1 className="break-keep text-2xl font-bold [overflow-wrap:anywhere]">
+            {live.className} · {agora.title}
+          </h1>
           <div className="mt-3 flex">
             <MusicSwitch on={live.music} onToggle={() => act({ type: 'agora-music' }).catch(() => undefined)} title={AGORA_MUSIC_TITLE} />
           </div>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
           <ProjectorLink className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</ProjectorLink>
           {/* A 12-second demo on the projector, as in the arena's 대기실; pressed again it starts over. */}
           <Btn kind="ghost" onClick={() => act({ type: 'agora-howto' }).catch(() => undefined)} className={live.howto ? '!border-ink !bg-ink !text-white' : ''}>
@@ -1602,26 +1803,32 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
             놀이 방법
           </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'agora-end' }).catch(() => undefined)}>대기실 닫기</Btn>
-          <Btn kind="accent" onClick={() => act({ type: 'agora-start' }).catch(() => undefined)} className="px-6">쓰기 시작</Btn>
+          <Btn kind="accent" onClick={() => act({ type: 'agora-start' }).catch(() => undefined)} className="px-6">
+            {review ? '함께 보기' : '쓰기 시작'}
+          </Btn>
         </div>
       </div>
       <div className="flex gap-5">
         {/* The right column is where the floating 등록 요청 card sits, so the controls stay on the left. */}
         <div className="flex min-w-0 flex-1 flex-col gap-5">
-          <Card className="flex flex-col gap-4">
+          <Card className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-lg font-bold">오늘의 주제</h2>
-              <span className="text-sm text-ink-3">프로젝터와 폰에 미리 보여요</span>
+              <h2 className="text-lg font-bold">{review ? '다시 볼 주제' : '오늘의 주제'}</h2>
+              <span className="text-sm text-ink-3">{review ? '함께 보기를 누르면 지난 답이 비공개로 떠요' : '주제 1이 프로젝터와 폰에 미리 보여요'}</span>
             </div>
-            <div>
-              <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{topic.text}</div>
-              {topic.note && <div className="mt-1 whitespace-pre-wrap font-semibold text-ink-3 [overflow-wrap:anywhere]">{topic.note}</div>}
-            </div>
-            <div className="flex flex-col gap-3">
-              <Choices label="입력 시간" value={topic.minutes ?? 0} options={[...MINUTE_CHOICES.map((m) => [m, `${m}분`] as const), [0, '제한 없음'] as const]} onPick={(m) => set({ minutes: m || null })} />
-              <Choices label="열" value={topic.columns} options={COLUMN_CHOICES.map((n) => [n, String(n)] as const)} onPick={(n) => set({ columns: n })} />
-              <Choices label="순서" value={topic.sort} options={[['number', '번호순'], ['time', '낸 순서']] as const} onPick={(v) => set({ sort: v })} />
-            </div>
+            <ol className="flex flex-col">
+              {agora.topics.map((t, i) => (
+                <li key={t.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0 first:pt-0">
+                  <span className={`tabular flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-extrabold ${i === 0 ? 'bg-accent text-ink' : 'bg-bg text-ink-3'}`}>{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className={`whitespace-pre-wrap break-keep leading-snug [overflow-wrap:anywhere] ${i === 0 ? 'text-lg font-bold' : 'font-semibold text-ink-2'}`}>{t.text}</div>
+                    <div className="mt-0.5 text-[13px] text-ink-3">
+                      {review ? `답 ${t.answers.filter((a) => mine.some((s) => s.id === a.studentId)).length}개` : minutesLabel(t.minutes)} · {t.columns}열 · {sortLabel(t.sort)}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </Card>
           <Card className="flex-1">
             <div className="mb-4 flex items-baseline justify-between">
@@ -1648,27 +1855,51 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
   );
 }
 
+type AgoraStep = 'start' | 'close' | 'reveal' | 'page' | 'next' | 'finish' | 'end';
+
 /**
- * The open 아고라 from [쓰기 시작] on, laid out as the arena's console: a dark bar with the class, the phase and the
- * 입력 시간; the projector's preview and its 열·순서 on the left; who has answered, and what, on the right. One big
- * button moves it on: [지금 마감] → [전체 공개] → [다음 쪽] → [아고라 닫기].
+ * The open 아고라 from [쓰기 시작] on, laid out as the arena's console: a dark bar with the class, the topic up out of
+ * how many, the phase and the 입력 시간; the projector's preview, the topic's 열·순서 and the next topic on the left; who
+ * has answered, and what, on the right. One big button moves it on: [쓰기 시작] → [지금 마감] → [전체 공개] → [다음 쪽]
+ * → [다음 주제], then [끝내기] after the last topic and [아고라 닫기] at the 끝. In 다시 보기 nothing is written unless
+ * the teacher opens [다시 쓰기], and the last topic ends with [아고라 닫기].
  */
 function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live: TeacherAgoraLive; act: Send; serverNow: () => number }) {
   const send = useCallback((a: Record<string, unknown>) => {
     act(a).catch(() => undefined);
   }, [act]);
+  const agora = view.agora.agoras.find((a) => a.id === live.agoraId);
+  const topic = agora?.topics[live.index];
+  const count = agora?.topics.length ?? 0;
+  const review = live.review !== null;
   const writing = live.phase === 'writing';
   const isPublic = live.reveal === 'public';
-  const lastPage = live.page >= live.pages - 1;
-  const step = writing ? 'close' : !isPublic ? 'reveal' : lastPage ? 'end' : 'page';
+  const lastTopic = live.index >= count - 1;
+  const step: AgoraStep =
+    live.phase === 'end' ? 'end'
+    : live.phase === 'ready' ? 'start'
+    : writing ? 'close'
+    : !isPublic ? 'reveal'
+    : live.page < live.pages - 1 ? 'page'
+    : !lastTopic ? 'next'
+    : review ? 'end'
+    : 'finish';
+  // [건너뛰기]: this topic ends here and the next comes up (the 끝 after a lesson's last); 다시 보기's last has no next.
+  const canSkip = live.phase !== 'end' && !(review && lastTopic);
   const end = useCallback(() => {
     if (live.phase === 'writing' && !confirm('아직 쓰는 중이에요. 아고라를 닫으면 쓰기도 끝나요. 닫을까요?')) return;
     send({ type: 'agora-end' });
   }, [live.phase, send]);
+  const skip = useCallback(() => {
+    if (!canSkip || (live.phase === 'writing' && !confirm('아직 쓰는 중이에요. 이 주제를 여기서 끝내고 넘어갈까요?'))) return;
+    send({ type: 'agora-next' });
+  }, [canSkip, live.phase, send]);
   const primary = useCallback(() => {
-    if (step === 'close') send({ type: 'agora-close' });
+    if (step === 'start') send({ type: 'agora-start' });
+    else if (step === 'close') send({ type: 'agora-close' });
     else if (step === 'reveal') send({ type: 'agora-reveal', public: true });
     else if (step === 'page') send({ type: 'agora-page', dir: 1 });
+    else if (step === 'next' || step === 'finish') send({ type: 'agora-next' });
     else end();
   }, [step, send, end]);
   useTicker(writing && !!live.timer, 250);
@@ -1681,14 +1912,15 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
       const t = e.target as HTMLElement | null;
       const typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((t as HTMLInputElement).type)));
       if (typing) return;
-      // As in the arena: Enter moves it on (closing, then showing every answer), arrows page and change the time.
+      // As in the arena: Enter moves it on (never closing it), arrows page and change the time, S skips.
       const keys: Record<string, () => void> = {
-        Enter: () => (step === 'close' || step === 'reveal') && primary(),
-        NumpadEnter: () => (step === 'close' || step === 'reveal') && primary(),
+        Enter: () => step !== 'page' && step !== 'finish' && step !== 'end' && primary(),
+        NumpadEnter: () => step !== 'page' && step !== 'finish' && step !== 'end' && primary(),
         ArrowRight: () => send({ type: 'agora-page', dir: 1 }),
         ArrowLeft: () => send({ type: 'agora-page', dir: -1 }),
         ArrowUp: () => send({ type: 'agora-time', minutes: 1 }),
         ArrowDown: () => send({ type: 'agora-time', minutes: -1 }),
+        KeyS: skip,
       };
       const run = keys[e.code];
       if (run) {
@@ -1698,30 +1930,46 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [step, primary, send]);
+  }, [step, primary, send, skip]);
 
-  const topic = view.agora.topics.find((t) => t.id === live.topicId);
-  if (!topic) return null;
+  if (!agora || !topic) return null;
   const answers = new Map(topic.answers.map((a) => [a.studentId, a]));
   const inRoom = new Set(live.joined);
-  // The cards the projector shows, in its order: everyone of the class who has come in or answered.
+  const wrote = live.wrote.includes(topic.id);
+  // The topic's cards, as the projector has them: the class's students with an answer and, once they have written to
+  // it today, everyone who came in; in the topic's order.
   const firstAt = (id: string) => answers.get(id)?.createdAt ?? Infinity;
   const cards = view.students
-    .filter((s) => s.classId === live.classId && (inRoom.has(s.id) || answers.has(s.id)))
+    .filter((s) => s.classId === live.classId && ((wrote && inRoom.has(s.id)) || answers.has(s.id)))
     .sort((a, b) => (topic.sort === 'time' ? firstAt(a.id) - firstAt(b.id) : 0) || a.number - b.number);
   const sent = cards.filter((s) => answers.has(s.id));
   const waiting = cards.filter((s) => !answers.has(s.id));
   const shownOf = (a: TeacherTopic['answers'][number]) => (a.shown === null ? isPublic : a.shown);
-  const label = { close: '지금 마감', reveal: '전체 공개', page: '다음 쪽', end: '아고라 닫기' }[step];
-  const hint = step === 'close' || step === 'reveal' ? 'Enter' : step === 'page' ? '→' : '';
+  const next = agora.topics[live.index + 1];
+  const label = { start: '쓰기 시작', close: '지금 마감', reveal: '전체 공개', page: '다음 쪽', next: '다음 주제', finish: '끝내기', end: '아고라 닫기' }[step];
+  const hint = step === 'page' ? '→' : step === 'finish' || step === 'end' ? '' : 'Enter';
+  const phases: [string, boolean][] = [
+    ...(review ? [] : [['준비', live.phase === 'ready'] as [string, boolean]]),
+    ['쓰기', writing],
+    ['마감', live.phase === 'closed' && !isPublic],
+    ['공개', live.phase === 'closed' && isPublic],
+    ...(live.phase === 'end' ? [['끝', true] as [string, boolean]] : []),
+  ];
   return (
     <div className="flex min-h-screen flex-col">
       <div className="flex h-[76px] items-center justify-between gap-5 whitespace-nowrap bg-ink px-7 text-white">
         <div className="flex items-center gap-6">
           <div className="text-sm font-bold text-[#A3A8B4]">{live.className}</div>
           <div className="text-[22px] font-extrabold">아고라</div>
+          {review && <span className="rounded-full bg-[#24272F] px-3 py-1.5 text-sm font-bold">다시 보기 · {formatDay(live.review ?? 0)}</span>}
+          {live.phase !== 'end' && (
+            <div className="tabular text-[22px] font-extrabold">
+              {live.index + 1}
+              <span className="text-ink-3"> / {count}</span>
+            </div>
+          )}
           <div className="flex gap-1.5">
-            {([['쓰기', writing], ['마감', !writing && !isPublic], ['공개', !writing && isPublic]] as const).map(([name, on]) => (
+            {phases.map(([name, on]) => (
               <span key={name} className={`rounded-full px-3.5 py-2 text-sm font-semibold ${on ? 'bg-accent text-ink' : 'text-ink-3'}`}>{name}</span>
             ))}
           </div>
@@ -1735,124 +1983,208 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
         </div>
       </div>
 
-      <div className="flex flex-1 gap-5 p-6">
-        <div className="flex min-w-0 flex-[1.35] flex-col gap-4">
-          <Card className="flex flex-col gap-3 !p-4">
-            <div className="flex items-center justify-between text-sm font-semibold text-ink-3">
-              <span>프로젝터</span>
-              <span className="font-bold text-ink">{isPublic ? '전체 공개' : '비공개'}</span>
-              <span className="flex items-center gap-1.5">
-                <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1 })} className="h-8 w-8 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
-                <span className="tabular w-12 text-center font-bold text-ink">{live.page + 1} / {live.pages}</span>
-                <button type="button" aria-label="다음 쪽" disabled={lastPage} onClick={() => send({ type: 'agora-page', dir: 1 })} className="h-8 w-8 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">▶</button>
-              </span>
-            </div>
-            {/* The projector's board in miniature: what each card shows right now. */}
-            <div className="flex flex-col gap-2.5 rounded-xl bg-bg p-3">
-              <div className="rounded-xl bg-white px-4 py-3 text-center">
-                <div className="line-clamp-2 break-keep font-bold [overflow-wrap:anywhere]">{topic.text}</div>
-                {topic.note && <div className="mt-0.5 line-clamp-1 text-xs font-semibold text-ink-2">{topic.note}</div>}
+      {live.phase === 'end' ? (
+        <AgoraEndPanel view={view} live={live} agora={agora} />
+      ) : (
+        <div className="flex flex-1 gap-5 p-6">
+          <div className="flex min-w-0 flex-[1.35] flex-col gap-4">
+            <Card className="flex flex-col gap-3 !p-4">
+              <div className="flex items-center justify-between text-sm font-semibold text-ink-3">
+                <span>프로젝터</span>
+                <span className="font-bold text-ink">{live.phase === 'ready' ? '준비 · 주제를 읽어 줘요' : isPublic ? '전체 공개' : '비공개'}</span>
+                <span className="flex items-center gap-1.5">
+                  <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1 })} className="h-8 w-8 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
+                  <span className="tabular w-12 text-center font-bold text-ink">{live.page + 1} / {live.pages}</span>
+                  <button type="button" aria-label="다음 쪽" disabled={live.page >= live.pages - 1} onClick={() => send({ type: 'agora-page', dir: 1 })} className="h-8 w-8 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">▶</button>
+                </span>
               </div>
-              <div className="grid max-h-[360px] gap-2 overflow-y-auto" style={{ gridTemplateColumns: `repeat(${topic.columns}, minmax(0, 1fr))` }}>
-                {cards.map((s) => {
-                  const a = answers.get(s.id);
-                  const shown = !!a && shownOf(a);
-                  return (
-                    <div key={s.id} className="flex min-w-0 flex-col gap-1 rounded-lg bg-white px-2.5 py-2">
-                      <div className="flex items-center gap-1.5">
-                        <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={20} seed={s.id} />
-                        <span className="truncate text-xs font-bold">
-                          <span className="tabular mr-0.5 text-ink-3">{s.number}</span>
+              {/* The projector's board in miniature: what each card shows right now. */}
+              <div className="flex flex-col gap-2.5 rounded-xl bg-bg p-3">
+                {live.phase === 'ready' ? (
+                  // 준비: the topic alone, large, as the projector shows it before [쓰기 시작].
+                  <div className="flex flex-col items-center gap-2 rounded-xl bg-white px-5 py-8 text-center">
+                    <span className="tabular rounded-full bg-ink px-3 py-1 text-xs font-bold text-white">주제 {live.index + 1} / {count}</span>
+                    <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{topic.text}</div>
+                    {topic.note && <div className="whitespace-pre-wrap text-sm font-semibold text-ink-2 [overflow-wrap:anywhere]">{topic.note}</div>}
+                    <div className="text-xs text-ink-3">{minutesLabel(topic.minutes)} · 쓰기 시작을 누르면 폰에 써요</div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="rounded-xl bg-white px-4 py-3 text-center">
+                      <div className="line-clamp-2 break-keep font-bold [overflow-wrap:anywhere]">{topic.text}</div>
+                      {topic.note && <div className="mt-0.5 line-clamp-1 text-xs font-semibold text-ink-2">{topic.note}</div>}
+                    </div>
+                    {/* Shorter when the next topic waits below, so it stays above the bottom bar. */}
+                    <div className={`grid gap-2 overflow-y-auto ${next ? 'max-h-[280px]' : 'max-h-[360px]'}`} style={{ gridTemplateColumns: `repeat(${topic.columns}, minmax(0, 1fr))` }}>
+                      {cards.map((s) => {
+                        const a = answers.get(s.id);
+                        const shown = !!a && shownOf(a);
+                        return (
+                          <div key={s.id} className="flex min-w-0 flex-col gap-1 rounded-lg bg-white px-2.5 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={20} seed={s.id} />
+                              <span className="truncate text-xs font-bold">
+                                <span className="tabular mr-0.5 text-ink-3">{s.number}</span>
+                                {s.name}
+                              </span>
+                            </div>
+                            <div className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${shown ? 'font-semibold' : a ? 'font-bold text-good' : 'text-ink-3'}`}>{a ? (shown ? a.text : '✓ 냈어요') : writing ? '생각 중…' : '미답변'}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </Card>
+            <Card className="flex flex-wrap items-center gap-x-6 gap-y-3 !py-4">
+              <Choices label="열" value={topic.columns} options={COLUMN_CHOICES.map((n) => [n, String(n)] as const)} onPick={(n) => send({ type: 'agora-settings', columns: n })} />
+              <Choices label="순서" value={topic.sort} options={[['number', '번호순'], ['time', '낸 순서']] as const} onPick={(v) => send({ type: 'agora-settings', sort: v })} />
+            </Card>
+            {next && (
+              <div className="flex flex-col gap-1 rounded-[20px] border-2 border-dashed border-[#D5D8DF] px-5 py-4">
+                <div className="text-sm font-bold text-ink-3">
+                  다음 주제 · {live.index + 2} / {count}
+                  {review ? '' : ` · ${minutesLabel(next.minutes)}`} · {next.columns}열 · {sortLabel(next.sort)}
+                </div>
+                <div className="line-clamp-2 whitespace-pre-wrap break-keep text-[17px] font-extrabold leading-snug [overflow-wrap:anywhere]">{next.text}</div>
+                {next.note && <div className="line-clamp-1 text-sm text-ink-3">{next.note}</div>}
+              </div>
+            )}
+          </div>
+
+          <Card className="flex min-w-0 flex-1 flex-col gap-4">
+            <div className="flex items-end justify-between">
+              <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'ready' ? '들어온 학생 · 쓰기 시작을 누르면 답이 여기에 모여요' : '낸 학생 · 누르면 그 답만 공개·비공개'}</div>
+              {live.phase === 'ready' ? (
+                <div className="tabular text-5xl font-extrabold leading-none tracking-tight">{view.students.filter((s) => s.classId === live.classId && inRoom.has(s.id)).length}</div>
+              ) : (
+                <div className="tabular text-5xl font-extrabold leading-none tracking-tight">
+                  {sent.length}
+                  <span className="text-2xl text-[#A3A8B4]">/{cards.length}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              {sent.length === 0 && live.phase !== 'ready' && <div className="text-sm text-ink-3">아직 낸 학생이 없어요</div>}
+              {sent.map((s) => {
+                const a = answers.get(s.id)!;
+                const shown = shownOf(a);
+                return (
+                  <div key={s.id} className="flex items-start gap-1 rounded-xl bg-bg">
+                    <button
+                      type="button"
+                      aria-pressed={shown}
+                      disabled={live.phase === 'ready'}
+                      title={shown ? '눌러서 이 답만 비공개' : '눌러서 이 답만 공개'}
+                      onClick={() => send({ type: 'agora-card', studentId: s.id })}
+                      className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl px-3 py-2 text-left hover:bg-[#ECEEF2] disabled:hover:bg-transparent"
+                    >
+                      <span className="flex items-center gap-2">
+                        <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={26} seed={s.id} />
+                        <span className="text-sm font-semibold">
+                          <span className="tabular mr-1 text-ink-3">{s.number}</span>
                           {s.name}
                         </span>
-                      </div>
-                      <div className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${shown ? 'font-semibold' : a ? 'font-bold text-good' : 'text-ink-3'}`}>{a ? (shown ? a.text : '✓ 냈어요') : writing ? '생각 중…' : '미답변'}</div>
-                    </div>
-                  );
-                })}
-              </div>
+                        {/* '따로': set for this answer alone, apart from 전체 공개·비공개. */}
+                        {live.phase !== 'ready' && (
+                          <span className={`ml-auto shrink-0 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${shown ? 'bg-good-soft text-good' : 'bg-white text-ink-3'}`}>
+                            {shown ? '공개' : '비공개'}
+                            {a.shown !== null ? ' · 따로' : ''}
+                          </span>
+                        )}
+                      </span>
+                      {a.first !== null && <span className="whitespace-pre-wrap pl-8 text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.first}</s></span>}
+                      <span className={`whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere] ${shown ? '' : 'text-ink-3'}`}>{a.text}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`${s.number} ${s.name}의 답 지우기`}
+                      onClick={() => {
+                        if (confirm(`${s.number} ${s.name}의 답을 지울까요?`)) send({ type: 'agora-card-delete', topicId: topic.id, studentId: s.id });
+                      }}
+                      className="mt-1.5 h-8 shrink-0 rounded-lg px-2 text-xs font-semibold text-ink-3 hover:bg-bad-soft hover:text-bad"
+                    >
+                      지우기
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-          </Card>
-          <Card className="flex flex-wrap items-center gap-x-6 gap-y-3 !py-4">
-            <Choices label="열" value={topic.columns} options={COLUMN_CHOICES.map((n) => [n, String(n)] as const)} onPick={(n) => send({ type: 'agora-settings', columns: n })} />
-            <Choices label="순서" value={topic.sort} options={[['number', '번호순'], ['time', '낸 순서']] as const} onPick={(v) => send({ type: 'agora-settings', sort: v })} />
+            {waiting.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[13px] font-semibold text-ink-3">{writing ? '아직 안 낸 학생' : '미답변'}</span>
+                {waiting.map((s) => (
+                  <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">
+                    {s.number} {s.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
-
-        <Card className="flex min-w-0 flex-1 flex-col gap-4">
-          <div className="flex items-end justify-between">
-            <div className="text-[15px] font-semibold text-ink-3">낸 학생 · 누르면 그 답만 공개·비공개</div>
-            <div className="tabular text-5xl font-extrabold leading-none tracking-tight">
-              {sent.length}
-              <span className="text-2xl text-[#A3A8B4]">/{cards.length}</span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {sent.length === 0 && <div className="text-sm text-ink-3">아직 낸 학생이 없어요</div>}
-            {sent.map((s) => {
-              const a = answers.get(s.id)!;
-              const shown = shownOf(a);
-              return (
-                <div key={s.id} className="flex items-start gap-1 rounded-xl bg-bg">
-                  <button
-                    type="button"
-                    aria-pressed={shown}
-                    title={shown ? '눌러서 이 답만 비공개' : '눌러서 이 답만 공개'}
-                    onClick={() => send({ type: 'agora-card', studentId: s.id })}
-                    className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl px-3 py-2 text-left hover:bg-[#ECEEF2]"
-                  >
-                    <span className="flex items-center gap-2">
-                      <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={26} seed={s.id} />
-                      <span className="text-sm font-semibold">
-                        <span className="tabular mr-1 text-ink-3">{s.number}</span>
-                        {s.name}
-                      </span>
-                      {/* '따로': set for this answer alone, apart from 전체 공개·비공개. */}
-                      <span className={`ml-auto shrink-0 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${shown ? 'bg-good-soft text-good' : 'bg-white text-ink-3'}`}>
-                        {shown ? '공개' : '비공개'}
-                        {a.shown !== null ? ' · 따로' : ''}
-                      </span>
-                    </span>
-                    <span className={`whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere] ${shown ? '' : 'text-ink-3'}`}>{a.text}</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`${s.number} ${s.name}의 답 지우기`}
-                    onClick={() => {
-                      if (confirm(`${s.number} ${s.name}의 답을 지울까요?`)) send({ type: 'agora-card-delete', topicId: topic.id, studentId: s.id });
-                    }}
-                    className="mt-1.5 h-8 shrink-0 rounded-lg px-2 text-xs font-semibold text-ink-3 hover:bg-bad-soft hover:text-bad"
-                  >
-                    지우기
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          {waiting.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[13px] font-semibold text-ink-3">{writing ? '아직 안 낸 학생' : '미답변'}</span>
-              {waiting.map((s) => (
-                <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">
-                  {s.number} {s.name}
-                </span>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+      )}
 
       <div className="sticky bottom-0 z-10 flex h-[88px] items-center justify-between border-t border-line bg-white px-7">
         <div className="flex gap-2">
-          <Btn kind="ghost" disabled={!writing || !live.timer} onClick={() => send({ type: 'agora-time', minutes: -1 })}>−1분 <span className="text-xs text-ink-3">↓</span></Btn>
-          <Btn kind="ghost" disabled={!writing || !live.timer} onClick={() => send({ type: 'agora-time', minutes: 1 })}>+1분 <span className="text-xs text-ink-3">↑</span></Btn>
-          {step !== 'reveal' && <Btn kind="ghost" onClick={() => send({ type: 'agora-reveal', public: !isPublic })}>{isPublic ? '전체 비공개' : '전체 공개'}</Btn>}
+          {live.phase !== 'end' && (
+            <>
+              <Btn kind="ghost" disabled={!writing || !live.timer} onClick={() => send({ type: 'agora-time', minutes: -1 })}>−1분 <span className="text-xs text-ink-3">↓</span></Btn>
+              <Btn kind="ghost" disabled={!writing || !live.timer} onClick={() => send({ type: 'agora-time', minutes: 1 })}>+1분 <span className="text-xs text-ink-3">↑</span></Btn>
+              {(writing || live.phase === 'closed') && step !== 'reveal' && <Btn kind="ghost" onClick={() => send({ type: 'agora-reveal', public: !isPublic })}>{isPublic ? '전체 비공개' : '전체 공개'}</Btn>}
+              {/* 다시 보기: this topic's writing opens again, each phone starting from its own answer. */}
+              {review && live.phase === 'closed' && <Btn kind="ghost" onClick={() => send({ type: 'agora-rewrite' })}>다시 쓰기</Btn>}
+              <Btn kind="ghost" disabled={!canSkip} onClick={skip}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
+            </>
+          )}
         </div>
-        <Btn key={step} onClick={primary} className="h-14 px-8 text-lg">
+        <Btn key={step} kind={step === 'start' ? 'accent' : 'dark'} onClick={primary} className="h-14 px-8 text-lg">
           {label}
-          {hint && <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">{hint}</span>}
+          {hint && <span className={`ml-2 rounded px-2 py-0.5 text-xs ${step === 'start' ? 'bg-ink/15' : 'bg-[#3D4354]'}`}>{hint}</span>}
         </Btn>
       </div>
+    </div>
+  );
+}
+
+/** The 끝 on the teacher screen: what the projector shows, the class's count of answers and each topic's. */
+function AgoraEndPanel({ view, live, agora }: { view: TeacherView; live: TeacherAgoraLive; agora: TeacherAgora }) {
+  const inRoom = new Set(live.joined);
+  const mine = view.students.filter((s) => s.classId === live.classId);
+  const counts = agora.topics.map((t) => {
+    if (!live.wrote.includes(t.id)) return null;
+    const answered = new Set(t.answers.map((a) => a.studentId));
+    const cards = mine.filter((s) => inRoom.has(s.id) || answered.has(s.id));
+    return { sent: cards.filter((s) => answered.has(s.id)).length, of: cards.length };
+  });
+  const total = counts.reduce((n, c) => n + (c?.sent ?? 0), 0);
+  return (
+    <div className="flex flex-1 items-start gap-5 p-6">
+      <Card className="flex w-80 shrink-0 flex-col gap-2 !bg-ink text-white">
+        <div className="text-sm font-semibold text-[#A3A8B4]">{live.className} · 함께 쓴 답</div>
+        <div className="tabular text-7xl font-extrabold leading-none text-[#3DDC97]">{total}</div>
+        <div className="mt-2 text-sm text-[#A3A8B4]">프로젝터에 끝 화면이 떠 있어요. 학생들은 폰의 내 답 노트에서 다시 볼 수 있어요.</div>
+      </Card>
+      <Card className="flex min-w-0 flex-1 flex-col">
+        <h2 className="mb-2 text-lg font-bold">주제마다 낸 학생</h2>
+        {agora.topics.map((t, i) => {
+          const c = counts[i];
+          return (
+            <div key={t.id} className="flex items-center gap-3 border-t border-[#EEF0F3] py-3 first:border-t-0">
+              <span className="tabular flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-sm font-extrabold text-white">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate font-semibold">{t.text}</span>
+              {c ? (
+                <span className="tabular text-2xl font-extrabold">
+                  {c.sent}
+                  <span className="text-base text-ink-3"> / {c.of}</span>
+                </span>
+              ) : (
+                <span className="rounded-full bg-bg px-3 py-1 text-sm font-bold text-ink-3">건너뜀</span>
+              )}
+            </div>
+          );
+        })}
+      </Card>
     </div>
   );
 }
@@ -1877,70 +2209,6 @@ function Choices<T extends string | number>({ label, value, options, onPick }: {
         </button>
       ))}
     </div>
-  );
-}
-
-/** Writing a topic: the question, an optional note under it, and how the projector lays out the answer cards. */
-function TopicForm({ draft, setDraft, isNew, onSave, onCancel }: { draft: TopicDraft; setDraft: (next: TopicDraft) => void; isNew: boolean; onSave: () => void; onCancel: () => void }) {
-  const choice = (on: boolean) => `flex h-10 min-w-10 items-center justify-center rounded-full border px-4 text-[15px] font-bold ${on ? 'border-ink bg-ink text-white' : 'border-[#D5D8DF] bg-white text-ink-3'}`;
-  return (
-    <Card className="flex flex-col gap-5">
-      <h2 className="text-lg font-bold">{isNew ? '새 주제' : '주제 고치기'}</h2>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-bold">주제</span>
-        <textarea
-          value={draft.text}
-          onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-          rows={3}
-          maxLength={TOPIC_MAX}
-          autoFocus
-          placeholder="주말에 가족이 허락해 준 일을 let으로 한 문장 써 보세요"
-          className="resize-none rounded-xl bg-bg p-3 text-lg font-bold outline-none"
-        />
-        <span className="tabular self-end text-xs text-ink-3">{[...draft.text].length} / {TOPIC_MAX}</span>
-      </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-bold">
-          보조 설명 · 예시 문장 <span className="font-semibold text-ink-3">선택 · 질문 아래에 나와요</span>
-        </span>
-        <textarea value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} rows={2} maxLength={NOTE_MAX} placeholder="예) My mom let me play games after dinner." className="resize-none rounded-xl bg-bg p-3 text-[15px] outline-none" />
-      </label>
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="입력 시간">
-        <span className="mr-1 text-sm font-bold">입력 시간</span>
-        {[...MINUTE_CHOICES, null].map((m) => (
-          <button key={m ?? 'none'} type="button" aria-pressed={draft.minutes === m} onClick={() => setDraft({ ...draft, minutes: m })} className={choice(draft.minutes === m)}>
-            {m === null ? '제한 없음' : `${m}분`}
-          </button>
-        ))}
-        <span className="ml-1 text-xs text-ink-3">[쓰기 시작]부터 줄어들고, 0이 되면 저절로 마감돼요</span>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-        <div className="flex items-center gap-2" role="group" aria-label="프로젝터 열 수">
-          <span className="mr-1 text-sm font-bold">프로젝터</span>
-          {COLUMN_CHOICES.map((n) => (
-            <button key={n} type="button" aria-pressed={draft.columns === n} onClick={() => setDraft({ ...draft, columns: n })} className={choice(draft.columns === n)}>
-              {n}열
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-2" role="group" aria-label="카드 순서">
-          <span className="mr-1 text-sm font-bold">카드 순서</span>
-          {([['number', '번호순'], ['time', '낸 순서']] as const).map(([v, label]) => (
-            <button key={v} type="button" aria-pressed={draft.sort === v} onClick={() => setDraft({ ...draft, sort: v })} className={choice(draft.sort === v)}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <Btn disabled={!draft.text.trim()} onClick={onSave}>
-          {isNew ? '만들기' : '저장'}
-        </Btn>
-        <Btn kind="ghost" onClick={onCancel}>
-          취소
-        </Btn>
-      </div>
-    </Card>
   );
 }
 
@@ -1992,7 +2260,7 @@ function StudentMistakes({ studentId }: { studentId: string }) {
           <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
             {quizzes.map((x) => (
               <button key={x.sessionId} type="button" aria-pressed={x.sessionId === quiz?.sessionId} onClick={() => setPicked(x.sessionId)} className={`h-8 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm ${x.sessionId === quiz?.sessionId ? 'border-ink bg-ink font-bold text-white' : 'border-[#D5D8DF] bg-white font-semibold text-ink-2'}`}>
-                {x.eventName} · {dayOf(x.date)}
+                {x.eventName} · {formatDay(x.date)}
               </button>
             ))}
           </div>

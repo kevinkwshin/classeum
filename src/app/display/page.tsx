@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
+import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import { AGORA_MUSIC_SRC, MUSIC_SRC } from '@/client/sound';
 import type { AgoraCard, DisplayAgora, DisplayView, SessionPublic } from '@/client/views';
@@ -78,7 +78,15 @@ function DisplayApp() {
       <Shell>
         {conn === 'lost' && <div className="absolute right-6 top-4 z-50 rounded-full bg-bad px-4 py-1 text-sm font-bold text-white">연결 끊김 · 다시 연결 중</div>}
         {agora.music && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 소리를 켜려면 이 화면을 한 번 클릭하세요</div>}
-        {agora.phase === 'lobby' ? <AgoraLobby view={view} agora={agora} serverNow={serverNow} /> : <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />}
+        {agora.phase === 'lobby' ? (
+          <AgoraLobby view={view} agora={agora} serverNow={serverNow} />
+        ) : agora.phase === 'ready' ? (
+          <AgoraReady agora={agora} joinUrl={view.joinUrl} />
+        ) : agora.phase === 'end' ? (
+          <AgoraEnd agora={agora} />
+        ) : (
+          <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />
+        )}
         <FullscreenHint />
       </Shell>
     );
@@ -165,10 +173,12 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
     return () => ro.disconnect();
   }, [layout, t.columns]);
   const count = Math.max(1, pages.length);
-  // The server keeps the page the teacher turns to, so it needs to know how many there are.
+  // The server keeps the page the teacher turns to, so it needs to know how many there are; only once measured, so a
+  // projector window opened again mid-class doesn't send the teacher back to the first page.
+  const measured = pages.length > 0;
   useEffect(() => {
-    send({ type: 'agora-pages', count }).catch(() => undefined);
-  }, [count, t.id, send]);
+    if (measured) send({ type: 'agora-pages', count }).catch(() => undefined);
+  }, [measured, count, t.id, send]);
   const page = Math.min(agora.page, count - 1);
   const shown = (pages[page] ?? agora.cards.map((_, i) => i)).map((i) => agora.cards[i]).filter(Boolean);
   return (
@@ -176,9 +186,14 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
       <div className="flex items-center gap-4">
         <div className="text-3xl font-bold text-accent">{agora.className}</div>
         <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">아고라</div>
-        {agora.phase === 'closed' && <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">마감</div>}
+        {agora.review !== null ? (
+          <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">{agora.phase === 'writing' ? '다시 쓰기' : `다시 보기 · ${formatDay(agora.review)}`}</div>
+        ) : (
+          agora.phase === 'closed' && <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">마감</div>
+        )}
         <div className="ml-auto flex items-center gap-3">
           {agora.timer && <AgoraClock timer={agora.timer} now={now} />}
+          {agora.count > 1 && <TopicCount agora={agora} />}
           <div className="flex items-center gap-4 rounded-full bg-ink py-2 pl-2 pr-7 text-white">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#3DDC97] text-2xl font-extrabold text-ink">✓</div>
             <div className="tabular text-4xl font-extrabold">
@@ -205,7 +220,9 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
           {shown.map((c) => (
             <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} onFlip={c.sent ? () => send({ type: 'agora-card', number: c.number }).catch(() => undefined) : undefined} />
           ))}
-          {agora.cards.length === 0 && <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요</div>}
+          {agora.cards.length === 0 && (
+            <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">{agora.review !== null && agora.phase === 'closed' ? '이 주제에 쓴 답이 없어요' : '태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요'}</div>
+          )}
         </div>
       </div>
       <div className="flex items-center justify-between text-lg text-ink-3">
@@ -243,6 +260,103 @@ function AgoraCardView({ c, open, onFlip }: { c: AgoraCard; open: boolean; onFli
       </div>
       {/* A long answer in a smaller size, so one card doesn't take a whole page. */}
       {c.text !== undefined && <div className={`whitespace-pre-wrap font-bold leading-snug [overflow-wrap:anywhere] ${c.text.length > 120 ? 'text-[1.45vw]' : 'text-[1.8vw]'}`}>{c.text}</div>}
+    </div>
+  );
+}
+
+/** Which topic is up, out of how many, in the pill beside the count of answers. */
+function TopicCount({ agora }: { agora: DisplayAgora }) {
+  return (
+    <div className="tabular rounded-full bg-ink px-7 py-2 text-4xl font-extrabold leading-[3rem] text-white">
+      {agora.index + 1}
+      <span className="text-ink-3"> / {agora.count}</span>
+    </div>
+  );
+}
+
+/**
+ * 준비: the next topic up alone, large, for the teacher to read out and explain before [쓰기 시작]; the phones show it
+ * too. No cards yet.
+ */
+function AgoraReady({ agora, joinUrl }: { agora: DisplayAgora; joinUrl: string }) {
+  const t = agora.topic;
+  const long = [...t.text].length;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-[1.4vw]">
+      <div className="flex items-center gap-4">
+        <div className="text-3xl font-bold text-accent">{agora.className}</div>
+        <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">아고라</div>
+        <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">준비</div>
+        <div className="ml-auto">
+          <TopicCount agora={agora} />
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <div key={t.id} className="cls-drop-in flex max-h-full w-full max-w-[84vw] flex-col items-center gap-[1.2vw] overflow-hidden rounded-[2.4vw] bg-white px-[4vw] py-[3vw] text-center">
+          <div className="rounded-full bg-ink px-[1.2vw] py-[0.4vw] text-[1.4vw] font-bold text-white">주제 {agora.index + 1}</div>
+          <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${long > 90 ? 'text-[2.8vw]' : long > 40 ? 'text-[3.6vw]' : 'text-[4.4vw]'}`}>{t.text}</div>
+          {t.note && <div className="whitespace-pre-wrap text-[2.1vw] font-semibold text-ink-2 [overflow-wrap:anywhere]">{t.note}</div>}
+          <div className="mt-[0.4vw] rounded-full bg-bg px-[1.4vw] py-[0.5vw] text-[1.4vw] font-bold text-ink-3">{t.minutes ? `입력 시간 ${t.minutes}분` : '시간 제한 없음'} · 곧 폰에 써요</div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between text-lg text-ink-3">
+        <span className="tabular">{joinUrl}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The 끝 of a lesson, in the frame of the arena's results: how many answers the class wrote, how many sent one to each
+ * topic, and the class's characters. Counts only; the answers stay on the phones' 내 답 노트.
+ */
+function AgoraEnd({ agora }: { agora: DisplayAgora }) {
+  const end = agora.end;
+  if (!end) return null;
+  const size = end.parade.length > 30 ? 44 : 56;
+  const many = end.topics.length > 5;
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-10 [@media(max-height:800px)]:gap-6">
+      <div className="cls-slide-up max-w-[88vw] truncate text-4xl font-bold text-ink-3">
+        {agora.className} · {agora.title} 끝!
+      </div>
+      <div className="flex items-stretch gap-8">
+        <div className="cls-pop flex flex-col justify-center rounded-[32px] bg-ink px-14 py-10 text-white">
+          <div className="text-2xl font-semibold text-[#A3A8B4]">함께 쓴 답</div>
+          <div className="tabular text-[8vw] font-extrabold leading-none text-[#3DDC97]">
+            <CountUp value={end.answers} ms={1200} delay={300} />
+          </div>
+        </div>
+        <div className={`cls-pop flex min-w-[30vw] max-w-[46vw] flex-col justify-center rounded-[32px] bg-white px-12 py-8 ${many ? 'gap-[0.4vw]' : 'gap-[0.9vw]'}`} style={{ animationDelay: '0.15s' }}>
+          <div className="text-2xl font-semibold text-ink-3">주제마다 낸 친구</div>
+          {end.topics.map((t, i) => (
+            <div key={i} className={`flex items-center gap-[1vw] font-bold ${many ? 'text-[1.2vw]' : 'text-[1.6vw]'}`}>
+              <span className="tabular flex h-[1.9em] w-[1.9em] shrink-0 items-center justify-center rounded-full bg-ink text-[0.7em] font-extrabold text-white">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{t.text}</span>
+              {t.skipped ? (
+                <span className="shrink-0 rounded-full bg-bg px-[0.8em] py-[0.15em] text-[0.8em] text-ink-3">건너뜀</span>
+              ) : (
+                <span className="tabular shrink-0 pl-[1vw] text-[1.3em] font-extrabold">
+                  {t.sent}
+                  <span className="text-[0.6em] text-ink-3"> / {t.of}</span>
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      {end.parade.length > 0 && (
+        <div className="flex max-w-[88vw] flex-wrap items-end justify-center gap-x-2 gap-y-3">
+          {end.parade.map((a, i) => (
+            <div key={a.number} className="cls-drop-in" style={{ animationDelay: `${900 + i * 45}ms` }}>
+              <div className="cls-jump" style={{ animationDelay: `${2200 + (i % 10) * 80}ms` }}>
+                <PixelAvatar look={a.look} size={size} mood="happy" blink={a.number} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="text-3xl font-semibold text-ink-2">각자 폰의 내 답 노트에서 다시 볼 수 있어요</div>
     </div>
   );
 }
@@ -332,16 +446,18 @@ function AgoraLobby({ view, agora, serverNow }: { view: DisplayView; agora: Disp
   const t = agora.topic;
   // While the teacher's 놀이 방법 plays, the demo takes the characters' and the topic card's place, as in the arena.
   const howtoAt = agora.howtoAt;
+  const of = agora.count > 1 ? ` · 주제 1 / ${agora.count}` : '';
+  const sub = agora.review !== null ? `다시 보기 · ${formatDay(agora.review)} 수업` : agora.count > 1 ? `주제 ${agora.count}개` : t.minutes ? `입력 시간 ${t.minutes}분` : '시간 제한 없음';
   return (
     <div className="flex min-h-0 flex-1 gap-[3vw]">
       <LobbyQr view={view} />
       <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
-        <LobbyHeader className={agora.className} title="아고라" sub={t.minutes ? `입력 시간 ${t.minutes}분` : '시간 제한 없음'} count={agora.joined.length} />
+        <LobbyHeader className={agora.className} title={agora.title} sub={sub} count={agora.joined.length} />
         {howtoAt !== null && <AgoraHowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} />}
         <LobbyCrowd avatars={agora.joined.map((a) => ({ key: String(a.number), name: a.name, look: a.look }))} wantNames hidden={howtoAt !== null} />
         {/* Spacing is capped by the screen height too, as on the reward card, so the class keeps its room at 1280×720. */}
         <div className={`flex flex-col gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white ${howtoAt !== null ? 'hidden' : ''}`}>
-          <div className="text-2xl font-bold text-gold">오늘의 주제</div>
+          <div className="text-2xl font-bold text-gold">{agora.review !== null ? `지난 수업의 답을 다시 봐요${of}` : `오늘의 주제${of}`}</div>
           <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 60 ? 'text-[2vw]' : 'text-[2.7vw]'}`}>{t.text}</div>
           {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-2xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
         </div>
@@ -441,7 +557,7 @@ function LobbyHeader({ className, title, sub, count }: { className: string; titl
         {/* A shorter header on 720p projectors leaves the room to the characters and their names. */}
         <div className="font-display text-3xl font-bold [@media(max-height:800px)]:text-2xl">Classeum</div>
         <div className="mt-4 text-3xl font-bold text-accent [@media(max-height:800px)]:mt-2 [@media(max-height:800px)]:text-2xl">{className}</div>
-        <div className="mt-1 text-6xl font-bold tracking-tight [@media(max-height:800px)]:text-5xl">{title}</div>
+        <div className="mt-1 line-clamp-2 break-keep text-6xl font-bold tracking-tight [overflow-wrap:anywhere] [@media(max-height:800px)]:text-5xl">{title}</div>
         <div className="mt-2 text-3xl font-semibold text-ink-3 [@media(max-height:800px)]:mt-1 [@media(max-height:800px)]:text-2xl">{sub}</div>
       </div>
       <div key={count} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{count}</div>

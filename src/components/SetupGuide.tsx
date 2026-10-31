@@ -186,15 +186,15 @@ export function SetupGuide({ view, onStudents, onWrite }: { view: TeacherView; o
 
 /**
  * 아고라 준비: the same card on the 아고라 tab until the teacher's first 아고라, its three steps ticked off from the real
- * state (a topic, then a class that has done one). A teacher who has already run one never sees it.
+ * state (an 아고라, then a class that has done one). A teacher who has already run one never sees it.
  */
 export function AgoraGuide({ view, onNew }: { view: TeacherView; onNew: () => void }) {
-  const ran = view.agora.topics.some((t) => t.runs.length > 0);
+  const ran = view.agora.agoras.some((a) => a.runs.length > 0);
   const steps: GuideStep[] = [
-    { key: 'topic', label: '주제 만들기', hint: '질문과 예시 문장을 써 둬요', done: view.agora.topics.length > 0 },
-    { key: 'lobby', label: '대기실 열기', hint: '주제 고르고 오늘 반 → 대기실 열기 · 놀이 방법으로 시범', done: ran },
-    { key: 'run', label: '쓰고 함께 보기', hint: '쓰기 시작 → 지금 마감 → 전체 공개 → 아고라 닫기', done: ran && !view.agora.live },
+    { key: 'topic', label: '아고라 만들기', hint: '제목을 쓰고 주제를 한 줄씩', done: view.agora.agoras.length > 0 },
+    { key: 'lobby', label: '대기실 열기', hint: '아고라 고르고 오늘 반 → 대기실 열기 · 놀이 방법으로 시범', done: ran },
+    { key: 'run', label: '쓰고 함께 보기', hint: '쓰기 시작 → 지금 마감 → 전체 공개 → 다음 주제', done: ran && !view.agora.live },
   ];
-  const action = (s: GuideStep) => (s.key === 'topic' ? <button type="button" onClick={onNew} className={ACTION}>새 주제</button> : null);
+  const action = (s: GuideStep) => (s.key === 'topic' ? <button type="button" onClick={onNew} className={ACTION}>새 아고라</button> : null);
   return <GuideCard title="아고라 준비" storageKey="classeum.agoraGuide" bubble="아고라도 같이 해요" steps={steps} action={action} />;
 }

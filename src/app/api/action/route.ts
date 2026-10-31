@@ -1,21 +1,24 @@
 import type { NextRequest } from 'next/server';
 import { hashToken, hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
-import { addTopic, editTopic } from '@/server/agora';
 
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
-  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-howto', 'agora-start', 'agora-close', 'agora-end', 'agora-time',
-  'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card', 'agora-card-delete',
+  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
+  'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
+  'agora-card-delete',
 ]);
+
+/** Largest request: an 아고라 of ten topics, each with the longest question and 보조 설명 in Hangul, fits. */
+const BODY_MAX = 32_000;
 
 export async function POST(request: NextRequest) {
   // A JSON content type forces a CORS preflight, which this server never approves.
   if (!request.headers.get('content-type')?.startsWith('application/json')) {
     return Response.json({ ok: false, error: '잘못된 요청이에요.' }, { status: 415 });
   }
-  if (Number(request.headers.get('content-length') ?? 0) > 16_000) {
+  if (Number(request.headers.get('content-length') ?? 0) > BODY_MAX) {
     return Response.json({ ok: false, error: '요청이 너무 커요.' }, { status: 413 });
   }
   let body: Record<string, unknown>;
@@ -29,7 +32,7 @@ export async function POST(request: NextRequest) {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 16_000) {
+        if (size > BODY_MAX) {
           await reader.cancel().catch(() => undefined);
           return Response.json({ ok: false, error: '요청이 너무 커요.' }, { status: 413 });
         }
@@ -98,21 +101,30 @@ export async function POST(request: NextRequest) {
           h.control(String(body.action));
           break;
         case 'agora-add':
-          return Response.json({ ok: true, topicId: h.changeAgora(() => addTopic(body)) });
+          return Response.json({ ok: true, agoraId: h.saveAgora(null, body) });
         case 'agora-edit':
-          h.changeAgora(() => editTopic(String(body.topicId), body));
+          h.saveAgora(String(body.agoraId), body);
           break;
         case 'agora-delete':
-          h.removeTopic(String(body.topicId));
+          h.removeAgora(String(body.agoraId));
           break;
         case 'agora-open':
-          h.openAgora(String(body.topicId), String(body.classId));
+          h.openAgora(String(body.agoraId), String(body.classId));
+          break;
+        case 'agora-review':
+          h.openAgora(String(body.agoraId), String(body.classId), true);
           break;
         case 'agora-howto':
           h.agoraHowto();
           break;
         case 'agora-start':
           h.startAgora();
+          break;
+        case 'agora-rewrite':
+          h.rewriteAgora();
+          break;
+        case 'agora-next':
+          h.nextAgoraTopic();
           break;
         case 'agora-close':
           h.closeAgora();
@@ -127,8 +139,7 @@ export async function POST(request: NextRequest) {
           h.revealAgora(body.public === true);
           break;
         case 'agora-settings':
-          // minutes: null is 제한 없음; left out, the 입력 시간 stays.
-          h.agoraSettings({ minutes: 'minutes' in body ? body.minutes : undefined, columns: body.columns, sort: body.sort });
+          h.agoraSettings({ columns: body.columns, sort: body.sort });
           break;
         case 'agora-page':
           h.turnAgoraPage(Number(body.dir));

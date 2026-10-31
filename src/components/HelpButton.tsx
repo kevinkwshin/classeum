@@ -19,14 +19,16 @@ const KEYS: [string, string][] = [
 
 // The 아고라 from start to end in its buttons' names, and its keys on the teacher screen.
 const AGORA_HOW = [
-  '[새 주제] → 주제 고르고 오늘 반 → [대기실 열기] (대기실의 [놀이 방법]은 12초 시범)',
-  '다 모이면 [쓰기 시작] → 오른쪽 아래 큰 버튼: [지금 마감] → [전체 공개] → [다음 쪽] → [아고라 닫기]',
+  '[새 아고라]에 제목과 주제를 한 줄씩 → 아고라 고르고 오늘 반 → [대기실 열기] (대기실의 [놀이 방법]은 12초 시범)',
+  '다 모이면 [쓰기 시작] → 오른쪽 아래 큰 버튼: [지금 마감] → [전체 공개] → [다음 쪽] → [다음 주제] → … → [끝내기]',
   '답 하나만 보이거나 숨기려면 선생님 화면의 그 답이나 프로젝터의 카드를 누르기',
+  '다음 시간: 아고라의 답 카드에서 그 반 [다시 보기] → [함께 보기], 고쳐 쓰게 하려면 [다시 쓰기]',
 ];
 const AGORA_KEYS: [string, string][] = [
-  ['Enter', '마감 · 공개'],
+  ['Enter', '시작 · 마감 · 공개 · 다음 주제'],
   ['← →', '쪽 넘기기'],
   ['↑ ↓', '1분 더 · 덜'],
+  ['S', '건너뛰기'],
 ];
 
 /** Where each step is done, in the screen's own button names, for someone who has never seen these screens. */

@@ -201,3 +201,8 @@ export function formatClock(ms: number) {
   const s = Math.ceil(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+/** A day as the screens write it: 10/31. */
+export function formatDay(at: number) {
+  return new Date(at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }).replace(/\.\s?/g, '/').replace(/\/$/, '');
+}

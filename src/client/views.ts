@@ -56,10 +56,19 @@ export interface AgoraCard {
   text?: string;
 }
 
-/** The projector's 아고라: in the 대기실 the topic and who has come in (`joined`), from [쓰기 시작] the cards. */
+/**
+ * The projector's 아고라: in the 대기실 the first topic (or the lesson looked at again) and who has come in (`joined`);
+ * then the topic up, read first (준비) and then its cards; after the last topic, the 끝.
+ */
 export interface DisplayAgora {
   phase: AgoraPhase;
   className: string;
+  title: string;
+  /** 다시 보기: when the class did this 아고라; null for a lesson. */
+  review: number | null;
+  /** The topic up, by its place, out of `count`. */
+  index: number;
+  count: number;
   topic: { id: string; text: string; note: string; minutes: number | null; columns: number; sort: TopicSort };
   reveal: TopicReveal;
   joined: { number: number; name: string; look: AvatarLook }[];
@@ -71,17 +80,45 @@ export interface DisplayAgora {
   timer: AgoraTimer;
   /** The 놀이 방법 demo is playing in the 대기실 since then (server clock); null otherwise. */
   howtoAt: number | null;
+  /** At the 끝: answers written, each topic's count (`skipped` if the class never wrote to it), and who came in. */
+  end: { answers: number; topics: { text: string; sent: number; of: number; skipped: boolean }[]; parade: { number: number; look: AvatarLook }[] } | null;
 }
 
-/** A phone's 아고라: the topic, its own answer whether it shows or not, and the class's cards once writing starts. */
+/** One of my answers to an 아고라's topic (`n` is its place), with its 처음 답 if 다시 쓰기 changed it. */
+export interface MyAnswer {
+  n: number;
+  topic: string;
+  text: string;
+  first: string | null;
+}
+
+/**
+ * A phone's 아고라: the topic up, its own answer whether it shows or not (with when it was first written and its 처음
+ * 답), the class's cards while students write or look at answers, and at the 끝 its own answers of the day.
+ */
 export interface StudentAgora {
   phase: AgoraPhase;
+  title: string;
+  /** 다시 보기: when the class did this 아고라; null for a lesson. */
+  review: number | null;
+  index: number;
+  count: number;
   topic: { id: string; text: string; note: string };
   /** Whether the teacher has shown every answer ([전체 공개]); the cards carry the text either way. */
   reveal: TopicReveal;
-  mine: { text: string } | null;
+  mine: { text: string; first: string | null; at: number } | null;
   cards: AgoraCard[];
   timer: AgoraTimer;
+  end: MyAnswer[] | null;
+}
+
+/** 내 답 노트: an 아고라 I answered (`count` topics, `at` when), with only my own answers. */
+export interface AgoraNote {
+  id: string;
+  title: string;
+  count: number;
+  at: number;
+  topics: MyAnswer[];
 }
 
 export interface TeacherStudent {
@@ -160,18 +197,24 @@ export interface TeacherView {
   displayOn: boolean;
   /** Phones connected right now, registered or not. */
   phones: number;
-  /** The 아고라 topics in the teacher's order, and the open session if any. */
-  agora: { topics: TeacherTopic[]; live: TeacherAgoraLive | null };
+  /** Every 아고라, the newest first, and the open session if any. */
+  agora: { agoras: TeacherAgora[]; live: TeacherAgoraLive | null };
 }
 
 /** The open 아고라's 입력 시간, on the server's clock; null with no limit, before [쓰기 시작] or once closed. */
 export type AgoraTimer = { startedAt: number; endsAt: number } | null;
 
-/** The open 아고라 on the teacher screen: its topic and class, phase, [공개], projector page, song, 입력 시간, and who has come in. */
+/**
+ * The open 아고라 on the teacher screen: which one and its class, a lesson or 다시 보기, the topic up and its phase,
+ * [공개], projector page, song, 입력 시간, who has come in, and the topics written to so far.
+ */
 export interface TeacherAgoraLive {
-  topicId: string;
+  agoraId: string;
   classId: string;
   className: string;
+  /** 다시 보기: when the class did this 아고라; null for a lesson. */
+  review: number | null;
+  index: number;
   phase: AgoraPhase;
   reveal: TopicReveal;
   page: number;
@@ -179,13 +222,24 @@ export interface TeacherAgoraLive {
   music: boolean;
   timer: AgoraTimer;
   joined: string[];
+  /** Topics students have written to in this session, by id. */
+  wrote: string[];
   /** The 놀이 방법 demo is playing on the projector. */
   howto: boolean;
 }
 
+/** An 아고라 on the teacher screen: its topics in order, and the classes that did it ([쓰기 시작], latest time). */
+export interface TeacherAgora {
+  id: string;
+  title: string;
+  createdAt: number;
+  runs: { classId: string; at: number }[];
+  topics: TeacherTopic[];
+}
+
 /**
- * An 아고라 topic on the teacher screen: the classes that did it ([쓰기 시작], latest time) and every answer whether
- * shown or not, from every class (studentId is one of `students`).
+ * A topic of an 아고라, with every answer whether shown or not, from every class (studentId is one of `students`), and
+ * its 처음 답 if 다시 쓰기 changed it.
  */
 export interface TeacherTopic {
   id: string;
@@ -195,9 +249,7 @@ export interface TeacherTopic {
   sort: TopicSort;
   /** 입력 시간 in minutes; null for no limit. */
   minutes: number | null;
-  createdAt: number;
-  runs: { classId: string; at: number }[];
-  answers: { studentId: string; text: string; shown: boolean | null; createdAt: number; updatedAt: number }[];
+  answers: { studentId: string; text: string; first: string | null; shown: boolean | null; createdAt: number; updatedAt: number }[];
 }
 
 
@@ -237,6 +289,8 @@ export interface StudentView {
   mySummary?: StudentSummary | null;
   /** The latest finished session's notes, shown from the home screen between classes. */
   lastNotes?: { eventName: string; at: number; wrong: WrongNote[]; practice: StudentSummary['practice'] } | null;
-  /** The 아고라 topic my class has on screen, if any. */
+  /** The 아고라 my class has open, if any. */
   agora?: StudentAgora | null;
+  /** 내 답 노트, on the home screen between lessons. */
+  agoraNotes?: AgoraNote[] | null;
 }

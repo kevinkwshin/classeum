@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatClock, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
-import type { StudentAgora, StudentView, WrongNote } from '@/client/views';
+import { formatClock, formatDay, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
+import type { AgoraNote, MyAnswer, StudentAgora, StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { GrammarCard, filledSentence, zoneLabels } from '@/components/GrammarCard';
 import { IdleAvatar } from '@/components/IdleAvatar';
@@ -88,7 +88,7 @@ export default function PlayPage() {
 
   return (
     // An 아고라 being written gets the width of a tablet; everything else, its 대기실 too, stays phone-sized.
-    <Screen wide={!!view.agora && view.agora.phase !== 'lobby' && !view.session}>
+    <Screen wide={!!view.agora && (view.agora.phase === 'writing' || view.agora.phase === 'closed') && !view.session}>
       {conn === 'lost' && !view.refused && <div className="fixed inset-x-0 top-0 z-50 bg-bad py-2 text-center text-sm font-bold text-white">연결이 끊겼어요 · 다시 연결 중</div>}
       <Router view={view} send={send} serverNow={serverNow} conn={conn} />
     </Screen>
@@ -100,15 +100,17 @@ type Send = (a: Record<string, unknown>) => Promise<unknown>;
 function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send; serverNow: () => number; conn: ConnState }) {
   const [lockerOpen, setLockerOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [answersOpen, setAnswersOpen] = useState(false);
   // Text drafts live here so the pause screen doesn't wipe them.
   const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
   // The locker and notes only show between questions and in a 대기실; a starting quiz or 아고라 always wins.
-  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && (!view.agora || view.agora.phase === 'lobby');
+  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && (!view.agora || view.agora.phase === 'lobby' || view.agora.phase === 'ready');
   // A starting quiz closes the locker and notes for good, so they don't cover the results later.
-  if (!between && (lockerOpen || notesOpen)) {
+  if (!between && (lockerOpen || notesOpen || answersOpen)) {
     setLockerOpen(false);
     setNotesOpen(false);
+    setAnswersOpen(false);
   }
   if (view.refused) return <Message title="잠시만 기다려 주세요" body={view.refused} />;
   if (!view.me) return <Register view={view} send={send} />;
@@ -117,14 +119,20 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   const notes = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes;
   if (notesOpen && between && notes) return <Notes key="notes" eventName={notes.eventName} wrong={notes.wrong} practice={notes.practice} send={send} onBack={() => setNotesOpen(false)} />;
   const openNotes = notes ? () => setNotesOpen(true) : undefined;
-  // The server never opens an 아고라 while a quiz is open, so the two don't meet here. Its 대기실 is the arena's.
+  // 내 답 노트 comes with the home screen between lessons; an 아고라 opening takes it away.
+  const answerNotes = view.agoraNotes?.length ? view.agoraNotes : null;
+  if (answersOpen && between && answerNotes) return <AnswerNotes notes={answerNotes} onBack={() => setAnswersOpen(false)} />;
+  const openAnswers = answerNotes ? () => setAnswersOpen(true) : undefined;
+  // The server never opens an 아고라 while a quiz is open, so the two don't meet here. Its 대기실 is the arena's, and
+  // so is the wait while the teacher reads out the next topic (준비).
   if (view.agora && !s) {
-    if (view.agora.phase === 'lobby') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
+    if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
+    if (view.agora.phase === 'end') return <AgoraDone view={view} />;
     return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} />;
   }
   if (!s || s.phase === 'summary') {
     if (s?.phase === 'summary' && view.mySummary) return <Summary view={view} onLocker={() => setLockerOpen(true)} onNotes={() => setNotesOpen(true)} />;
-    return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting={false} />;
+    return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} onAnswers={openAnswers} waiting={false} />;
   }
   if (s.paused) return <Message title="잠깐!" body="선생님을 봐 주세요" dark />;
   if (s.phase === 'lobby') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
@@ -162,20 +170,28 @@ function Button({ children, onClick, kind = 'primary', disabled, className = '' 
 // ---------- 아고라 ----------
 
 /**
- * The topic the teacher put up: my answer (always mine to see), and my class's cards, which carry answers only once
- * the teacher shows them (until then the server sends no text). Side by side on a landscape tablet.
+ * The topic up: my answer (always mine to see), and my class's cards, which carry answers only once the teacher shows
+ * them (until then the server sends no text). Side by side on a landscape tablet. In 다시 쓰기 the box starts from my
+ * answer, with what it first said above it.
  */
 function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send; serverNow: () => number }) {
   const a = view.agora!;
   const me = view.me!;
   const open = a.phase === 'writing';
+  const review = a.review !== null;
   useTicker(!!a.timer, 500);
   const saved = a.mine?.text ?? null;
   const [value, setValue] = useState(saved ?? '');
+  // Writing opening again (다시 쓰기) starts the box from my answer as it is now.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setValue(saved ?? '');
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const typed = value.trim();
-  const label = !open ? '마감됐어요' : saved !== null && saved === typed ? '제출했어요 · 고칠 수 있어요' : saved !== null ? '고친 답 제출' : '제출';
+  const label = saved !== null && saved === typed ? '제출했어요 · 고칠 수 있어요' : saved !== null ? '고친 답 제출' : '제출';
   const write = (action: Record<string, unknown>, after?: () => void) => {
     setBusy(true);
     setError('');
@@ -189,52 +205,76 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
     <div className="flex flex-1 flex-col gap-6 px-5 pb-8 pt-8 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start lg:gap-10 lg:px-8">
       <div className="flex flex-col gap-5">
         <div className="flex items-center justify-between gap-3">
-          <div className="text-lg font-extrabold">{me.className} · 아고라</div>
+          <div className="text-lg font-extrabold">
+            {me.className} · 아고라
+            {a.count > 1 && <span className="tabular text-ink-3"> · {a.index + 1}/{a.count}</span>}
+          </div>
           {a.timer ? (
             <AgoraCountdown timer={a.timer} now={serverNow()} />
           ) : (
-            <span className={`rounded-full px-3 py-1 text-sm font-bold ${open ? 'bg-accent text-ink' : 'bg-ink text-white'}`}>{open ? '진행 중' : '마감'}</span>
+            <span className={`shrink-0 rounded-full px-3 py-1 text-sm font-bold ${open ? 'bg-accent text-ink' : 'bg-ink text-white'}`}>
+              {open ? (review ? '다시 쓰기' : '진행 중') : review ? `다시 보기 · ${formatDay(a.review ?? 0)}` : '마감'}
+            </span>
           )}
         </div>
         <div className="cls-drop-in rounded-3xl bg-bg px-5 py-6 text-center">
           <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{a.topic.text}</div>
           {a.topic.note && <div className="mt-2 whitespace-pre-wrap text-base font-semibold text-ink-2 [overflow-wrap:anywhere]">{a.topic.note}</div>}
         </div>
-        <form
-          className="flex flex-col gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (open && typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value });
-          }}
-        >
-          <textarea
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-              setError('');
-            }}
-            disabled={!open}
-            maxLength={ANSWER_MAX}
-            rows={4}
-            placeholder={open ? '여기에 답을 써요' : '마감됐어요'}
-            aria-label="내 답"
-            className="min-h-32 resize-none rounded-2xl border-2 border-ink px-4 py-3 text-xl font-bold leading-snug outline-none disabled:border-[#D5D8DF] disabled:bg-bg disabled:text-ink-2"
-          />
-          <div className="flex items-center justify-between text-sm">
-            <span className="tabular text-ink-3">
-              {[...value].length} / {ANSWER_MAX}
-            </span>
-            {open && saved !== null && (
-              <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => setValue(''))} className="font-bold text-ink-3 underline underline-offset-4">
-                내 답 지우기
-              </button>
+        {open ? (
+          <>
+            {/* 다시 쓰기: what I wrote last lesson, to change from. */}
+            {review && a.mine && (
+              <div className="rounded-2xl bg-bg px-4 py-3">
+                <div className="text-xs font-extrabold text-ink-3">처음 답 · {formatDay(a.mine.at)}</div>
+                <div className="whitespace-pre-wrap text-[15px] font-semibold text-ink-2 [overflow-wrap:anywhere]">{a.mine.first ?? a.mine.text}</div>
+              </div>
             )}
+            <form
+              className="flex flex-col gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value });
+              }}
+            >
+              <textarea
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setError('');
+                }}
+                maxLength={ANSWER_MAX}
+                rows={4}
+                placeholder="여기에 답을 써요"
+                aria-label="내 답"
+                className="min-h-32 resize-none rounded-2xl border-2 border-ink px-4 py-3 text-xl font-bold leading-snug outline-none"
+              />
+              <div className="flex items-center justify-between text-sm">
+                <span className="tabular text-ink-3">
+                  {[...value].length} / {ANSWER_MAX}
+                </span>
+                {/* 다시 쓰기 changes last lesson's answer; it can't be taken back. */}
+                {saved !== null && !review && (
+                  <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => setValue(''))} className="font-bold text-ink-3 underline underline-offset-4">
+                    내 답 지우기
+                  </button>
+                )}
+              </div>
+              {error && <div className="text-sm font-semibold text-bad">{error}</div>}
+              <button type="submit" disabled={!typed || busy} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
+                {label}
+              </button>
+            </form>
+          </>
+        ) : a.mine ? (
+          <div className="rounded-2xl bg-good-soft px-4 py-3">
+            <div className="text-xs font-extrabold text-good">{review ? `내 답 · ${formatDay(a.mine.at)}` : '내 답 · 마감됐어요'}</div>
+            {a.mine.first !== null && <div className="mt-1 whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.mine.first}</s></div>}
+            <div className="mt-0.5 whitespace-pre-wrap text-lg font-bold leading-snug [overflow-wrap:anywhere]">{a.mine.text}</div>
           </div>
-          {error && <div className="text-sm font-semibold text-bad">{error}</div>}
-          <button type="submit" disabled={!open || !typed || busy} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
-            {label}
-          </button>
-        </form>
+        ) : (
+          <div className="rounded-2xl bg-bg px-4 py-4 text-center text-sm font-semibold text-ink-3">{review ? '지난 수업에 쓴 답이 없어요' : '마감됐어요 · 이번에는 답을 내지 않았어요'}</div>
+        )}
       </div>
       <div className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between text-sm font-bold text-ink-2">
@@ -266,6 +306,73 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
           })}
         </div>
         {a.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>}
+      </div>
+    </div>
+  );
+}
+
+/** One of my answers: the topic (left out when the 아고라 is just that question), what it first said if changed, and what it says. */
+function AnswerRow({ x, count, title }: { x: MyAnswer; count: number; title: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 border-t border-[#EEF0F3] pt-2.5 first:border-t-0 first:pt-0">
+      {(count > 1 || x.topic !== title) && (
+        <div className="text-xs font-bold text-ink-3 [overflow-wrap:anywhere]">
+          {count > 1 ? `주제 ${x.n} · ` : ''}
+          {x.topic}
+        </div>
+      )}
+      {x.first !== null && <div className="whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{x.first}</s></div>}
+      <div className="whitespace-pre-wrap text-[15px] font-bold leading-snug [overflow-wrap:anywhere]">{x.text}</div>
+    </div>
+  );
+}
+
+/** The 끝 of a lesson on the phone: a cheer, and what I wrote today, which stays in 내 답 노트. */
+function AgoraDone({ view }: { view: StudentView }) {
+  const a = view.agora!;
+  const look = normalizeLook(view.me!.look ?? undefined);
+  const mine = a.end ?? [];
+  return (
+    <div className="flex flex-1 flex-col gap-4 bg-bg px-5 pb-6 pt-10">
+      {/* Room above the character for its 끝! bubble. */}
+      <div className="flex flex-col items-center gap-4 rounded-3xl bg-ink px-6 pb-6 pt-14 text-white">
+        <Reaction kind="happy" look={look} size={112} bubble="끝!" />
+        <div className="text-center">
+          <div className="break-keep text-xl font-bold">{a.title} 끝!</div>
+          <div className="mt-1 text-sm text-[#A3A8B4]">내 답은 처음 화면의 내 답 노트에서 언제든 봐요</div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2.5 rounded-3xl bg-white p-4">
+        <div className="text-sm font-bold">오늘 쓴 내 답</div>
+        {mine.length ? mine.map((x) => <AnswerRow key={x.n} x={x} count={a.count} title={a.title} />) : <div className="text-sm text-ink-3">오늘은 낸 답이 없어요</div>}
+      </div>
+    </div>
+  );
+}
+
+/** 내 답 노트: every 아고라 I answered, the latest first, with my own answers and never anyone else's. */
+function AnswerNotes({ notes, onBack }: { notes: AgoraNote[]; onBack: () => void }) {
+  return (
+    <div className="flex flex-1 flex-col bg-bg">
+      <div className="flex items-center justify-between px-5 pb-3 pt-10">
+        <div className="text-2xl font-bold">내 답 노트</div>
+        <button type="button" onClick={onBack} className="rounded-2xl bg-white px-3 py-2 text-sm font-bold">
+          닫기
+        </button>
+      </div>
+      <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto px-4 pb-6">
+        {notes.map((n, i) => (
+          <div key={n.id} className="cls-slide-up flex flex-col gap-2.5 rounded-2xl bg-white p-4" style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}>
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="min-w-0 break-keep font-extrabold [overflow-wrap:anywhere]">{n.title}</div>
+              <div className="tabular shrink-0 text-xs font-bold text-ink-3">{formatDay(n.at)}</div>
+            </div>
+            {n.topics.map((x) => (
+              <AnswerRow key={x.n} x={x} count={n.count} title={n.title} />
+            ))}
+          </div>
+        ))}
+        <div className="pt-1 text-center text-xs font-semibold text-ink-3">친구 답은 수업에서 선생님이 공개할 때만 보여요</div>
       </div>
     </div>
   );
@@ -530,7 +637,7 @@ function PokeAvatar({ look, size }: { look: AvatarLook; size: number }) {
   );
 }
 
-function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocker: () => void; onNotes?: () => void; waiting: boolean }) {
+function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentView; onLocker: () => void; onNotes?: () => void; onAnswers?: () => void; waiting: boolean }) {
   const me = view.me!;
   const look = normalizeLook(me.look ?? undefined);
   const s = view.session;
@@ -552,10 +659,10 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
           </div>
         </div>
       </div>
-      {/* In an 아고라's 대기실, today's topic takes the reward card's place, so the class can start thinking. */}
-      {waiting && view.agora?.phase === 'lobby' && (
-        <div className="cls-slide-up rounded-3xl bg-gold p-4">
-          <div className="text-xs font-extrabold">오늘의 주제</div>
+      {/* In an 아고라's 대기실 and its 준비, the topic coming up takes the reward card's place, so the class can start thinking. */}
+      {waiting && view.agora && (view.agora.phase === 'lobby' || view.agora.phase === 'ready') && (
+        <div key={view.agora.topic.id} className="cls-slide-up rounded-3xl bg-gold p-4">
+          <div className="text-xs font-extrabold">{agoraLabel(view.agora)}</div>
           <div className="mt-0.5 whitespace-pre-wrap break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{view.agora.topic.text}</div>
           {view.agora.topic.note && <div className="mt-1 whitespace-pre-wrap text-xs font-semibold text-[#4A3A10] [overflow-wrap:anywhere]">{view.agora.topic.note}</div>}
         </div>
@@ -572,7 +679,7 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
       )}
       {/* A first-timer (no footprints yet) can try one pretend question while waiting. */}
       {/* In an 아고라's 대기실 the practice is writing an answer; otherwise a first-timer taps a box. */}
-      {waiting && view.agora?.phase === 'lobby' ? <AgoraPracticeCard look={look} /> : me.stamps === 0 && <PracticeCard look={look} />}
+      {waiting && view.agora ? view.agora.phase === 'lobby' && <AgoraPracticeCard look={look} /> : me.stamps === 0 && <PracticeCard look={look} />}
       <div className="rounded-3xl bg-white p-4">
         <div className="mb-3 flex items-center justify-between text-sm font-bold">
           <span>출석 발자국</span>
@@ -602,8 +709,25 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
           <span className="text-xl text-ink-3" aria-hidden>›</span>
         </button>
       )}
+      {onAnswers && view.agoraNotes && view.agoraNotes.length > 0 && (
+        <button type="button" onClick={onAnswers} className="flex items-center justify-between rounded-3xl bg-white p-4 text-left">
+          <div className="min-w-0">
+            <div className="text-sm font-bold">내 답 노트</div>
+            <div className="truncate text-xs text-ink-3">
+              {view.agoraNotes[0].title} · 아고라 {view.agoraNotes.length}개
+            </div>
+          </div>
+          <span className="text-xl text-ink-3" aria-hidden>›</span>
+        </button>
+      )}
     </div>
   );
+}
+
+/** What the gold card in the 대기실 and 준비 says the topic is: today's, or the one a 다시 보기 starts with. */
+function agoraLabel(a: StudentAgora): string {
+  const of = a.count > 1 ? ` · ${a.index + 1} / ${a.count}` : '';
+  return a.review !== null && a.phase === 'lobby' ? `다시 보기 · ${formatDay(a.review)} 수업${of}` : `오늘의 주제${of}`;
 }
 
 // ---------- play ----------

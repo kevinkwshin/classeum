@@ -3,7 +3,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
-import { DEFAULT_MINUTES, type TopicSort } from '@/lib/agora';
+import { DEFAULT_MINUTES, TITLE_MAX, type TopicSort } from '@/lib/agora';
 
 /** A class (반) the teacher runs; numbers are unique only within one class. */
 export interface ClassRec {
@@ -110,9 +110,20 @@ export interface LastSummaryRec extends StudentSummary {
 }
 
 /**
- * An 아고라 topic: a question a class answers in writing. Like an arena event it is made once and opened for one class
- * at a time; when the answers show is the teacher's call.
+ * An 아고라: a few topics a class answers in writing, one after another, as an arena event is a few questions. Like an
+ * event it is made once and opened for one class at a time; when the answers show is the teacher's call.
  */
+export interface AgoraRec {
+  id: string;
+  title: string;
+  /** In the order the class does them. */
+  topics: TopicRec[];
+  /** Each class that has done it ([쓰기 시작]), with when it last did. */
+  runs: Record<string, number>;
+  createdAt: number;
+}
+
+/** A topic of an 아고라: a question, and how its answers are written and shown. */
 export interface TopicRec {
   id: string;
   text: string;
@@ -123,9 +134,6 @@ export interface TopicRec {
   sort: TopicSort;
   /** 입력 시간: minutes students get from [쓰기 시작], after which writing closes by itself; null for no limit. */
   minutes: number | null;
-  /** Each class that has done it ([쓰기 시작]), with when it last did. */
-  runs: Record<string, number>;
-  createdAt: number;
 }
 
 /**
@@ -138,6 +146,8 @@ export interface TopicAnswerRec {
   shown: boolean | null;
   createdAt: number;
   updatedAt: number;
+  /** 처음 답: what it said before 다시 쓰기 first changed it; absent until then. */
+  first?: string;
 }
 
 export interface DB {
@@ -154,8 +164,8 @@ export interface DB {
   attendance: Record<string, string[]>;
   /** Each student's latest session summary, so wrong-answer notes outlive the live arena. */
   lastSummary: Record<string, LastSummaryRec>;
-  /** 아고라. Not 'answers': on disk that key holds the packed quiz responses. */
-  topics: Record<string, TopicRec>;
+  /** 아고라, and the answers by topic. Not 'answers': on disk that key holds the packed quiz responses. */
+  agoras: Record<string, AgoraRec>;
   topicAnswers: Record<string, Record<string, TopicAnswerRec>>;
 }
 
@@ -163,7 +173,7 @@ const DIR = join(process.cwd(), '.data');
 const FILE = join(DIR, 'classeum.json');
 
 function empty(): DB {
-  return { version: 1, classes: {}, students: {}, devices: {}, requests: {}, words: {}, events: {}, sessions: [], responses: [], rewards: [], attendance: {}, lastSummary: {}, topics: {}, topicAnswers: {} };
+  return { version: 1, classes: {}, students: {}, devices: {}, requests: {}, words: {}, events: {}, sessions: [], responses: [], rewards: [], attendance: {}, lastSummary: {}, agoras: {}, topicAnswers: {} };
 }
 
 /** Data saved before classes existed: everyone goes into one class the teacher can rename. */
@@ -185,24 +195,33 @@ function migrate(d: DB): DB {
     if (look.armor === 'lorica' || look.armor === 'gold') look.tunic = look.armor;
     delete look.armor;
   }
-  migrateTopics(d);
+  const legacy = d as Legacy;
+  if (legacy.topics) {
+    migrateTopics(legacy.topics, d.topicAnswers);
+    migrateAgoras(legacy.topics, d.agoras);
+    delete legacy.topics;
+  }
   return d;
 }
 
+/** A file from before 아고라 held topics, where each topic was an 아고라 of its own. */
+type Legacy = DB & { topics?: Record<string, OldTopic> };
+type OldTopic = TopicRec & { runs: Record<string, number>; createdAt: number };
+
 /**
- * 아고라 topics used to belong to one class, each with a status and a [공개] of its own. Now a topic is made once and
+ * 아고라 topics used to belong to one class, each with a status and a [공개] of its own. Then a topic was made once and
  * opened for any class, as an arena event is. The class a topic was made for keeps it as a run if it was ever put up
  * or answered; copies made for other classes (the same question and 보조 설명) become one topic again, with their
  * answers together. The list is the newest first now, as the arena's, so the old order goes. Nothing is open after a
  * restart, so nothing needs closing.
  */
-function migrateTopics(d: DB) {
-  type Old = Omit<TopicRec, 'runs'> & { runs?: Record<string, number>; classId?: string; status?: string; reveal?: string; order?: number };
-  const old = (Object.values(d.topics) as Old[]).filter((t) => t.runs === undefined).sort((a, b) => a.createdAt - b.createdAt);
+function migrateTopics(topics: Record<string, OldTopic>, topicAnswers: DB['topicAnswers']) {
+  type Old = Omit<OldTopic, 'runs'> & { runs?: Record<string, number>; classId?: string; status?: string; reveal?: string; order?: number };
+  const old = (Object.values(topics) as Old[]).filter((t) => t.runs === undefined).sort((a, b) => a.createdAt - b.createdAt);
   if (!old.length) return;
-  const kept = new Map<string, TopicRec>();
+  const kept = new Map<string, OldTopic>();
   for (const t of old) {
-    const answers = d.topicAnswers[t.id] ?? {};
+    const answers = topicAnswers[t.id] ?? {};
     const last = Math.max(0, ...Object.values(answers).map((a) => a.updatedAt));
     const runs: Record<string, number> = {};
     if (t.classId && (t.status !== 'draft' || last)) runs[t.classId] = last || t.createdAt;
@@ -215,18 +234,31 @@ function migrateTopics(d: DB) {
     const into = kept.get(`${t.text}\n${t.note}`);
     if (!into) {
       t.runs = runs;
-      kept.set(`${t.text}\n${t.note}`, t as TopicRec);
+      kept.set(`${t.text}\n${t.note}`, t as OldTopic);
       continue;
     }
     for (const [classId, at] of Object.entries(runs)) into.runs[classId] = Math.max(into.runs[classId] ?? 0, at);
-    const target = (d.topicAnswers[into.id] ??= {});
+    const target = (topicAnswers[into.id] ??= {});
     for (const [studentId, a] of Object.entries(answers)) if (!target[studentId] || target[studentId].updatedAt < a.updatedAt) target[studentId] = a;
-    delete d.topicAnswers[t.id];
-    delete d.topics[t.id];
+    delete topicAnswers[t.id];
+    delete topics[t.id];
   }
 }
 
-const RECORDS = ['classes', 'students', 'devices', 'requests', 'words', 'events', 'attendance', 'lastSummary', 'topics', 'topicAnswers'] as const;
+/**
+ * Now an 아고라 holds a few topics in order, as an event holds questions. Each topic that stood on its own becomes an
+ * 아고라 of one, named after its question, with its classes' runs; its answers stay where they were, by topic.
+ */
+function migrateAgoras(topics: Record<string, OldTopic>, agoras: DB['agoras']) {
+  for (const t of Object.values(topics)) {
+    const line = [...t.text.split('\n')[0].trim()];
+    const title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).join('')}…` : line.join('');
+    const id = `ago_${t.id.replace(/^top_/, '')}`;
+    agoras[id] = { id, title, topics: [{ id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes }], runs: t.runs ?? {}, createdAt: t.createdAt };
+  }
+}
+
+const RECORDS = ['classes', 'students', 'devices', 'requests', 'words', 'events', 'attendance', 'lastSummary', 'agoras', 'topicAnswers'] as const;
 const LISTS = ['sessions', 'responses', 'rewards'] as const;
 const isRecord = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -372,6 +404,9 @@ function parse(text: string): DB {
   delete d.answers;
   for (const k of RECORDS) if (!isRecord(d[k])) throw new Error(`${k} is not an object`);
   for (const k of LISTS) if (!Array.isArray(d[k])) throw new Error(`${k} is not a list`);
+  // Topics from before 아고라 held them, moved into 아고라 by migrate().
+  const legacy = d as Legacy;
+  if (legacy.topics !== undefined && !isRecord(legacy.topics)) throw new Error('topics is not an object');
   return migrate(d);
 }
 
