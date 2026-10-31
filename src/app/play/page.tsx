@@ -101,6 +101,8 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   const [lockerOpen, setLockerOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [answersOpen, setAnswersOpen] = useState(false);
+  // The ⭐ reward box already seen (by when it was given), so a new topic doesn't open it again.
+  const [praiseSeen, setPraiseSeen] = useState(0);
   // Text drafts live here so the pause screen doesn't wipe them.
   const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
@@ -128,7 +130,7 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   if (view.agora && !s) {
     if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
     if (view.agora.phase === 'end') return <AgoraDone view={view} />;
-    return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} />;
+    return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} praiseSeen={praiseSeen} onPraiseSeen={setPraiseSeen} />;
   }
   if (!s || s.phase === 'summary') {
     if (s?.phase === 'summary' && view.mySummary) return <Summary view={view} onLocker={() => setLockerOpen(true)} onNotes={() => setNotesOpen(true)} />;
@@ -174,7 +176,7 @@ function Button({ children, onClick, kind = 'primary', disabled, className = '' 
  * them (until then the server sends no text). Side by side on a landscape tablet. In 다시 쓰기 the box starts from my
  * answer, with what it first said above it.
  */
-function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send; serverNow: () => number }) {
+function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view: StudentView; send: Send; serverNow: () => number; praiseSeen: number; onPraiseSeen: (at: number) => void }) {
   const a = view.agora!;
   const me = view.me!;
   const open = a.phase === 'writing';
@@ -268,7 +270,10 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
           </>
         ) : a.mine ? (
           <div className="rounded-2xl bg-good-soft px-4 py-3">
-            <div className="text-xs font-extrabold text-good">{review ? `내 답 · ${formatDay(a.mine.at)}` : '내 답 · 마감됐어요'}</div>
+            <div className="text-xs font-extrabold text-good">
+              {review ? `내 답 · ${formatDay(a.mine.at)}` : '내 답 · 마감됐어요'}
+              {a.mine.star && <span className="ml-1.5 rounded-full bg-gold px-2 py-0.5 text-ink">⭐ 선생님 칭찬</span>}
+            </div>
             {a.mine.first !== null && <div className="mt-1 whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.mine.first}</s></div>}
             <div className="mt-0.5 whitespace-pre-wrap text-lg font-bold leading-snug [overflow-wrap:anywhere]">{a.mine.text}</div>
           </div>
@@ -287,7 +292,7 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
           {a.cards.map((c) => {
             const mine = c.number === me.number;
             return (
-              <div key={c.number} className={`flex min-w-0 flex-col gap-1.5 rounded-2xl bg-bg p-3 ${mine ? 'ring-2 ring-accent' : ''}`}>
+              <div key={c.number} className={`flex min-w-0 flex-col gap-1.5 rounded-2xl p-3 ${c.star ? 'bg-[#FFF6DE]' : 'bg-bg'} ${mine ? 'ring-2 ring-accent' : ''}`}>
                 <div className="flex min-w-0 items-center gap-2">
                   <PixelAvatar look={c.look} size={32} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
                   <span className="tabular text-xs font-bold text-ink-3">{c.number}</span>
@@ -295,6 +300,7 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
                     {c.name}
                     {mine ? ' · 나' : ''}
                   </span>
+                  {c.star && <span className="ml-auto shrink-0 rounded-full bg-gold px-1.5 text-xs font-extrabold">⭐</span>}
                 </div>
                 {c.text !== undefined ? (
                   <div className="whitespace-pre-wrap text-sm font-semibold leading-snug [overflow-wrap:anywhere]">{c.text}</div>
@@ -307,7 +313,41 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
         </div>
         {a.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>}
       </div>
+      {a.praise && a.praise.at !== praiseSeen && <PraiseBox praise={a.praise} look={normalizeLook(me.look ?? undefined)} onSeen={onPraiseSeen} />}
     </div>
+  );
+}
+
+/**
+ * The box that opens when the teacher's ⭐ gives me the 아고라's reward, as the arena's results open theirs: my
+ * character trying it on. It closes when tapped, or by itself after a while.
+ */
+function PraiseBox({ praise, look, onSeen }: { praise: NonNullable<StudentAgora['praise']>; look: AvatarLook; onSeen: (at: number) => void }) {
+  const item = itemById(praise.itemId);
+  useEffect(() => {
+    buzz([40, 60, 40]);
+    const t = setTimeout(() => onSeen(praise.at), 8000);
+    return () => clearTimeout(t);
+  }, [praise.at, onSeen]);
+  if (!item) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onSeen(praise.at)}
+      aria-label={`선생님 칭찬 보상 ${item.name}, 닫기`}
+      className="cls-unbox fixed inset-x-4 bottom-6 z-40 mx-auto flex max-w-md items-center gap-4 rounded-3xl bg-gold p-4 text-left text-ink shadow-[0_12px_40px_rgba(16,18,24,0.35)]"
+    >
+      <div className="flex h-28 w-24 shrink-0 items-end justify-center rounded-t-full rounded-b-xl bg-[#FFE29A] pb-2">
+        <div className="cls-float">
+          <PixelAvatar look={{ ...look, effect: 'sparkle', [item.slot]: item.value } as AvatarLook} size={80} />
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-extrabold">선생님 칭찬 ⭐ · 오늘의 보상</div>
+        <div className="text-2xl font-extrabold">{item.name}</div>
+        <div className="text-xs font-semibold text-[#4A3A10]">{praise.alreadyOwned ? '이미 가지고 있어요' : '보관함에 들어갔어요'}</div>
+      </div>
+    </button>
   );
 }
 
@@ -322,7 +362,10 @@ function AnswerRow({ x, count, title }: { x: MyAnswer; count: number; title: str
         </div>
       )}
       {x.first !== null && <div className="whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{x.first}</s></div>}
-      <div className="whitespace-pre-wrap text-[15px] font-bold leading-snug [overflow-wrap:anywhere]">{x.text}</div>
+      <div className="whitespace-pre-wrap text-[15px] font-bold leading-snug [overflow-wrap:anywhere]">
+        {x.text}
+        {x.star && <span className="ml-1.5 whitespace-nowrap rounded-full bg-gold px-2 py-0.5 align-middle text-[11px] font-extrabold">⭐ 칭찬</span>}
+      </div>
     </div>
   );
 }
@@ -332,6 +375,7 @@ function AgoraDone({ view }: { view: StudentView }) {
   const a = view.agora!;
   const look = normalizeLook(view.me!.look ?? undefined);
   const mine = a.end ?? [];
+  const praised = a.praise ? itemById(a.praise.itemId) : undefined;
   return (
     <div className="flex flex-1 flex-col gap-4 bg-bg px-5 pb-6 pt-10">
       {/* Room above the character for its 끝! bubble. */}
@@ -342,6 +386,16 @@ function AgoraDone({ view }: { view: StudentView }) {
           <div className="mt-1 text-sm text-[#A3A8B4]">내 답은 처음 화면의 내 답 노트에서 언제든 봐요</div>
         </div>
       </div>
+      {a.praise && praised && (
+        <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
+          <IdleAvatar look={previewLook(praised, look)} size={64} seed={praised.id} />
+          <div>
+            <div className="text-xs font-extrabold">오늘의 보상 · 선생님 칭찬 ⭐</div>
+            <div className="text-xl font-extrabold">{praised.name}</div>
+            <div className="text-xs font-semibold text-[#4A3A10]">{a.praise.alreadyOwned ? '이미 가지고 있어요' : '보관함에 들어갔어요'}</div>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col gap-2.5 rounded-3xl bg-white p-4">
         <div className="text-sm font-bold">오늘 쓴 내 답</div>
         {mine.length ? mine.map((x) => <AnswerRow key={x.n} x={x} count={a.count} title={a.title} />) : <div className="text-sm text-ink-3">오늘은 낸 답이 없어요</div>}
@@ -644,6 +698,8 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
   // A gift every 5 footprints: show this round of 5 and what comes next.
   const stamps = me.stamps % STAMPS_PER_UNLOCK;
   const nextGift = itemById(ATTENDANCE_UNLOCKS[Math.floor(me.stamps / STAMPS_PER_UNLOCK)] ?? '');
+  // An 아고라's reward shows while it waits in the 대기실 or 준비.
+  const agoraReward = view.agora && (view.agora.phase === 'lobby' || view.agora.phase === 'ready') ? itemById(view.agora.reward.itemId) : undefined;
   return (
     <div className="flex flex-1 flex-col gap-4 bg-bg px-5 pb-6 pt-10">
       <div className="flex items-center justify-between">
@@ -665,6 +721,16 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
           <div className="text-xs font-extrabold">{agoraLabel(view.agora)}</div>
           <div className="mt-0.5 whitespace-pre-wrap break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{view.agora.topic.text}</div>
           {view.agora.topic.note && <div className="mt-1 whitespace-pre-wrap text-xs font-semibold text-[#4A3A10] [overflow-wrap:anywhere]">{view.agora.topic.note}</div>}
+        </div>
+      )}
+      {waiting && agoraReward && (
+        <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
+          <IdleAvatar look={previewLook(agoraReward, look)} size={64} seed={agoraReward.id} />
+          <div>
+            <div className="text-xs font-extrabold">오늘의 보상</div>
+            <div className="text-xl font-extrabold">{agoraReward.name}</div>
+            <div className="text-xs font-semibold text-[#4A3A10]">선생님 칭찬 ⭐을 받으면</div>
+          </div>
         </div>
       )}
       {waiting && s?.reward && (

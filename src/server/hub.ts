@@ -13,7 +13,7 @@ import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
-import { addAgora, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, resetCards, revealCards, setSettings, studentAgora, studentNotes, teacherAgora, type AgoraInput, type AgoraLive } from './agora';
+import { addAgora, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, resetCards, revealCards, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -1119,6 +1119,11 @@ class Hub {
     });
   }
 
+  /** 이번 아고라 보상: the item a ⭐ gives from now on. */
+  setAgoraReward(agoraId: string, itemId: string) {
+    this.changeAgora(() => setReward(agoraId, itemId));
+  }
+
   /** An 아고라 goes with its answers, but not while it is open. */
   removeAgora(agoraId: string) {
     if (this.agoraLive?.agoraId === agoraId) throw new Error('열려 있는 아고라는 지울 수 없어요. 아고라를 닫은 뒤 지워 주세요.');
@@ -1186,6 +1191,8 @@ class Hub {
       timer: null,
       joined: new Set(),
       howtoAt: null,
+      id: newId('agl'),
+      rewarded: new Map(),
     };
     // As when an arena lobby opens: other classes' requests can't be approved during this class.
     for (const r of Object.values(d.requests)) {
@@ -1342,6 +1349,23 @@ class Hub {
     const a = student?.classId === live.classId ? own(d.topicAnswers[topic.id] ?? {}, student.id) : undefined;
     if (!a) return;
     flipCard(live.reveal, a);
+    save();
+    this.schedulePush(true);
+  }
+
+  /**
+   * The teacher's ⭐ on a student's answer to the topic up, from the teacher screen, while its cards are up: given, or
+   * taken back (toggleStar). A student without an answer has nothing to praise.
+   */
+  starAgoraCard(studentId: string) {
+    const d = db();
+    const board = this.agoraBoard();
+    const agora = this.agoraNow()?.agora;
+    if (!board || !agora) return;
+    const student = own(d.students, studentId);
+    const a = student?.classId === board.live.classId ? own(d.topicAnswers[board.topic.id] ?? {}, student.id) : undefined;
+    if (!a) return;
+    toggleStar(agora, board.live, a, studentId);
     save();
     this.schedulePush(true);
   }

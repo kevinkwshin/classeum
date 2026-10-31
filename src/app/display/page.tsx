@@ -243,16 +243,19 @@ function AgoraCardView({ c, open, onFlip }: { c: AgoraCard; open: boolean; onFli
     <div
       onClick={onFlip}
       title={onFlip ? (c.text === undefined ? '눌러서 이 답 공개' : '눌러서 이 답 숨기기') : undefined}
-      className={`flex min-w-0 flex-col gap-[0.6vw] rounded-[1.4vw] bg-white px-[1.2vw] py-[0.9vw] ${onFlip ? 'cursor-pointer' : ''}`}
+      className={`flex min-w-0 flex-col gap-[0.6vw] rounded-[1.4vw] px-[1.2vw] py-[0.9vw] ${c.star ? 'bg-[#FFFDF5] shadow-[inset_0_0_0_0.25vw_#F5B82E]' : 'bg-white'} ${onFlip ? 'cursor-pointer' : ''}`}
     >
       <div className="flex min-w-0 items-center gap-[0.8vw]">
         {/* Sized by the screen, like the rest of the projector. */}
         <div className="h-[3.4vw] w-[3.4vw] shrink-0 [&>svg]:h-full [&>svg]:w-full">
-          <PixelAvatar look={c.look} size={64} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
+          <PixelAvatar look={c.star ? { ...c.look, effect: 'sparkle' } : c.look} size={64} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
         </div>
         <span className="tabular text-[1.3vw] font-bold text-ink-3">{c.number}</span>
         <span className="truncate text-[1.6vw] font-extrabold">{c.name}</span>
-        {c.text === undefined && (
+        {/* A ⭐ says the answer came, so it takes the place of ✓ 냈어요. */}
+        {c.star ? (
+          <span key="star" className="cls-pop ml-auto shrink-0 rounded-full bg-gold px-[0.9vw] py-[0.3vw] text-[1.2vw] font-extrabold">⭐ 칭찬</span>
+        ) : c.text === undefined && (
           <span className={`ml-auto shrink-0 rounded-full px-[0.9vw] py-[0.3vw] text-[1.2vw] font-extrabold ${c.sent ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'}`}>
             {c.sent ? '✓ 냈어요' : open ? '생각 중…' : '미답변'}
           </span>
@@ -327,7 +330,13 @@ function AgoraEnd({ agora }: { agora: DisplayAgora }) {
             <CountUp value={end.answers} ms={1200} delay={300} />
           </div>
         </div>
-        <div className={`cls-pop flex min-w-[30vw] max-w-[46vw] flex-col justify-center rounded-[32px] bg-white px-12 py-8 ${many ? 'gap-[0.4vw]' : 'gap-[0.9vw]'}`} style={{ animationDelay: '0.15s' }}>
+        <div className="cls-pop flex flex-col justify-center rounded-[32px] bg-white px-14 py-10" style={{ animationDelay: '0.1s' }}>
+          <div className="text-2xl font-semibold text-ink-3">오늘의 보상 받은 친구</div>
+          <div className="tabular text-[8vw] font-extrabold leading-none">
+            <CountUp value={end.rewarded} ms={1200} delay={450} />
+          </div>
+        </div>
+        <div className={`cls-pop flex min-w-[28vw] max-w-[40vw] flex-col justify-center rounded-[32px] bg-white px-12 py-8 ${many ? 'gap-[0.4vw]' : 'gap-[0.9vw]'}`} style={{ animationDelay: '0.2s' }}>
           <div className="text-2xl font-semibold text-ink-3">주제마다 낸 친구</div>
           {end.topics.map((t, i) => (
             <div key={i} className={`flex items-center gap-[1vw] font-bold ${many ? 'text-[1.2vw]' : 'text-[1.6vw]'}`}>
@@ -349,7 +358,8 @@ function AgoraEnd({ agora }: { agora: DisplayAgora }) {
         <div className="flex max-w-[88vw] flex-wrap items-end justify-center gap-x-2 gap-y-3">
           {end.parade.map((a, i) => (
             <div key={a.number} className="cls-drop-in" style={{ animationDelay: `${900 + i * 45}ms` }}>
-              <div className="cls-jump" style={{ animationDelay: `${2200 + (i % 10) * 80}ms` }}>
+              <div className="cls-jump relative" style={{ animationDelay: `${2200 + (i % 10) * 80}ms` }}>
+                {a.rewarded && <div className="absolute -top-3 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 rounded-[2px] bg-gold" />}
                 <PixelAvatar look={a.look} size={size} mood="happy" blink={a.number} />
               </div>
             </div>
@@ -455,20 +465,49 @@ function AgoraLobby({ view, agora, serverNow }: { view: DisplayView; agora: Disp
         <LobbyHeader className={agora.className} title={agora.title} sub={sub} count={agora.joined.length} />
         {howtoAt !== null && <AgoraHowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} />}
         <LobbyCrowd avatars={agora.joined.map((a) => ({ key: String(a.number), name: a.name, look: a.look }))} wantNames hidden={howtoAt !== null} />
-        {/* Spacing is capped by the screen height too, as on the reward card, so the class keeps its room at 1280×720. */}
-        <div className={`flex flex-col gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white ${howtoAt !== null ? 'hidden' : ''}`}>
-          <div className="text-2xl font-bold text-gold">{agora.review !== null ? `지난 수업의 답을 다시 봐요${of}` : `오늘의 주제${of}`}</div>
-          <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 60 ? 'text-[2vw]' : 'text-[2.7vw]'}`}>{t.text}</div>
-          {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-2xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
+        {/* At least as tall as the arena's reward card (its character box and padding), so the class stands where it does there. */}
+        <div className={`flex min-h-[calc(min(16vw,28.4vh)_+_2*min(2.5rem,3.7vh))] gap-[1.2vw] ${howtoAt !== null ? 'hidden' : ''}`}>
+          {/* Spacing is capped by the screen height too, as on the reward card, so the class keeps its room at 1280×720. */}
+          <div className="flex min-w-0 flex-1 flex-col justify-center gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white">
+            <div className="text-2xl font-bold text-gold">{agora.review !== null ? `지난 수업의 답을 다시 봐요${of}` : `오늘의 주제${of}`}</div>
+            <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 50 ? 'text-[1.8vw]' : 'text-[2.3vw]'}`}>{t.text}</div>
+            {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
+          </div>
+          <AgoraRewardCard reward={agora.reward} />
         </div>
       </div>
     </div>
   );
 }
 
+/** 오늘의 보상 beside the topic, in the frame of the arena's reward card: the item on a plain character, and how it is won. */
+function AgoraRewardCard({ reward }: { reward: DisplayAgora['reward'] }) {
+  const item = itemById(reward.itemId);
+  return (
+    <div className="flex w-[27vw] shrink-0 flex-col justify-center gap-[min(1rem,1.5vh)] rounded-[32px] bg-ink p-[min(2rem,3vh)] text-white">
+      <div className="flex items-center gap-[1.4vw]">
+        <div className="flex h-[min(10vw,17.8vh)] w-[min(8.6vw,15.3vh)] shrink-0 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-3">
+          {item && (
+            <div className="cls-float">
+              <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={104} />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0">
+          <div className="text-2xl font-bold text-gold">오늘의 보상</div>
+          <div className="mt-1 break-keep text-[2.3vw] font-bold leading-tight tracking-tight">{reward.name}</div>
+        </div>
+      </div>
+      <span className="self-start rounded-2xl bg-[#24272F] px-5 py-3 text-xl font-semibold">
+        선생님 <b className="text-gold">칭찬 ⭐</b>을 받으면
+      </span>
+    </div>
+  );
+}
+
 // The 아고라's 놀이 방법 is a made-up class answering a made-up topic, so it never shows a real answer. `at` is when
 // each card turns to ✓ 냈어요 (ms into the demo); 지후 is still thinking. 하윤 is the phone being typed on.
-const HOWTO_TOPIC = '가장 좋아하는 계절은? 이유도 한 줄로';
+const HOWTO_TOPIC = 'What is your favorite season? Tell us why in one line.';
 const HOWTO_MINE = 'Summer! I can swim every day.';
 const HOWTO_CAST: { card: AgoraCard; at?: number }[] = [
   { card: { number: 1, name: '하람', look: { ...DEFAULT_LOOK, hair: 'black', hairStyle: 'ponytail', tunic: 'sky' }, sent: true, text: 'Winter, because I love snow.' }, at: 3500 },

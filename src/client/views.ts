@@ -54,6 +54,14 @@ export interface AgoraCard {
   look: AvatarLook;
   sent: boolean;
   text?: string;
+  /** The teacher's ⭐, which shows whether the answer does or not. */
+  star?: boolean;
+}
+
+/** An 아고라's reward item, for the 대기실 and the phones. */
+export interface AgoraReward {
+  itemId: string;
+  name: string;
 }
 
 /**
@@ -69,6 +77,7 @@ export interface DisplayAgora {
   /** The topic up, by its place, out of `count`. */
   index: number;
   count: number;
+  reward: AgoraReward;
   topic: { id: string; text: string; note: string; minutes: number | null; columns: number; sort: TopicSort };
   reveal: TopicReveal;
   joined: { number: number; name: string; look: AvatarLook }[];
@@ -80,8 +89,8 @@ export interface DisplayAgora {
   timer: AgoraTimer;
   /** The 놀이 방법 demo is playing in the 대기실 since then (server clock); null otherwise. */
   howtoAt: number | null;
-  /** At the 끝: answers written, each topic's count (`skipped` if the class never wrote to it), and who came in. */
-  end: { answers: number; topics: { text: string; sent: number; of: number; skipped: boolean }[]; parade: { number: number; look: AvatarLook }[] } | null;
+  /** At the 끝: answers written, how many got the reward, each topic's count (`skipped` if the class never wrote to it), and who came in. */
+  end: { answers: number; rewarded: number; topics: { text: string; sent: number; of: number; skipped: boolean }[]; parade: { number: number; look: AvatarLook; rewarded: boolean }[] } | null;
 }
 
 /** One of my answers to an 아고라's topic (`n` is its place), with its 처음 답 if 다시 쓰기 changed it. */
@@ -90,6 +99,8 @@ export interface MyAnswer {
   topic: string;
   text: string;
   first: string | null;
+  /** The teacher's ⭐. */
+  star: boolean;
 }
 
 /**
@@ -103,10 +114,13 @@ export interface StudentAgora {
   review: number | null;
   index: number;
   count: number;
+  reward: AgoraReward;
   topic: { id: string; text: string; note: string };
   /** Whether the teacher has shown every answer ([전체 공개]); the cards carry the text either way. */
   reveal: TopicReveal;
-  mine: { text: string; first: string | null; at: number } | null;
+  mine: { text: string; first: string | null; at: number; star: boolean } | null;
+  /** The reward I got for a ⭐ in this session: the item, whether I had it already, and when. */
+  praise: { itemId: string; alreadyOwned: boolean; at: number } | null;
   cards: AgoraCard[];
   timer: AgoraTimer;
   end: MyAnswer[] | null;
@@ -224,6 +238,8 @@ export interface TeacherAgoraLive {
   joined: string[];
   /** Topics students have written to in this session, by id. */
   wrote: string[];
+  /** Students this session has rewarded for a ⭐. */
+  rewarded: string[];
   /** The 놀이 방법 demo is playing on the projector. */
   howto: boolean;
 }
@@ -234,6 +250,8 @@ export interface TeacherAgora {
   title: string;
   createdAt: number;
   runs: { classId: string; at: number }[];
+  /** 이번 아고라 보상: the item a ⭐ gives. */
+  reward: { itemId: string };
   topics: TeacherTopic[];
 }
 
@@ -249,7 +267,7 @@ export interface TeacherTopic {
   sort: TopicSort;
   /** 입력 시간 in minutes; null for no limit. */
   minutes: number | null;
-  answers: { studentId: string; text: string; first: string | null; shown: boolean | null; createdAt: number; updatedAt: number }[];
+  answers: { studentId: string; text: string; first: string | null; star: boolean; shown: boolean | null; createdAt: number; updatedAt: number }[];
 }
 
 

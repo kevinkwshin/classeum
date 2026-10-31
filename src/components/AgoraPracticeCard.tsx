@@ -4,7 +4,7 @@ import type { AvatarLook } from '@/lib/types';
 import { Reaction } from './Reaction';
 
 const KEY = 'classeum.agoraPracticed';
-const TOPIC = '좋아하는 색깔은? 이유도 한 줄로';
+const TOPIC = 'What is your favorite color? Tell us why.';
 
 function practiced(): boolean {
   try {

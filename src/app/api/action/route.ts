@@ -7,7 +7,7 @@ const TEACHER_ACTIONS = new Set([
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete',
+  'agora-card-delete', 'agora-reward', 'agora-star',
 ]);
 
 /** Largest request: an 아고라 of ten topics, each with the longest question and 보조 설명 in Hangul, fits. */
@@ -156,6 +156,12 @@ export async function POST(request: NextRequest) {
           break;
         case 'agora-card-delete':
           h.removeAgoraCard(String(body.topicId), String(body.studentId));
+          break;
+        case 'agora-reward':
+          h.setAgoraReward(String(body.agoraId), String(body.itemId));
+          break;
+        case 'agora-star':
+          h.starAgoraCard(String(body.studentId));
           break;
       }
       return Response.json({ ok: true });

@@ -3,6 +3,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
+import { QUIZ_REWARD_ITEMS } from '@/lib/items';
 import { DEFAULT_MINUTES, TITLE_MAX, type TopicSort } from '@/lib/agora';
 
 /** A class (반) the teacher runs; numbers are unique only within one class. */
@@ -98,7 +99,8 @@ export interface RewardRec {
   eventId: string;
   studentId: string;
   itemId: string;
-  reason: 'challenge' | 'growth' | 'attendance';
+  /** challenge and growth are an arena quiz's, praise the teacher's ⭐ in an 아고라 (eventId is then the 아고라's). */
+  reason: 'challenge' | 'growth' | 'attendance' | 'praise';
   at: number;
 }
 
@@ -120,6 +122,8 @@ export interface AgoraRec {
   topics: TopicRec[];
   /** Each class that has done it ([쓰기 시작]), with when it last did. */
   runs: Record<string, number>;
+  /** 오늘의 보상: the item a student gets for the teacher's ⭐ on one of their answers. */
+  reward: { itemId: string };
   createdAt: number;
 }
 
@@ -148,6 +152,8 @@ export interface TopicAnswerRec {
   updatedAt: number;
   /** 처음 답: what it said before 다시 쓰기 first changed it; absent until then. */
   first?: string;
+  /** 선생님 칭찬: the teacher's ⭐; absent until given. */
+  star?: boolean;
 }
 
 export interface DB {
@@ -201,7 +207,17 @@ function migrate(d: DB): DB {
     migrateAgoras(legacy.topics, d.agoras);
     delete legacy.topics;
   }
+  // 아고라 from before rewards each get one, in turn through the catalog, as new ones do.
+  const agoras = Object.values(d.agoras).sort((a, b) => a.createdAt - b.createdAt);
+  agoras.forEach((a, i) => {
+    (a as Partial<AgoraRec>).reward ??= { itemId: rewardItemAt(i) };
+  });
   return d;
+}
+
+/** The reward a new 아고라 starts with, going round the items a quiz can reward, so the teacher only changes it. */
+export function rewardItemAt(n: number): string {
+  return QUIZ_REWARD_ITEMS[n % QUIZ_REWARD_ITEMS.length].id;
 }
 
 /** A file from before 아고라 held topics, where each topic was an 아고라 of its own. */
@@ -254,7 +270,7 @@ function migrateAgoras(topics: Record<string, OldTopic>, agoras: DB['agoras']) {
     const line = [...t.text.split('\n')[0].trim()];
     const title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).join('')}…` : line.join('');
     const id = `ago_${t.id.replace(/^top_/, '')}`;
-    agoras[id] = { id, title, topics: [{ id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes }], runs: t.runs ?? {}, createdAt: t.createdAt };
+    agoras[id] = { id, title, topics: [{ id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes }], runs: t.runs ?? {}, reward: { itemId: rewardItemAt(Object.keys(agoras).length) }, createdAt: t.createdAt };
   }
 }
 

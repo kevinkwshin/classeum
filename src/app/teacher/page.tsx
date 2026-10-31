@@ -121,6 +121,8 @@ function TeacherApp() {
               />
             </div>
             <div className="break-all px-2 text-[11px] leading-snug text-[#737887]">학생 주소 {view.joinUrl}</div>
+            {/* The day the app's code last changed (next.config.ts), so a teacher can tell an update has arrived. */}
+            {process.env.CLASSEUM_UPDATED && <div className="px-2 text-[11px] leading-snug text-[#737887]">최종 수정 {process.env.CLASSEUM_UPDATED}</div>}
           </div>
         </nav>
       )}
@@ -531,7 +533,6 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
   const [itemId, setItemId] = useState(event.reward.itemId);
   const [challenge, setChallenge] = useState(event.reward.challengePct);
   const [growth, setGrowth] = useState(event.reward.growthPp);
-  const item = itemById(itemId);
   const dirty = itemId !== event.reward.itemId || challenge !== event.reward.challengePct || growth !== event.reward.growthPp;
   // Same limits as the server, written back so the editor shows what will really be used.
   const saveReward = () => {
@@ -585,34 +586,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
       )}
       <Card className="flex flex-col gap-5">
         <h2 className="text-lg font-bold">이번 퀴즈 보상</h2>
-        <div className="flex gap-6">
-          <div className="flex w-48 shrink-0 flex-col items-center gap-3">
-            <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <IdleAvatar key={item.id} look={previewLook(item, DEFAULT_LOOK)} size={150} seed={item.id} />}</div>
-            <div className="text-lg font-bold">{item?.name}</div>
-          </div>
-          {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. The scroll box clips
-              what sticks out, so 4 px of padding (cancelled by the margin) keeps the chosen item's ring whole. */}
-          <div className="-m-1 flex max-h-[428px] flex-1 flex-col gap-4 overflow-y-auto p-1">
-            {THEMES.map((th) => {
-              const list = ITEMS.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
-              if (list.length === 0) return null;
-              return (
-                <div key={th.id}>
-                  <div className="mb-1.5 text-xs font-bold text-ink-3">{th.name}</div>
-                  {/* Five per row when there's room, fewer (at least 72px each) in a narrow column. */}
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(max(72px,calc(20%_-_0.5rem)),1fr))] gap-2">
-                    {list.map((it) => (
-                      <button key={it.id} type="button" aria-pressed={itemId === it.id} onClick={() => setItemId(it.id)} className={`flex flex-col items-center gap-1 rounded-2xl p-2 ${itemId === it.id ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
-                        <IdleAvatar look={previewLook(it, DEFAULT_LOOK)} size={48} seed={it.id} />
-                        <span className="text-[11px] font-semibold leading-tight">{it.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <RewardItemPicker itemId={itemId} onPick={setItemId} />
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 rounded-xl bg-bg px-4 py-2 text-[15px] font-semibold">도전 · 정답률
             <input type="number" min={30} max={100} value={challenge} onChange={(e) => setChallenge(Number(e.target.value))} className="h-9 w-16 rounded-lg bg-white text-center font-bold" />%+
@@ -636,6 +610,41 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
         </label>
         <span className="text-sm text-ink-3">반 정답률 70% 아래 단어, 최대 5문제 · 보통은 꺼 두세요</span>
       </Card>
+    </div>
+  );
+}
+
+/** The reward picker of 이번 퀴즈 보상 and 이번 아고라 보상: the chosen item on a plain character, and every item a quiz can give, by theme. */
+function RewardItemPicker({ itemId, onPick }: { itemId: string; onPick: (id: string) => void }) {
+  const item = itemById(itemId);
+  return (
+    <div className="flex gap-6">
+      <div className="flex w-48 shrink-0 flex-col items-center gap-3">
+        <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <IdleAvatar key={item.id} look={previewLook(item, DEFAULT_LOOK)} size={150} seed={item.id} />}</div>
+        <div className="text-lg font-bold">{item?.name}</div>
+      </div>
+      {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. The scroll box clips
+          what sticks out, so 4 px of padding (cancelled by the margin) keeps the chosen item's ring whole. */}
+      <div className="-m-1 flex max-h-[428px] flex-1 flex-col gap-4 overflow-y-auto p-1">
+        {THEMES.map((th) => {
+          const list = ITEMS.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
+          if (list.length === 0) return null;
+          return (
+            <div key={th.id}>
+              <div className="mb-1.5 text-xs font-bold text-ink-3">{th.name}</div>
+              {/* Five per row when there's room, fewer (at least 72px each) in a narrow column. */}
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(max(72px,calc(20%_-_0.5rem)),1fr))] gap-2">
+                {list.map((it) => (
+                  <button key={it.id} type="button" aria-pressed={itemId === it.id} onClick={() => onPick(it.id)} className={`flex flex-col items-center gap-1 rounded-2xl p-2 ${itemId === it.id ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
+                    <IdleAvatar look={previewLook(it, DEFAULT_LOOK)} size={48} seed={it.id} />
+                    <span className="text-[11px] font-semibold leading-tight">{it.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1440,7 +1449,7 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
               const on = a.id === agora?.id;
               return (
                 <button key={a.id} type="button" onClick={() => setSelected(a.id)} className={`rounded-2xl p-4 text-left ${on ? 'bg-ink text-white' : 'bg-white'}`}>
-                  <div className="line-clamp-2 break-keep text-lg font-bold leading-snug [overflow-wrap:anywhere]">{a.title}</div>
+                  <div className="line-clamp-2 break-keep text-lg font-bold [overflow-wrap:anywhere]">{a.title}</div>
                   <div className={`text-sm ${on ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>
                     주제 {a.topics.length}개 · 약 {agoraMinutes(a.topics)}분{view.classes.length > 0 ? ` · ${a.runs.length}/${view.classes.length}반` : ''}
                   </div>
@@ -1530,7 +1539,7 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
                       onChange={(e) => setRow(i, { text: e.target.value })}
                       rows={2}
                       maxLength={TOPIC_MAX}
-                      placeholder={i === 0 ? '주말에 가족이 허락해 준 일을 let으로 한 문장 써 보세요' : ''}
+                      placeholder={i === 0 ? 'What did your family let you do last weekend?' : ''}
                       aria-label={`${i + 1}번 주제`}
                       className={`${CELL} font-bold`}
                     />
@@ -1541,7 +1550,7 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
                       onChange={(e) => setRow(i, { note: e.target.value })}
                       rows={2}
                       maxLength={NOTE_MAX}
-                      placeholder={i === 0 ? '예) My mom let me play games after dinner.' : ''}
+                      placeholder={i === 0 ? 'e.g. My mom let me play games after dinner.' : ''}
                       aria-label={`${i + 1}번 보조 설명`}
                       className={CELL}
                     />
@@ -1614,6 +1623,9 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
   // The class and topic whose answers show below, when the teacher picks others.
   const [answersOf, setAnswersOf] = useState<string | null>(null);
   const [topicAt, setTopicAt] = useState(0);
+  const [rewardId, setRewardId] = useState(agora.reward.itemId);
+  const rewardDirty = rewardId !== agora.reward.itemId;
+  const saveReward = () => act({ type: 'agora-reward', agoraId: agora.id, itemId: rewardId });
   const runs = new Map(agora.runs.map((r) => [r.classId, r.at]));
   const byId = new Map(view.students.map((s) => [s.id, s]));
   const classOf = (studentId: string) => byId.get(studentId)?.classId;
@@ -1631,45 +1643,45 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
     if (confirm(`이 아고라를 지울까요?${extra}`)) act({ type: 'agora-delete', agoraId: agora.id }).catch(() => undefined);
   };
   // The projector window opens first, inside the click: Safari blocks one opened after the await.
-  const open = (type: 'agora-open' | 'agora-review', forClass: string) => {
+  const open = async (type: 'agora-open' | 'agora-review', forClass: string) => {
     if (!view.displayOn) openProjector();
+    if (rewardDirty) await saveReward().catch(() => undefined);
     act({ type, agoraId: agora.id, classId: forClass }).catch(() => undefined);
   };
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5">
-      <Card className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-          <div className="min-w-0 flex-[1_1_16rem]">
-            <div className="break-keep text-2xl font-bold leading-snug [overflow-wrap:anywhere]">{agora.title}</div>
-            <div className="mt-0.5 text-sm text-ink-3">
-              주제 {agora.topics.length}개 · 약 {agoraMinutes(agora.topics)}분 · {formatDay(agora.createdAt)} 만듦
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
-            <Btn kind="ghost" onClick={onEdit}>수정</Btn>
-            <Btn kind="ghost" onClick={remove}>지우기</Btn>
-            {view.classes.length === 0 ? (
-              <Btn onClick={onStudents}>반 만들기 →</Btn>
-            ) : (
-              <>
-                <label className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-ink-3">오늘 반</span>
-                  <select value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
-                    {view.classes.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <Btn kind="accent" disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : undefined} onClick={() => open('agora-open', classId)}>
-                  대기실 열기
-                </Btn>
-              </>
-            )}
-          </div>
+      {/* The event card's frame and lines (name, size, made when; buttons; classes), so the two tabs line up, then the topics. */}
+      <Card className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-[1_1_16rem]">
+          <div className="break-keep text-2xl font-bold [overflow-wrap:anywhere]">{agora.title}</div>
+          <div className="text-ink-3">주제 {agora.topics.length}개 · 약 {agoraMinutes(agora.topics)}분</div>
+          <div className="mt-0.5 text-sm text-ink-3">✏️ {new Date(agora.createdAt).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })} 만듦</div>
         </div>
-        <ol className="flex flex-col">
+        <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
+          <Btn kind="ghost" onClick={onEdit}>수정</Btn>
+          <Btn kind="ghost" onClick={remove}>지우기</Btn>
+          {view.classes.length === 0 ? (
+            <Btn onClick={onStudents}>반 만들기 →</Btn>
+          ) : (
+            <>
+              <label className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-ink-3">오늘 반</span>
+                <select value={classId} onChange={(e) => setClassId(e.target.value)} className="h-11 rounded-xl border border-[#D5D8DF] bg-white px-3 text-[15px] font-bold">
+                  {view.classes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
+              <Btn kind="accent" disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : undefined} onClick={() => open('agora-open', classId)}>
+                대기실 열기
+              </Btn>
+            </>
+          )}
+        </div>
+        <AgoraRuns view={view} runs={runs} chosen={classId} />
+        <ol className="flex w-full flex-col">
           {agora.topics.map((t, i) => (
-            <li key={t.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0 first:pt-0">
+            <li key={t.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 last:pb-0">
               <span className="tabular flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-sm font-extrabold text-white">{i + 1}</span>
               <div className="min-w-0 flex-1">
                 <div className="whitespace-pre-wrap break-keep font-bold leading-snug [overflow-wrap:anywhere]">{t.text}</div>
@@ -1681,7 +1693,15 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
             </li>
           ))}
         </ol>
-        <AgoraRuns view={view} runs={runs} chosen={classId} />
+      </Card>
+      <Card className="flex flex-col gap-5">
+        <h2 className="text-lg font-bold">이번 아고라 보상</h2>
+        <RewardItemPicker itemId={rewardId} onPick={setRewardId} />
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-xl bg-bg px-4 py-2 text-[15px] font-semibold">칭찬 · 함께 볼 때 선생님이 ⭐를 준 학생이 받아요</span>
+          <span className="text-sm text-ink-3">한 수업에 한 사람 한 번</span>
+          <Btn kind="gold" disabled={!rewardDirty} onClick={() => saveReward().catch(() => undefined)} className="ml-auto">저장</Btn>
+        </div>
       </Card>
       {shownClass && (
         <Card className="flex flex-col gap-3">
@@ -1721,6 +1741,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
                   <div className="text-sm font-bold">
                     <span className="tabular mr-1 text-ink-3">{s.number}</span>
                     {s.name}
+                    {a.star && <span className="ml-1.5 rounded-full bg-gold px-2 py-0.5 text-xs font-extrabold">⭐ 칭찬</span>}
                   </div>
                   {/* 다시 쓰기 changed it: what it first said, struck through, above what it says now. */}
                   {a.first !== null && <div className="whitespace-pre-wrap text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.first}</s></div>}
@@ -1946,6 +1967,9 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   const waiting = cards.filter((s) => !answers.has(s.id));
   const shownOf = (a: TeacherTopic['answers'][number]) => (a.shown === null ? isPublic : a.shown);
   const next = agora.topics[live.index + 1];
+  // The arena console's preview: 16:8, as wide as the column allows while what is below it stays above the bottom bar;
+  // the next topic waiting below takes its room, and it is never larger than the arena's.
+  const previewMax = `max(320px, calc((100vh - ${next ? 520 : 424}px) * 2))`;
   const label = { start: '쓰기 시작', close: '지금 마감', reveal: '전체 공개', page: '다음 쪽', next: '다음 주제', finish: '끝내기', end: '아고라 닫기' }[step];
   const hint = step === 'page' ? '→' : step === 'finish' || step === 'end' ? '' : 'Enter';
   const phases: [string, boolean][] = [
@@ -1974,6 +1998,11 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
             ))}
           </div>
           {left !== null && <div className="tabular text-[26px] font-extrabold text-[#FF8A5C]">{formatClock(left)}</div>}
+          {live.rewarded.length > 0 && (
+            <span title="이번에 칭찬 별로 보상을 받은 학생" className="tabular flex h-9 items-center gap-1.5 rounded-full bg-[#24272F] px-3.5 text-[15px] font-extrabold text-gold">
+              ⭐ {live.rewarded.length}
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           <MusicSwitch dark on={live.music} onToggle={() => send({ type: 'agora-music' })} title={AGORA_MUSIC_TITLE} />
@@ -1993,16 +2022,17 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                 <span>프로젝터</span>
                 <span className="font-bold text-ink">{live.phase === 'ready' ? '준비 · 주제를 읽어 줘요' : isPublic ? '전체 공개' : '비공개'}</span>
                 <span className="flex items-center gap-1.5">
-                  <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1 })} className="h-8 w-8 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
+                  {/* 28px, the height of the arena's question here, so the preview starts where the arena's does. */}
+                  <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1 })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
                   <span className="tabular w-12 text-center font-bold text-ink">{live.page + 1} / {live.pages}</span>
-                  <button type="button" aria-label="다음 쪽" disabled={live.page >= live.pages - 1} onClick={() => send({ type: 'agora-page', dir: 1 })} className="h-8 w-8 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">▶</button>
+                  <button type="button" aria-label="다음 쪽" disabled={live.page >= live.pages - 1} onClick={() => send({ type: 'agora-page', dir: 1 })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">▶</button>
                 </span>
               </div>
               {/* The projector's board in miniature: what each card shows right now. */}
-              <div className="flex flex-col gap-2.5 rounded-xl bg-bg p-3">
+              <div className="mx-auto flex aspect-[16/8] w-full flex-col gap-2.5 overflow-hidden rounded-xl bg-bg p-3" style={{ maxWidth: previewMax }}>
                 {live.phase === 'ready' ? (
                   // 준비: the topic alone, large, as the projector shows it before [쓰기 시작].
-                  <div className="flex flex-col items-center gap-2 rounded-xl bg-white px-5 py-8 text-center">
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-xl bg-white px-5 py-4 text-center">
                     <span className="tabular rounded-full bg-ink px-3 py-1 text-xs font-bold text-white">주제 {live.index + 1} / {count}</span>
                     <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{topic.text}</div>
                     {topic.note && <div className="whitespace-pre-wrap text-sm font-semibold text-ink-2 [overflow-wrap:anywhere]">{topic.note}</div>}
@@ -2014,19 +2044,19 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                       <div className="line-clamp-2 break-keep font-bold [overflow-wrap:anywhere]">{topic.text}</div>
                       {topic.note && <div className="mt-0.5 line-clamp-1 text-xs font-semibold text-ink-2">{topic.note}</div>}
                     </div>
-                    {/* Shorter when the next topic waits below, so it stays above the bottom bar. */}
-                    <div className={`grid gap-2 overflow-y-auto ${next ? 'max-h-[280px]' : 'max-h-[360px]'}`} style={{ gridTemplateColumns: `repeat(${topic.columns}, minmax(0, 1fr))` }}>
+                    <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto" style={{ gridTemplateColumns: `repeat(${topic.columns}, minmax(0, 1fr))` }}>
                       {cards.map((s) => {
                         const a = answers.get(s.id);
                         const shown = !!a && shownOf(a);
                         return (
-                          <div key={s.id} className="flex min-w-0 flex-col gap-1 rounded-lg bg-white px-2.5 py-2">
+                          <div key={s.id} className={`flex min-w-0 flex-col gap-1 rounded-lg bg-white px-2.5 py-2 ${a?.star ? 'ring-2 ring-inset ring-gold' : ''}`}>
                             <div className="flex items-center gap-1.5">
                               <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={20} seed={s.id} />
                               <span className="truncate text-xs font-bold">
                                 <span className="tabular mr-0.5 text-ink-3">{s.number}</span>
                                 {s.name}
                               </span>
+                              {a?.star && <span className="ml-auto text-xs">⭐</span>}
                             </div>
                             <div className={`line-clamp-2 text-xs [overflow-wrap:anywhere] ${shown ? 'font-semibold' : a ? 'font-bold text-good' : 'text-ink-3'}`}>{a ? (shown ? a.text : '✓ 냈어요') : writing ? '생각 중…' : '미답변'}</div>
                           </div>
@@ -2055,7 +2085,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
 
           <Card className="flex min-w-0 flex-1 flex-col gap-4">
             <div className="flex items-end justify-between">
-              <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'ready' ? '들어온 학생 · 쓰기 시작을 누르면 답이 여기에 모여요' : '낸 학생 · 누르면 그 답만 공개·비공개'}</div>
+              <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'ready' ? '들어온 학생 · 쓰기 시작을 누르면 답이 여기에 모여요' : '낸 학생 · 누르면 그 답만 공개·비공개 · ⭐로 칭찬'}</div>
               {live.phase === 'ready' ? (
                 <div className="tabular text-5xl font-extrabold leading-none tracking-tight">{view.students.filter((s) => s.classId === live.classId && inRoom.has(s.id)).length}</div>
               ) : (
@@ -2071,7 +2101,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                 const a = answers.get(s.id)!;
                 const shown = shownOf(a);
                 return (
-                  <div key={s.id} className="flex items-start gap-1 rounded-xl bg-bg">
+                  <div key={s.id} className={`flex items-start gap-1 rounded-xl ${a.star ? 'bg-[#FFF6DE]' : 'bg-bg'}`}>
                     <button
                       type="button"
                       aria-pressed={shown}
@@ -2096,6 +2126,17 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                       </span>
                       {a.first !== null && <span className="whitespace-pre-wrap pl-8 text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.first}</s></span>}
                       <span className={`whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere] ${shown ? '' : 'text-ink-3'}`}>{a.text}</span>
+                    </button>
+                    {/* 칭찬: the first ⭐ in a lesson gives this student the 아고라's reward; taking it back keeps the reward. */}
+                    <button
+                      type="button"
+                      aria-pressed={a.star}
+                      disabled={live.phase === 'ready'}
+                      title={a.star ? '칭찬 별 빼기 (받은 보상은 그대로)' : '칭찬 별: 이 학생이 오늘의 보상을 받아요'}
+                      onClick={() => send({ type: 'agora-star', studentId: s.id })}
+                      className={`mt-1.5 h-8 shrink-0 rounded-full border px-2.5 text-xs font-extrabold disabled:opacity-40 ${a.star ? 'border-gold bg-gold text-ink' : 'border-[#D5D8DF] bg-white text-ink-3 hover:text-ink'}`}
+                    >
+                      ⭐ {a.star ? '칭찬함' : '칭찬'}
                     </button>
                     <button
                       type="button"
@@ -2164,6 +2205,21 @@ function AgoraEndPanel({ view, live, agora }: { view: TeacherView; live: Teacher
         <div className="text-sm font-semibold text-[#A3A8B4]">{live.className} · 함께 쓴 답</div>
         <div className="tabular text-7xl font-extrabold leading-none text-[#3DDC97]">{total}</div>
         <div className="mt-2 text-sm text-[#A3A8B4]">프로젝터에 끝 화면이 떠 있어요. 학생들은 폰의 내 답 노트에서 다시 볼 수 있어요.</div>
+        <div className="mt-3 border-t border-[#24272F] pt-3 text-sm font-semibold text-[#A3A8B4]">오늘의 보상 받은 친구 · ⭐ 칭찬</div>
+        {live.rewarded.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {view.students
+              .filter((s) => live.rewarded.includes(s.id))
+              .sort(byNumber)
+              .map((s) => (
+                <span key={s.id} className="rounded-full bg-gold px-2.5 py-1 text-sm font-bold text-ink">
+                  {s.number} {s.name}
+                </span>
+              ))}
+          </div>
+        ) : (
+          <div className="text-sm text-[#A3A8B4]">이번에는 없어요</div>
+        )}
       </Card>
       <Card className="flex min-w-0 flex-1 flex-col">
         <h2 className="mb-2 text-lg font-bold">주제마다 낸 학생</h2>

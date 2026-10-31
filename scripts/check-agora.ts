@@ -1,6 +1,6 @@
 // Checks 아고라's safety rules against a running Classeum server the way a class uses it: the teacher screen, the
 // projector and five phones over the real streams and actions, through 대기실, 쓰기, 마감, 다음 주제 and the 끝, then
-// 다시 보기 and 다시 쓰기 in a later lesson and each phone's 내 답 노트. It makes two classes of its own (아고라점검A
+// 다시 보기 and 다시 쓰기 in a later lesson, each phone's 내 답 노트, and the teacher's ⭐ with its reward. It makes two classes of its own (아고라점검A
 // and 아고라점검B) and 아고라 titled [아고라점검], and deletes them with their students and answers at the end, so real
 // classes, 아고라 and records are never touched. It stops before doing anything if the arena or an 아고라 is open.
 // Usage (from the project folder, with the server on): npm run check:agora -- [baseUrl=http://localhost:3000]
@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ANSWER_MAX, TITLE_MAX, TOPICS_MAX } from '../src/lib/agora';
+import { ATTENDANCE_UNLOCKS, QUIZ_REWARD_ITEMS } from '../src/lib/items';
 
 const BASE = process.argv[2] ?? 'http://localhost:3000';
 const PREFIX = '아고라점검';
@@ -18,7 +19,7 @@ const TEACHER = { Cookie: `cls_teacher=${readFileSync(join(DATA, 'teacher-key'),
 const TEACHER_ONLY = [
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete',
+  'agora-card-delete', 'agora-reward', 'agora-star',
 ];
 // The one place a page takes HTML: the QR picture the server draws itself.
 const QR_HTML = 'dangerouslySetInnerHTML={{ __html: view.qr }}';
@@ -159,9 +160,20 @@ async function run(teacher: Stream, display: Stream) {
   const [t1, t2, t3] = (agora().topics as View[]).map((t) => t.id as string);
   const topic = (id = t1): View => (teacher.view.agora.agoras as View[]).flatMap((a) => a.topics as View[]).find((t) => t.id === id)!;
   check('주제는 쓴 순서대로, 주제마다 입력 시간·열·순서를 따로 가진다', agora().topics.length === 3 && topic(t1).minutes === 10 && topic(t1).columns === 3 && topic(t1).sort === 'time' && topic(t2).minutes === 5 && topic(t3).minutes === null);
+  const REWARD = QUIZ_REWARD_ITEMS[3];
+  check('아고라는 만들 때 보상 아이템을 하나 가진다 (아레나 이벤트처럼)', QUIZ_REWARD_ITEMS.some((i) => i.id === agora().reward?.itemId));
+  check('출석 아이템은 보상으로 고를 수 없다', (await post({ type: 'agora-reward', agoraId, itemId: ATTENDANCE_UNLOCKS[0] })).error === '그 아이템은 보상으로 고를 수 없어요.');
+  check('없는 아이템도 고를 수 없다', (await post({ type: 'agora-reward', agoraId, itemId: 'no-such-item' })).error === '그 아이템은 보상으로 고를 수 없어요.');
+  check('선생님이 이번 아고라 보상을 고른다', (await post({ type: 'agora-reward', agoraId, itemId: REWARD.id })).ok);
+  await sleep(200);
+  check('고른 보상이 아고라에 남는다', agora().reward.itemId === REWARD.id);
   const card = (n: number): View | undefined => (display.view.agora?.cards as View[] | undefined)?.find((c) => c.number === n);
   const phoneCard = (p: Phone, n: number): View | undefined => (p.s.view.agora?.cards as View[] | undefined)?.find((c) => c.number === n);
   const studentId = (cls: Phone['cls'], n: number): string => (teacher.view.students as View[]).find((s) => s.classId === cls.id && s.number === n)!.id;
+  /** Class A student n's answer to a topic, as the teacher screen has it. */
+  const answerOf = (n: number, id = t1): View | undefined => (topic(id).answers as View[]).find((a) => a.studentId === studentId(A, n));
+  const owns = (p: Phone) => !!(p.s.view.me?.inventory as string[] | undefined)?.includes(REWARD.id);
+  const rewarded = (): string[] => teacher.view.agora.live?.rewarded ?? [];
   /** Whether a stream ever carried this answer's text. */
   const leaks = (s: Stream, secret: string) => s.raw.some((r) => r.includes(secret.split(' ')[1]));
 
@@ -170,6 +182,7 @@ async function run(teacher: Stream, display: Stream) {
   await sleep(300);
   const lobby = display.view.agora;
   check('프로젝터는 대기실: 첫 주제(1/3)와 들어온 학생, 카드는 아직 없다', lobby?.phase === 'lobby' && lobby.topic.id === t1 && lobby.index === 0 && lobby.count === 3 && lobby.cards.length === 0 && [1, 2, 3].every((n) => lobby.joined.some((j: View) => j.number === n)));
+  check('대기실의 프로젝터와 그 반 기기에 오늘의 보상이 뜬다', lobby?.reward?.itemId === REWARD.id && lobby.reward.name === REWARD.name && [a1, a2, a3].every((p) => p.s.view.agora?.reward?.itemId === REWARD.id));
   check('그 반 기기는 대기실에서 첫 주제를 미리 본다 (친구 카드는 아직 없음)', [a1, a2, a3].every((p) => p.s.view.agora?.phase === 'lobby' && p.s.view.agora.topic.id === t1 && p.s.view.agora.cards.length === 0));
   check('다른 반 기기에는 주제가 가지 않고, 지금 수업 중인 반 이름만 간다', !b1.s.view.agora && b1.s.view.elsewhere === A.name, b1.s.view.elsewhere);
   check('그 반 기기에 내 답 노트는 수업 동안 가지 않는다', [a1, a2, a3].every((p) => p.s.view.agoraNotes === null));
@@ -314,6 +327,29 @@ async function run(teacher: Stream, display: Stream) {
   const savedAgora = saved.agoras?.[agoraId];
   check('저장된 아고라에는 반이 없고, 한 반의 기록과 주제 목록만 있다', savedAgora && !('classId' in savedAgora) && Object.keys(savedAgora.runs).join() === A.id && savedAgora.topics.map((t: View) => t.id).join() === [t1, t2, t3].join() && saved.topics === undefined);
 
+  section('칭찬 별과 보상');
+  check('별을 받기 전에는 그 아이템이 없다', !owns(a1) && !owns(a2));
+  check('선생님이 1번 답에 칭찬 별을 준다', (await post({ type: 'agora-star', studentId: studentId(A, 1) })).ok);
+  await sleep(300);
+  check('그 답에 별이 남고, 프로젝터 카드에도 별이 뜬다', answerOf(1)?.star === true && card(1)?.star === true);
+  check('비공개 카드에도 별은 보이고 답은 숨겨진 그대로다', display.view.agora.reveal === 'hidden' && card(1)?.text === undefined);
+  check('1번은 그 자리에서 보상을 받는다: 보관함에 들어가고 폰에 상자가 열린다', owns(a1) && a1.s.view.agora?.praise?.itemId === REWARD.id && a1.s.view.agora.praise.alreadyOwned === false && rewarded().includes(studentId(A, 1)));
+  check('보상 상자는 받은 학생 폰에만 간다', a2.s.view.agora?.praise === null && a3.s.view.agora?.praise === null && !b1.s.view.agora);
+  check('2번 답에도 별', (await post({ type: 'agora-star', studentId: studentId(A, 2) })).ok);
+  await sleep(200);
+  check('보상 받은 학생이 둘', rewarded().length === 2 && owns(a2));
+  check('별을 다시 누르면 뺀다', (await post({ type: 'agora-star', studentId: studentId(A, 1) })).ok);
+  await sleep(200);
+  check('…답과 카드에서 별이 빠진다', answerOf(1)?.star === false && card(1)?.star === undefined);
+  check('…받은 보상은 그대로다', owns(a1) && rewarded().includes(studentId(A, 1)));
+  await post({ type: 'agora-star', studentId: studentId(A, 1) });
+  // The server saves 0.4 s after a change.
+  await sleep(800);
+  const praises = (JSON.parse(readFileSync(join(DATA, 'classeum.json'), 'utf8')).rewards as View[]).filter((x) => x.reason === 'praise' && x.eventId === agoraId);
+  check('같은 수업에서 별을 다시 줘도 보상은 한 사람에 한 번 (기록 둘)', praises.length === 2 && praises.every((x) => x.itemId === REWARD.id && /^agl_/.test(x.sessionId)), praises.map((x) => x.studentId).join());
+  check('답이 없는 학생에게는 별을 줄 수 없다', (await post({ type: 'agora-star', studentId: studentId(A, 4) })).ok && rewarded().length === 2 && !answerOf(4));
+  check('다른 반 학생에게도 줄 수 없다', (await post({ type: 'agora-star', studentId: studentId(B, 7) })).ok && rewarded().length === 2);
+
   section('마감');
   check('선생님이 지금 마감한다', (await post({ type: 'agora-close' })).ok);
   await sleep(200);
@@ -334,6 +370,7 @@ async function run(teacher: Stream, display: Stream) {
   const ready = display.view.agora;
   check('준비: 프로젝터에 주제 2/3이 먼저 뜨고, 카드와 시계는 없다', ready?.phase === 'ready' && ready.index === 1 && ready.topic.id === t2 && ready.cards.length === 0 && ready.timer === null && ready.reveal === 'hidden');
   check('그 반 기기도 주제 2를 보고 기다린다 (친구 카드 없음)', [a1, a2, a3].every((p) => p.s.view.agora?.phase === 'ready' && p.s.view.agora.topic.id === t2 && p.s.view.agora.cards.length === 0));
+  check('준비 중에는 별을 줄 수 없다', (await post({ type: 'agora-star', studentId: studentId(A, 3) })).ok && rewarded().length === 2 && !answerOf(3)?.star);
   check('준비 중에는 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId: t2, text: 'x' }, {})).error === '선생님이 시작하면 쓸 수 있어요.');
   check('지나간 주제에는 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: 'x' }, {})).error === '주제가 바뀌었어요. 화면을 확인해 주세요.');
   check('주제 2 쓰기 시작', (await post({ type: 'agora-start' })).ok);
@@ -353,6 +390,8 @@ async function run(teacher: Stream, display: Stream) {
   const end = display.view.agora;
   check('마지막 주제 뒤는 끝: 함께 쓴 답 수와 주제마다 낸 수, 건너뛴 주제', end?.phase === 'end' && end.end?.answers === 5 && end.end.topics.map((t: View) => (t.skipped ? '-' : `${t.sent}/${t.of}`)).join() === '3/3,2/3,-', JSON.stringify(end?.end?.topics));
   check('끝 화면의 캐릭터 행진은 들어온 학생들', end?.end?.parade.map((p: View) => p.number).join() === '1,2,3');
+  check('끝 화면에 오늘의 보상 받은 친구 수, 행진에는 받은 친구 표시', end?.end?.rewarded === 2 && end.end.parade.map((p: View) => (p.rewarded ? 1 : 0)).join() === '1,1,0');
+  check('끝에서 받은 학생 폰은 받은 보상을 본다', a1.s.view.agora?.praise?.itemId === REWARD.id && a3.s.view.agora?.praise === null);
   check('끝 화면에는 답의 글이 없다 (수만)', !JSON.stringify(end?.end).includes('ALPHA-T2') && !JSON.stringify(end?.end).includes('고친 답') && end?.cards.length === 0);
   check('1번 기기는 끝에서 오늘 쓴 자기 답을 본다', JSON.stringify(a1.s.view.agora?.end?.map((x: View) => [x.n, x.text])) === JSON.stringify([[1, '고친 답'], [2, T2A]]));
   check('2번 기기의 끝에는 자기 답만 있다', JSON.stringify(a2.s.view.agora?.end?.map((x: View) => x.text)) === JSON.stringify(['again']) && !leaks(a2.s, T2A));
@@ -389,6 +428,10 @@ async function run(teacher: Stream, display: Stream) {
   await sleep(300);
   check('함께 보기: 쓰기 없이 지난 답 카드가 비공개로 뜬다', display.view.agora?.phase === 'closed' && display.view.agora.reveal === 'hidden' && display.view.agora.timer === null && (display.view.agora.cards as View[]).every((c) => c.sent && c.text === undefined));
   check('다시 보기에서는 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: 'x' }, {})).error === '마감됐어요.');
+  check('지난 수업의 별이 카드에 남아 있다', card(1)?.star === true && card(2)?.star === true && card(3)?.star === undefined);
+  check('다시 보기에서도 별을 준다 (3번)', (await post({ type: 'agora-star', studentId: studentId(A, 3) })).ok);
+  await sleep(200);
+  check('다시 보기는 새 수업이라 3번이 보상을 받는다', owns(a3) && a3.s.view.agora?.praise?.itemId === REWARD.id && rewarded().join() === studentId(A, 3));
   await post({ type: 'agora-reveal', public: true });
   await sleep(200);
   check('공개하면 지난 답이 프로젝터와 그 반 기기에 간다', card(1)?.text === '고친 답' && phoneCard(a2, 1)?.text === '고친 답');
@@ -407,6 +450,11 @@ async function run(teacher: Stream, display: Stream) {
   check('한 번 더 고친다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '또 고친 답' }, {})).ok);
   await sleep(200);
   check('처음 답은 맨 처음 것 그대로다', (topic().answers as View[]).find((a) => a.studentId === studentId(A, 1))?.first === '고친 답');
+  check('고쳐 써도 별은 답에 남는다', answerOf(1)?.star === true);
+  await post({ type: 'agora-star', studentId: studentId(A, 1) });
+  await post({ type: 'agora-star', studentId: studentId(A, 1) });
+  await sleep(200);
+  check('이미 가진 아이템을 다시 받으면 이미 가지고 있다고 알린다', a1.s.view.agora?.praise?.alreadyOwned === true && rewarded().length === 2);
   await post({ type: 'agora-close' });
   check('다시 보기의 다음 주제', (await post({ type: 'agora-next' })).ok);
   await sleep(300);
@@ -426,6 +474,7 @@ async function run(teacher: Stream, display: Stream) {
   check('1번 기기의 내 답 노트에 자기 답이 주제마다, 처음 답과 함께 있다', JSON.stringify(note(a1)?.topics.map((x: View) => [x.n, x.text, x.first])) === JSON.stringify([[1, '또 고친 답', '고친 답'], [2, T2A, null]]), JSON.stringify(note(a1)?.topics));
   check('2번 기기의 노트에는 자기 답만 있다', JSON.stringify(note(a2)?.topics.map((x: View) => x.text)) === JSON.stringify(['again']) && !JSON.stringify(a2.s.view.agoraNotes).includes('고친 답'));
   check('답이 없는 반 기기의 노트에는 그 아고라가 없다', !note(b1));
+  check('내 답 노트에도 별이 남는다', note(a1)?.topics[0]?.star === true && note(a2)?.topics[0]?.star === true && note(a1)?.topics[1]?.star === false);
 
   section('아고라 만들기와 고치기');
   check('제목이 없으면 만들지 않는다', (await post({ type: 'agora-add', title: ' ', topics: [{ text: 'x' }] })).error === '제목을 써 주세요.');
