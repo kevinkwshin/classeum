@@ -87,8 +87,8 @@
 아레나와 아고라는 한 번에 하나만 프로젝터에 떠요.
 
 <p align="center">
-  <img src="docs/images/teacher-agora-editor.png" width="49%" alt="새 아고라 창: 제목과 표 한 줄에 주제 하나, 주제마다 입력 시간·열·카드 순서">
-  <img src="docs/images/teacher-agora-console.png" width="49%" alt="아고라 진행 화면: 위에 1/3과 칭찬 별 수, 프로젝터 미리보기, 다음 주제, 낸 학생과 답의 칭찬 단추, 다음 주제 버튼">
+  <img src="docs/images/teacher-agora-editor.png" width="49%" alt="새 아고라 창: 제목과 표 한 줄에 주제 하나, 주제마다 유형(작문·받아쓰기)과 입력 시간, 받아쓰기 줄의 [▶ 읽어 주기]와 [+ 같은 질문으로 작문]">
+  <img src="docs/images/teacher-agora-console.png" width="49%" alt="아고라 진행 화면: 위에 1/3과 칭찬 별 수, 프로젝터와 같은 쪽의 미리보기, 다음 주제, 낸 학생과 답의 칭찬 단추, 다음 쪽 버튼">
 </p>
 
 <p align="center">

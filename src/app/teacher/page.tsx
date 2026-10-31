@@ -679,6 +679,15 @@ function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { dr
   const over = used > TYPED_WORDS_MAX;
   const setCell = (row: number, col: number, value: string) => setDraft((d) => ({ ...d, rows: d.rows.map((r, i) => (i === row ? { ...r, [keys[col]]: value } : r)) }));
   const focus = (row: number, col: number) => requestAnimationFrame(() => cells.current[row]?.[col]?.focus());
+  // [미리보기] never sits there greyed out without a reason, as in [새 아고라]: pressed with no row that has both a
+  // word and its meaning, it says so and goes to the first half-written row (or the first row).
+  const [tried, setTried] = useState(false);
+  const preview = () => {
+    setTried(true);
+    if (filled > 0) return onPreview();
+    const row = Math.max(0, draft.rows.findIndex((r) => r.spelling.trim() || r.meaning.trim()));
+    focus(row, draft.rows[row]?.spelling.trim() ? 1 : 0);
+  };
   const paste = (row: number, col: number) => (e: React.ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData('text').replace(/\r/g, '');
     if (!/[\t\n]/.test(text.trim())) return;
@@ -772,11 +781,13 @@ function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { dr
           <div className="flex items-center gap-3">
             {over ? (
               <span className="text-sm font-semibold text-bad">한 번에 {TYPED_WORDS_MAX}개까지예요 (지금 {used}개) · 나눠서 만들어 주세요</span>
+            ) : tried && filled === 0 ? (
+              <span role="alert" className="text-sm font-semibold text-bad">단어와 뜻을 한 줄 이상 써 주세요</span>
             ) : (
               filled > 0 && filled < 4 && <span className="text-sm text-ink-3">단어가 4개 이상이면 보기를 잘 만들 수 있어요</span>
             )}
             <Btn kind="ghost" onClick={onClose}>닫기</Btn>
-            <Btn disabled={busy || filled === 0 || over} onClick={onPreview}>{busy ? '만드는 중…' : '미리보기'}</Btn>
+            <Btn disabled={busy || over} onClick={preview}>{busy ? '만드는 중…' : '미리보기'}</Btn>
           </div>
         </div>
       </div>
@@ -1584,6 +1595,18 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
   };
   const { speak, stop, speaking, canSpeak } = useSpeech();
   const [reading, setReading] = useState<number | null>(null);
+  // [만들기] never sits there greyed out without a reason: pressed with something missing, it says what and goes to
+  // that box; the note goes once it's filled in.
+  const titleRef = useRef<HTMLInputElement>(null);
+  const topicRef = useRef<HTMLTextAreaElement>(null);
+  const [tried, setTried] = useState(false);
+  const lack = !draft.title.trim() ? '제목을 써 주세요' : filled === 0 ? '주제를 하나 이상 써 주세요' : null;
+  const create = () => {
+    setTried(true);
+    if (!draft.title.trim()) titleRef.current?.focus();
+    else if (filled === 0) topicRef.current?.focus();
+    else onSave();
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8">
       {/* One height from opening to closing: more rows, or a row turned into 받아쓰기, scroll inside the table. */}
@@ -1593,13 +1616,15 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
           <span className="rounded-full bg-good-soft px-3 py-1 text-sm font-bold text-good">주제 {filled}</span>
         </div>
         <input
+          ref={titleRef}
           value={draft.title}
           onChange={(e) => change((d) => ({ ...d, title: e.target.value }))}
           placeholder="제목 (예: 7과 let 토론)"
           maxLength={TITLE_MAX}
           autoFocus
           aria-label="제목"
-          className="h-12 shrink-0 rounded-xl border border-[#D5D8DF] px-4 text-lg font-bold outline-none focus:border-ink"
+          aria-invalid={tried && !draft.title.trim()}
+          className={`h-12 shrink-0 rounded-xl border px-4 text-lg font-bold outline-none ${tried && !draft.title.trim() ? 'border-bad ring-2 ring-bad/20' : 'border-[#D5D8DF] focus:border-ink'}`}
         />
         <p className="text-sm text-ink-3">한 줄에 주제 하나. 작문은 질문과 예시 문장을, 받아쓰기는 노트북이 읽어 줄 영어 문장을 써요(수업 중에는 정답 공개 뒤에 보여요). 수업에서는 위에서부터 차례로 하고, 카드 열과 순서는 진행 화면에서 바꿔요.</p>
         <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-[#EEF0F3]">
@@ -1649,6 +1674,7 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
                   </td>
                   <td className="py-1.5 pr-2">
                     <textarea
+                      ref={i === 0 ? topicRef : undefined}
                       value={r.text}
                       onChange={(e) => setRow(i, { text: e.target.value })}
                       rows={2}
@@ -1744,8 +1770,9 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
             )}
           </div>
           <div className="flex items-center gap-2">
+            {tried && lack && <span role="alert" className="mr-1 text-sm font-semibold text-bad">{lack}</span>}
             <Btn kind="ghost" onClick={onClose}>닫기</Btn>
-            <Btn disabled={busy || !draft.title.trim() || filled === 0} onClick={onSave}>
+            <Btn disabled={busy} onClick={create}>
               {busy ? '저장 중…' : draft.agoraId ? '저장' : '만들기'}
             </Btn>
           </div>
