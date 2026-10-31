@@ -87,8 +87,13 @@ function TeacherApp() {
       {!running && (
         <nav aria-label="선생님 메뉴" className="sticky top-0 flex h-screen w-52 shrink-0 flex-col gap-1 self-start overflow-y-auto bg-ink px-3.5 py-7">
           <div className="px-3 pb-7">
-            <Logo width={60} />
-            <div className="mt-2.5 font-display text-[22px] font-bold tracking-tight text-white">Classeum</div>
+            {/* The logo as wide as the name under it: the name sets the width (the logo's box adds none) and the logo fills it. */}
+            <div className="inline-flex flex-col">
+              <div className="w-0 min-w-full">
+                <Logo />
+              </div>
+              <div className="mt-2.5 font-display text-[22px] font-bold tracking-tight text-white">Classeum</div>
+            </div>
           </div>
           {([
             ['students', '반 관리'],
@@ -585,7 +590,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
         </Card>
       )}
       <Card className="flex flex-col gap-5">
-        <h2 className="text-lg font-bold">이번 퀴즈 보상</h2>
+        <h2 className="text-lg font-bold">이번 아레나 보상</h2>
         <RewardItemPicker itemId={itemId} onPick={setItemId} />
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 rounded-xl bg-bg px-4 py-2 text-[15px] font-semibold">도전 · 정답률
@@ -614,7 +619,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
   );
 }
 
-/** The reward picker of 이번 퀴즈 보상 and 이번 아고라 보상: the chosen item on a plain character, and every item a quiz can give, by theme. */
+/** The reward picker of 이번 아레나 보상 and 이번 아고라 보상: the chosen item on a plain character, and every item a quiz can give, by theme. */
 function RewardItemPicker({ itemId, onPick }: { itemId: string; onPick: (id: string) => void }) {
   const item = itemById(itemId);
   return (
@@ -1272,10 +1277,20 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
                 </span>
               </div>
             )}
-            <table className="w-full text-left text-[15px]">
+            {/* Fixed widths, so the columns stay put from class to class (names, phones and buttons differ); 이름 takes the rest. */}
+            <table className="w-full table-fixed text-left text-[15px]">
+              <colgroup>
+                <col className="w-10" />
+                <col className="w-16" />
+                <col />
+                <col className="w-20" />
+                <col className="w-24" />
+                <col className="w-16" />
+                <col className="w-36" />
+              </colgroup>
               <thead className="text-xs font-bold text-ink-3">
                 <tr>
-                  <th className="w-10 pl-4">
+                  <th className="pl-4">
                     <input
                       type="checkbox"
                       aria-label="이 반 학생 모두 선택"
@@ -2402,13 +2417,21 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
       />
       {mode === 'words' ? (
         <Card className="!p-2">
-          <table className="w-full text-left text-[15px]">
+          {/* Fixed widths, as in 반 관리, so the columns stay put from class to class; 뜻 takes the rest, and long ones wrap. */}
+          <table className="w-full table-fixed text-left text-[15px]">
+            <colgroup>
+              <col className="w-48" />
+              <col />
+              <col className="w-20" />
+              <col className="w-20" />
+              <col className="w-60" />
+            </colgroup>
             <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">단어</th><th>뜻</th><th>정답률</th><th>푼 횟수</th><th>많이 고른 오답</th></tr></thead>
             <tbody>
               {stats.words.map((w) => (
                 <tr key={w.key} className="border-t border-[#EEF0F3]">
-                  <td className="px-4 py-2.5 font-bold">{w.word}</td><td className="text-ink-2">{w.meaning}</td>
-                  <td className={`tabular font-extrabold ${w.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(w.accuracy)}</td><td className="tabular">{w.attempts}</td><td className="text-ink-2">{w.topWrong ?? '-'}</td>
+                  <td className="px-4 py-2.5 font-bold [overflow-wrap:anywhere]">{w.word}</td><td className="pr-4 text-ink-2">{w.meaning}</td>
+                  <td className={`tabular font-extrabold ${w.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(w.accuracy)}</td><td className="tabular">{w.attempts}</td><td className="pr-4 text-ink-2">{w.topWrong ?? '-'}</td>
                 </tr>
               ))}
               {stats.words.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-ink-3">아직 기록이 없어요.</td></tr>}
@@ -2427,7 +2450,16 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
                 ))}
               </div>
             </div>
-            <table className="w-full text-left text-[15px]">
+            {/* Fixed widths, as in 반 관리; 학생 takes the rest. */}
+            <table className="w-full table-fixed text-left text-[15px]">
+              <colgroup>
+                <col />
+                <col className="w-14" />
+                <col className="w-14" />
+                <col className="w-14" />
+                <col className="w-22" />
+                <col className="w-20" />
+              </colgroup>
               <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>출석</th><th className="text-right">평균</th><th className="text-right">최근</th><th className="text-center">최근 5회</th><th className="pr-4 text-right">자주 틀림</th></tr></thead>
               <tbody>
                 {students.map((s) => {

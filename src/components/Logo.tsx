@@ -60,9 +60,10 @@ const PATHS = Object.entries(PALETTE)
 const W = ROWS[0].length;
 const H = ROWS.length;
 
-export function Logo({ width = 60 }: { width?: number }) {
+/** `width` pixels wide, or as wide as its box when no width is given. */
+export function Logo({ width }: { width?: number }) {
   return (
-    <svg width={width} height={(width * H) / W} viewBox={`0 0 ${W} ${H}`} shapeRendering="crispEdges" role="img" aria-label="Classeum 로고" style={{ display: 'block' }}>
+    <svg width={width ?? '100%'} height={width ? (width * H) / W : undefined} viewBox={`0 0 ${W} ${H}`} shapeRendering="crispEdges" role="img" aria-label="Classeum 로고" style={{ display: 'block', height: width ? undefined : 'auto' }}>
       {PATHS.map(([color, d]) => (
         <path key={color} d={d} fill={color} />
       ))}

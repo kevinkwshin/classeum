@@ -1555,7 +1555,8 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
               {/* Items the student has stir now and then; locked ones stand still. */}
               <div className={has ? '' : 'opacity-30'}>{has ? <IdleAvatar look={previewLook(item, look)} size={52} seed={item.id} /> : <PixelAvatar look={previewLook(item, look)} size={52} />}</div>
               <span className="text-xs font-bold">{item.name}</span>
-              {!has && <span className="text-[10px] font-semibold text-ink-3">{stampsNeeded ? `출석 ${stampsNeeded}회` : '퀴즈 보상'}</span>}
+              {/* How to get it: attendance, or a reward from the arena or the 아고라 (the same items). */}
+              {!has && <span className="text-[10px] font-semibold text-ink-3">{stampsNeeded ? `출석 ${stampsNeeded}회` : '아레나·아고라 보상'}</span>}
             </button>
           );
         })}
