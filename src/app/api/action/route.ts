@@ -7,7 +7,7 @@ const TEACHER_ACTIONS = new Set([
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete', 'agora-reward', 'agora-star', 'save-now',
+  'agora-card-delete', 'agora-reward', 'agora-star', 'agora-speak', 'agora-accept', 'save-now',
 ]);
 
 /** Largest request: an 아고라 of ten topics, each with the longest question and 보조 설명 in Hangul, fits. */
@@ -136,7 +136,14 @@ export async function POST(request: NextRequest) {
           h.adjustAgoraTime(Number(body.minutes));
           break;
         case 'agora-reveal':
-          h.revealAgora(body.public === true);
+          h.revealAgora(body.public === true, Number.isInteger(body.index) ? Number(body.index) : undefined);
+          break;
+        // 받아쓰기: the teacher screen reads the sentence aloud, and the projector and phones show it is reading.
+        case 'agora-speak':
+          h.speakAgora(Number(body.index), body.on === true);
+          break;
+        case 'agora-accept':
+          h.acceptAgoraAnswer(String(body.topicId ?? ''), String(body.studentId ?? ''), body.accepted === true);
           break;
         case 'agora-settings':
           h.agoraSettings({ columns: body.columns, sort: body.sort });

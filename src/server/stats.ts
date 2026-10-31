@@ -1,6 +1,7 @@
 // Per-student and per-word statistics for the teacher, computed from stored responses.
 import { answerLabelOf, correctLabelOf } from './answers';
 import { db, type ResponseRec } from './store';
+import { csvText } from './csv';
 
 /** Class names in the order people expect ('2반' before '10반'). One collator: localeCompare with options builds one per call. */
 export const compareNames = new Intl.Collator('ko', { numeric: true }).compare;
@@ -187,12 +188,5 @@ export function statsCsv(classId?: string): string {
     s.fixed.join(' '),
     s.rewards,
   ]);
-  const esc = (v: unknown) => {
-    let t = String(v ?? '');
-    // Excel runs a cell starting with = + - @ (or a tab or return) as a formula, and a roster pasted by the teacher
-    // can hold any name; a leading ' keeps such a cell plain text. Numbers are left as they are.
-    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = `'${t}`;
-    return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-  };
-  return '﻿' + [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+  return csvText([header, ...rows]);
 }

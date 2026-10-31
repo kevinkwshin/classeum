@@ -113,7 +113,8 @@ export interface LastSummaryRec extends StudentSummary {
 
 /**
  * An 아고라: a few topics a class answers in writing, one after another, as an arena event is a few questions. Like an
- * event it is made once and opened for one class at a time; when the answers show is the teacher's call.
+ * event it is made once and opened for one class at a time; when the answers show is the teacher's call. A topic is
+ * 작문 (students answer the question) or 받아쓰기 (they write down a sentence the laptop reads aloud).
  */
 export interface AgoraRec {
   id: string;
@@ -125,11 +126,14 @@ export interface AgoraRec {
   /** 오늘의 보상: the item a student gets for the teacher's ⭐ on one of their answers. */
   reward: { itemId: string };
   createdAt: number;
+  /** The 받아쓰기 topics (ids) each class has been shown the sentence of ([정답 공개]); absent until one has. */
+  released?: Record<string, string[]>;
 }
 
 /** A topic of an 아고라: a question, and how its answers are written and shown. */
 export interface TopicRec {
   id: string;
+  /** The question; '' for 받아쓰기, whose sentence is `dictation`. */
   text: string;
   /** 보조 설명 under the question; '' for none. */
   note: string;
@@ -138,6 +142,11 @@ export interface TopicRec {
   sort: TopicSort;
   /** 입력 시간: minutes students get from [쓰기 시작], after which writing closes by itself; null for no limit. */
   minutes: number | null;
+  /**
+   * 받아쓰기: the sentence the laptop reads aloud and students write down; absent for 작문. It is kept apart from `text`,
+   * which goes to every screen, so no screen can get it before [정답 공개] by mistake.
+   */
+  dictation?: string;
 }
 
 /**
@@ -154,6 +163,10 @@ export interface TopicAnswerRec {
   first?: string;
   /** 선생님 칭찬: the teacher's ⭐; absent until given. */
   star?: boolean;
+  /** 받아쓰기: the answer as it stood when the topic was first closed, which the statistics count; later changes don't touch it. */
+  closed?: string;
+  /** 받아쓰기: the teacher's 정답 인정 of that closed answer. */
+  accepted?: true;
 }
 
 export interface DB {

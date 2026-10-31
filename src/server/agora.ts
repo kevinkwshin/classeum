@@ -3,11 +3,15 @@
 // deleted classes and students, and builds what each screen gets. An 아고라 is made once and opened for one class at a
 // time, the way an arena event is: the session (대기실, each topic's 준비, 쓰기 and 마감, then the 끝) is the hub's
 // (Hub.openAgora, Hub.answerTopic), and it saves and pushes every screen its new view after each change. Each 아고라
-// has a reward item, which a student gets for the teacher's ⭐ on one of their answers (toggleStar).
+// has a reward item, which a student gets for the teacher's ⭐ on one of their answers (toggleStar). A topic is 작문
+// (students answer its question) or 받아쓰기 (they write down a sentence the teacher's laptop reads aloud): the
+// sentence reaches no screen but the teacher's until [정답 공개], and each phone then compares its own answer with it.
 import { ANSWER_MAX, COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TITLE_MAX, TOPIC_MAX, TOPICS_MAX, type AgoraPhase, type TopicReveal, type TopicSort } from '@/lib/agora';
 import { normalizeLook } from '@/lib/avatar';
+import { gradeDictation } from '@/lib/dictation';
 import { QUIZ_REWARD_ITEMS, itemById } from '@/lib/items';
 import type { AvatarLook, ItemDef } from '@/lib/types';
+import { csvText } from './csv';
 import { db, newId, rewardItemAt, type AgoraRec, type TopicAnswerRec, type TopicRec } from './store';
 
 /** Own keys only, so ids like 'constructor' or '__proto__' sent by a screen never match. */
@@ -50,6 +54,8 @@ export function findTopic(topicId: string): { agora: AgoraRec; topic: TopicRec }
 export interface TopicInput {
   /** One of the 아고라's topics, for a row the teacher changed; left out for a new row. */
   id?: unknown;
+  /** 'dictation' for 받아쓰기, whose `text` is the sentence to read aloud; anything else is 작문. */
+  kind?: unknown;
   text?: unknown;
   note?: unknown;
   columns?: unknown;
@@ -64,18 +70,28 @@ export interface AgoraInput {
   topics?: unknown;
 }
 
-/** One row the teacher typed, checked (`n` is its row, for the message); a setting left out keeps the topic's own, or the default. */
-function topicFields(input: TopicInput, n: number, prev?: TopicRec) {
+/**
+ * One row the teacher typed, checked (`n` is its row, for the message); a setting left out keeps the topic's own, or
+ * the default. A 받아쓰기 row's sentence goes in `dictation`, never in `text`, and it has no 보조 설명.
+ */
+function topicFields(input: TopicInput, n: number, prev?: TopicRec): Omit<TopicRec, 'id'> {
+  const dictation = input.kind === 'dictation';
   const text = cleanText(input.text);
-  if (!text) throw new Error(`${n}번 줄의 주제(질문)를 써 주세요.`);
-  if (length(text) > TOPIC_MAX) throw new Error(`${n}번 줄: 주제는 ${TOPIC_MAX}자까지 쓸 수 있어요.`);
-  const note = cleanText(input.note);
+  if (!text) throw new Error(dictation ? `${n}번 줄의 받아쓰기 문장을 써 주세요.` : `${n}번 줄의 주제(질문)를 써 주세요.`);
+  if (length(text) > TOPIC_MAX) throw new Error(dictation ? `${n}번 줄: 받아쓰기 문장은 ${TOPIC_MAX}자까지 쓸 수 있어요.` : `${n}번 줄: 주제는 ${TOPIC_MAX}자까지 쓸 수 있어요.`);
+  const note = dictation ? '' : cleanText(input.note);
   if (length(note) > NOTE_MAX) throw new Error(`${n}번 줄: 보조 설명은 ${NOTE_MAX}자까지 쓸 수 있어요.`);
   const columns = (COLUMN_CHOICES as readonly number[]).includes(Number(input.columns)) ? Number(input.columns) : (prev?.columns ?? 2);
   const sort: TopicSort = input.sort === 'number' || input.sort === 'time' ? input.sort : (prev?.sort ?? 'number');
+  // A new 받아쓰기 has no time limit unless the teacher picks one: the teacher closes it when everyone has heard.
   const minutes =
-    input.minutes === null ? null : (MINUTE_CHOICES as readonly number[]).includes(Number(input.minutes)) ? Number(input.minutes) : prev ? prev.minutes : DEFAULT_MINUTES;
-  return { text, note, columns, sort, minutes };
+    input.minutes === null ? null : (MINUTE_CHOICES as readonly number[]).includes(Number(input.minutes)) ? Number(input.minutes) : prev ? prev.minutes : dictation ? null : DEFAULT_MINUTES;
+  return dictation ? { text: '', note, columns, sort, minutes, dictation: text } : { text, note, columns, sort, minutes };
+}
+
+/** Whether any student has answered a topic, in any class. */
+function hasAnswers(t: TopicRec): boolean {
+  return Object.keys(db().topicAnswers[t.id] ?? {}).length > 0;
 }
 
 /**
@@ -95,7 +111,12 @@ function agoraFields(input: AgoraInput, prev?: AgoraRec): { title: string; topic
   const topics = rows.map(({ r, n }) => {
     const old = prev?.topics.find((t) => t.id === r.id && !taken.has(t.id));
     if (old) taken.add(old.id);
-    return { id: old?.id ?? newId('top'), ...topicFields(r, n, old) };
+    const fields = topicFields(r, n, old);
+    // Answers to a 받아쓰기 were written to its sentence: once there are any, the sentence and the kind stay.
+    if (old && old.dictation !== fields.dictation && hasAnswers(old)) {
+      throw new Error(`${n}번 줄: 답이 있는 받아쓰기는 문장이나 종류를 바꿀 수 없어요. 새 줄에 써 주세요.`);
+    }
+    return { id: old?.id ?? newId('top'), ...fields };
   });
   return { title, topics };
 }
@@ -129,6 +150,9 @@ export function editAgora(agoraId: string, input: AgoraInput) {
   if (!a) throw new Error('그 아고라가 없어졌어요. 화면을 새로 고쳐 주세요.');
   const { title, topics } = agoraFields(input, a);
   for (const t of a.topics) if (!topics.some((x) => x.id === t.id)) delete d.topicAnswers[t.id];
+  // A topic taken out, or a sentence changed (it had no answers yet), has been shown to no class.
+  const same = new Set(topics.filter((x) => a.topics.some((t) => t.id === x.id && t.dictation === x.dictation)).map((x) => x.id));
+  if (a.released) for (const [classId, ids] of Object.entries(a.released)) a.released[classId] = ids.filter((id) => same.has(id));
   a.title = title;
   a.topics = topics;
 }
@@ -144,7 +168,10 @@ export function deleteAgora(agoraId: string) {
 
 /** A deleted class leaves no runs behind; its students' answers go with them (dropStudentAnswers). */
 export function dropClassRuns(classId: string) {
-  for (const a of Object.values(db().agoras)) delete a.runs[classId];
+  for (const a of Object.values(db().agoras)) {
+    delete a.runs[classId];
+    if (a.released) delete a.released[classId];
+  }
 }
 
 /** Students taken off the roster take their answers with them. */
@@ -169,6 +196,9 @@ export function putAnswer(t: TopicRec, studentId: string, raw: unknown, rewrite 
   if (first !== undefined && first !== text) next.first = first;
   // The teacher's ⭐ stays with the answer through changes, as its reward does.
   if (prev?.star) next.star = true;
+  // So do a 받아쓰기's answer at its first 마감 and the teacher's 정답 인정 of it, which the statistics count.
+  if (prev?.closed !== undefined) next.closed = prev.closed;
+  if (prev?.accepted) next.accepted = true;
   answers[studentId] = next;
 }
 
@@ -180,6 +210,35 @@ export function dropAnswer(t: TopicRec, studentId: string) {
 /** One class's answers to a topic. */
 function classAnswers(t: TopicRec, classId: string): TopicAnswerRec[] {
   return classAnswerEntries(t, classId).map(([, a]) => a);
+}
+
+/**
+ * The first 마감 of a 받아쓰기 for a class: each answer is kept as it stands (`closed`), which is what the statistics
+ * count; an answer that was already closed in an earlier lesson keeps its first one. A topic skipped or closed while
+ * students wrote never gets here, so its answers count as unfinished.
+ */
+export function closeDictation(t: TopicRec, classId: string) {
+  if (t.dictation === undefined) return;
+  for (const x of classAnswers(t, classId)) x.closed ??= x.text;
+}
+
+/** [정답 공개] of a 받아쓰기: the class has been shown its sentence, from now on also in 내 답 노트. */
+export function releaseDictation(a: AgoraRec, t: TopicRec, classId: string) {
+  const ids = ((a.released ??= {})[classId] ??= []);
+  if (!ids.includes(t.id)) ids.push(t.id);
+}
+
+/** Whether a class has been shown a 받아쓰기's sentence. */
+function isReleased(a: AgoraRec, t: TopicRec, classId: string | undefined): boolean {
+  return classId !== undefined && !!a.released?.[classId]?.includes(t.id);
+}
+
+/** The teacher's 정답 인정 of a student's closed 받아쓰기 answer, given or taken back. */
+export function acceptAnswer(t: TopicRec, studentId: string, accepted: boolean) {
+  const x = own(db().topicAnswers[t.id] ?? {}, studentId);
+  if (t.dictation === undefined || x?.closed === undefined) return;
+  if (accepted) x.accepted = true;
+  else delete x.accepted;
 }
 
 /**
@@ -272,6 +331,8 @@ export interface AgoraLive {
   praisedAt: number;
   /** The cards on each of the projector's pages, by student number, as it measured them; [] until it says. */
   pageNumbers: number[][];
+  /** 받아쓰기: when the teacher's laptop started reading the sentence (server clock) and about how long it takes; null otherwise. */
+  listening: { at: number; ms: number } | null;
 }
 
 /** A reward for a ⭐: the item, whether the student already had it (then nothing new reaches their 보관함), and when. */
@@ -322,7 +383,8 @@ export function roomCards(t: TopicRec, live: AgoraLive): RoomCard[] {
     .map((s) => {
       const a = own(answers, s.id);
       const card: RoomCard = { number: s.number, name: s.name, look: normalizeLook(s.look ?? undefined), sent: !!a };
-      if (a && isShown(live.reveal, a)) card.text = a.text;
+      // A 받아쓰기 answer stays on its own phone: a right one is the sentence itself, and a wrong one is no one else's business.
+      if (a && t.dictation === undefined && isShown(live.reveal, a)) card.text = a.text;
       if (a?.star) card.star = true;
       return card;
     });
@@ -344,9 +406,10 @@ function joinedStudents(live: AgoraLive) {
  */
 function endSummary(a: AgoraRec, live: AgoraLive) {
   const topics = a.topics.map((t) => {
-    if (!live.wrote.has(t.id)) return { text: t.text, sent: 0, of: 0, skipped: true };
+    const kind = kindOf(t);
+    if (!live.wrote.has(t.id)) return { text: t.text, kind, sent: 0, of: 0, skipped: true };
     const cards = roomCards(t, live);
-    return { text: t.text, sent: cards.filter((c) => c.sent).length, of: cards.length, skipped: false };
+    return { text: t.text, kind, sent: cards.filter((c) => c.sent).length, of: cards.length, skipped: false };
   });
   const students = db().students;
   const parade = [...live.joined]
@@ -365,6 +428,17 @@ function rewardView(a: AgoraRec) {
 
 const onBoard = (phase: AgoraPhase) => phase === 'writing' || phase === 'closed';
 
+const kindOf = (t: TopicRec) => (t.dictation === undefined ? ('writing' as const) : ('dictation' as const));
+
+/**
+ * A topic as the projector and the phones show it. A 받아쓰기 has no text: its sentence comes as `answer`, and only
+ * once [정답 공개] has shown it in this session.
+ */
+function screenTopic(t: TopicRec, live: AgoraLive) {
+  if (t.dictation === undefined) return { id: t.id, kind: 'writing' as const, text: t.text, note: t.note };
+  return { id: t.id, kind: 'dictation' as const, text: '', note: '', ...(live.reveal === 'public' ? { answer: t.dictation } : {}) };
+}
+
 /** What the projector gets: the 대기실's crowd, the topic up and its cards, or the 끝. `t` is the topic up. */
 export function displayAgora(a: AgoraRec, t: TopicRec, live: AgoraLive) {
   return {
@@ -375,8 +449,9 @@ export function displayAgora(a: AgoraRec, t: TopicRec, live: AgoraLive) {
     index: live.index,
     count: a.topics.length,
     reward: rewardView(a),
-    topic: { id: t.id, text: t.text, note: t.note, minutes: t.minutes, columns: t.columns, sort: t.sort },
+    topic: { ...screenTopic(t, live), minutes: t.minutes, columns: t.columns, sort: t.sort },
     reveal: live.reveal,
+    listening: live.listening,
     joined: live.phase === 'lobby' ? joinedStudents(live) : [],
     cards: onBoard(live.phase) ? roomCards(t, live) : [],
     page: live.page,
@@ -388,12 +463,18 @@ export function displayAgora(a: AgoraRec, t: TopicRec, live: AgoraLive) {
   };
 }
 
-/** A student's own answers to an 아고라's topics, in order: only the topics they answered. */
+/**
+ * A student's own answers to an 아고라's topics, in order: only the topics they answered. A 받아쓰기 comes with its
+ * sentence (`answer`) once their class has been shown it.
+ */
 function myAnswers(a: AgoraRec, studentId: string) {
-  const answers = db().topicAnswers;
+  const d = db();
+  const classId = own(d.students, studentId)?.classId;
   return a.topics.flatMap((t, i) => {
-    const x = own(answers[t.id] ?? {}, studentId);
-    return x ? [{ n: i + 1, topic: t.text, text: x.text, first: x.first ?? null, star: !!x.star }] : [];
+    const x = own(d.topicAnswers[t.id] ?? {}, studentId);
+    if (!x) return [];
+    const answer = t.dictation !== undefined && isReleased(a, t, classId) ? t.dictation : null;
+    return [{ n: i + 1, kind: kindOf(t), topic: t.text, answer, text: x.text, first: x.first ?? null, star: !!x.star }];
   });
 }
 
@@ -416,8 +497,9 @@ export function studentAgora(a: AgoraRec, t: TopicRec, live: AgoraLive, studentI
     index: live.index,
     count: a.topics.length,
     reward: rewardView(a),
-    topic: { id: t.id, text: t.text, note: t.note },
+    topic: screenTopic(t, live),
     reveal: live.reveal,
+    listening: live.listening,
     mine: mine ? { text: mine.text, first: mine.first ?? null, at: mine.createdAt, star: !!mine.star } : null,
     /** The reward this student got for a ⭐ in this session, for the box that opens on their phone. */
     praise: live.rewarded.get(studentId) ?? null,
@@ -435,9 +517,12 @@ export function studentNotes(studentId: string) {
     .sort((x, y) => y.at - x.at);
 }
 
-/** An answer as the teacher screen has it: all of it, whether it shows or not, with its 처음 답 and ⭐. */
+/**
+ * An answer as the teacher screen has it: all of it, whether it shows or not, with its 처음 답 and ⭐, and for
+ * 받아쓰기 its answer at the first 마감 and the teacher's 정답 인정.
+ */
 function teacherAnswer(studentId: string, x: TopicAnswerRec) {
-  return { studentId, text: x.text, first: x.first ?? null, star: !!x.star, shown: x.shown, createdAt: x.createdAt, updatedAt: x.updatedAt };
+  return { studentId, text: x.text, first: x.first ?? null, star: !!x.star, shown: x.shown, createdAt: x.createdAt, updatedAt: x.updatedAt, closed: x.closed ?? null, accepted: !!x.accepted };
 }
 
 /**
@@ -458,7 +543,7 @@ function classAnswerEntries(t: TopicRec, classId: string): [string, TopicAnswerR
 
 /** A number for one answer as it stands (its writer's class, text, 처음 답, ⭐ and card setting), summed into an 아고라's answersKey. */
 function answerPrint(studentId: string, classId: string | undefined, topicId: string, x: TopicAnswerRec): number {
-  const s = `${studentId}|${classId ?? ''}|${topicId}|${x.updatedAt}|${x.text.length}|${x.first?.length ?? -1}|${x.star ? 1 : 0}|${x.shown}`;
+  const s = `${studentId}|${classId ?? ''}|${topicId}|${x.updatedAt}|${x.text.length}|${x.first?.length ?? -1}|${x.star ? 1 : 0}|${x.shown}|${x.closed?.length ?? -1}|${x.accepted ? 1 : 0}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
   return h >>> 0;
@@ -490,7 +575,7 @@ export function teacherAgora(live: AgoraLive | null) {
         latest[classId] = Math.max(latest[classId] ?? 0, x.createdAt);
       }
       total += entries.length;
-      return { id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes, counts, total: entries.length };
+      return { id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes, dictation: t.dictation ?? null, counts, total: entries.length };
     });
     return {
       id: a.id,
@@ -504,6 +589,7 @@ export function teacherAgora(live: AgoraLive | null) {
       writers: Object.fromEntries(Object.entries(writers).map(([classId, ids]) => [classId, ids.size])),
       // As lessonOf: the class's last run, or its latest answer in an 아고라 from before runs were kept.
       lessons: Object.fromEntries(Object.entries(latest).map(([classId, at]) => [classId, a.runs[classId] ?? at])),
+      released: a.released ?? {},
       answersKey: `${total}.${print.toString(36)}`,
     };
   });
@@ -529,4 +615,33 @@ export function teacherAgora(live: AgoraLive | null) {
     answers: teacherAnswers(live.agoraId, live.classId) ?? {},
   };
   return { agoras, live: session };
+}
+
+/**
+ * One class's 받아쓰기 results, for Excel: each 받아쓰기 topic and each student of the class, with the answer at the
+ * first 마감 (what the statistics count) and how it went, and the answer as it is now. Null when either is gone.
+ */
+export function dictationCsv(agoraId: string, classId: string): { name: string; csv: string } | null {
+  const d = db();
+  const a = own(d.agoras, agoraId);
+  const c = own(d.classes, classId);
+  if (!a || !c) return null;
+  const students = Object.values(d.students)
+    .filter((s) => s.classId === classId)
+    .sort((x, y) => x.number - y.number);
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const rows = a.topics.flatMap((t, i) => {
+    const target = t.dictation;
+    if (target === undefined) return [];
+    return students.map((s) => {
+      const x = own(d.topicAnswers[t.id] ?? {}, s.id);
+      const first = x?.closed !== undefined ? gradeDictation(target, x.closed) : null;
+      const now = x ? gradeDictation(target, x.text) : null;
+      // 중단: answered, but the topic was skipped or the 아고라 closed before 마감, so it isn't counted.
+      const result = !x ? '안 냄' : !first ? '중단' : x.accepted ? '정답 인정' : first.perfect ? '정답' : '틀림';
+      return [c.name, s.number, s.name, i + 1, target, x?.closed ?? '', result, first ? pct(first.accuracy) : '', x?.text ?? '', now ? pct(now.accuracy) : ''];
+    });
+  });
+  const header = ['반', '번호', '이름', '주제', '받아쓰기 문장', '처음 답(첫 마감)', '결과', '처음 답 단어 정확도', '지금 답', '지금 답 단어 정확도'];
+  return { name: `받아쓰기-${c.name}-${a.title}.csv`, csv: csvText([header, ...rows]) };
 }

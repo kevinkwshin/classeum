@@ -43,7 +43,7 @@ function DisplayApp() {
   // An 아고라 topic is never up while a session is open; while one is, its own song plays instead.
   const agora = s ? null : (view?.agora ?? null);
   useBackgroundMusic(
-    agora ? (agora.music && audioOn ? agoraMusicLevel(agora.phase, agora.reveal) : 0) : musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0,
+    agora ? (agora.music && audioOn ? agoraMusicLevel(agora.phase, agora.reveal, agora.topic.kind === 'dictation') : 0) : musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0,
     agora ? AGORA_MUSIC_SRC : MUSIC_SRC,
   );
   // The 아고라 has no 효과음 switch of its own, so its applause plays whenever this window has sound.
@@ -139,6 +139,7 @@ function Idle({ view }: { view: DisplayView }) {
  */
 function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUrl: string; now: number; send: (a: Record<string, unknown>) => Promise<unknown> }) {
   const t = agora.topic;
+  const dictation = t.kind === 'dictation';
   const sent = agora.cards.filter((c) => c.sent).length;
   const grid = { gridTemplateColumns: `repeat(${t.columns}, minmax(0, 1fr))` };
   // Pages that fit the screen: every card is laid out once, unseen, at the real width, and its rows (each as tall as
@@ -191,6 +192,7 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
       <div className="flex items-center gap-4">
         <div className="text-3xl font-bold text-accent">{agora.className}</div>
         <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">아고라</div>
+        {dictation && <div className="rounded-full bg-accent px-4 py-2 text-xl font-bold text-ink">🎧 받아쓰기{t.answer !== undefined ? ' · 정답' : ''}</div>}
         {agora.review !== null ? (
           <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">{agora.phase === 'writing' ? '다시 쓰기' : `다시 보기 · ${formatDay(agora.review)}`}</div>
         ) : (
@@ -208,22 +210,43 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
           </div>
         </div>
       </div>
-      <div key={t.id} className="cls-drop-in rounded-[2vw] bg-white px-[3vw] py-[1.8vw] text-center">
-        <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${t.text.length > 40 ? 'text-[2.6vw]' : 'text-[3.4vw]'}`}>{t.text}</div>
-        {/* Often an example sentence, so it is read from the back of the room too. */}
-        {t.note && <div className="mt-[0.6vw] whitespace-pre-wrap text-[1.9vw] font-semibold text-ink-2 [overflow-wrap:anywhere]">{t.note}</div>}
-      </div>
+      {dictation ? (
+        // 받아쓰기: what to do, then the sentence itself once 정답 공개 shows it; every phone compares its own.
+        <div key={`${t.id}/${t.answer !== undefined}`} className="cls-drop-in rounded-[2vw] bg-white px-[3vw] py-[1.8vw] text-center">
+          {t.answer !== undefined ? (
+            <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${t.answer.length > 40 ? 'text-[2.8vw]' : 'text-[3.6vw]'}`}>{t.answer}</div>
+          ) : agora.listening ? (
+            <div className="flex items-center justify-center gap-[1vw] text-[3.4vw] font-extrabold leading-tight">
+              <span className="animate-pulse">🔊</span> 잘 들어 보세요
+            </div>
+          ) : (
+            <div className="text-[3.4vw] font-extrabold leading-tight tracking-tight">🎧 듣고 그대로 써요</div>
+          )}
+        </div>
+      ) : (
+        <div key={t.id} className="cls-drop-in rounded-[2vw] bg-white px-[3vw] py-[1.8vw] text-center">
+          <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${t.text.length > 40 ? 'text-[2.6vw]' : 'text-[3.4vw]'}`}>{t.text}</div>
+          {/* Often an example sentence, so it is read from the back of the room too. */}
+          {t.note && <div className="mt-[0.6vw] whitespace-pre-wrap text-[1.9vw] font-semibold text-ink-2 [overflow-wrap:anywhere]">{t.note}</div>}
+        </div>
+      )}
       <div ref={area} className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={ruler} aria-hidden className="invisible absolute inset-x-0 top-0 grid content-start gap-[1vw]" style={grid}>
           {agora.cards.map((c) => (
-            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} />
+            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} listening={!!agora.listening} />
           ))}
         </div>
         {/* A card taller than the whole space (a long answer in four columns) can still be scrolled to. */}
         <div className="grid h-full content-start gap-[1vw] overflow-y-auto" style={grid}>
-          {/* The teacher can click an answer here too, to show or hide just that one. */}
+          {/* The teacher can click an answer here too, to show or hide just that one; never a 받아쓰기 answer. */}
           {shown.map((c) => (
-            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} onFlip={c.sent ? () => send({ type: 'agora-card', number: c.number, topicId: t.id, shown: c.text === undefined }).catch(() => undefined) : undefined} />
+            <AgoraCardView
+              key={c.number}
+              c={c}
+              open={agora.phase === 'writing'}
+              listening={!!agora.listening}
+              onFlip={c.sent && !dictation ? () => send({ type: 'agora-card', number: c.number, topicId: t.id, shown: c.text === undefined }).catch(() => undefined) : undefined}
+            />
           ))}
           {agora.cards.length === 0 && (
             <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">{agora.review !== null && agora.phase === 'closed' ? '이 주제에 쓴 답이 없어요' : '태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요'}</div>
@@ -242,8 +265,11 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
   );
 }
 
-/** A student's card: character, number and name, then the answer once it shows, or else whether one came. */
-function AgoraCardView({ c, open, onFlip }: { c: AgoraCard; open: boolean; onFlip?: () => void }) {
+/**
+ * A student's card: character, number and name, then the answer once it shows, or else whether one came. While the
+ * laptop reads a 받아쓰기 sentence (`listening`), the characters sway along.
+ */
+function AgoraCardView({ c, open, onFlip, listening = false }: { c: AgoraCard; open: boolean; onFlip?: () => void; listening?: boolean }) {
   return (
     <div
       onClick={onFlip}
@@ -252,7 +278,7 @@ function AgoraCardView({ c, open, onFlip }: { c: AgoraCard; open: boolean; onFli
     >
       <div className="flex min-w-0 items-center gap-[0.8vw]">
         {/* Sized by the screen, like the rest of the projector. */}
-        <div className="h-[3.4vw] w-[3.4vw] shrink-0 [&>svg]:h-full [&>svg]:w-full">
+        <div className={`h-[3.4vw] w-[3.4vw] shrink-0 [&>svg]:h-full [&>svg]:w-full ${listening ? 'cls-float' : ''}`}>
           <PixelAvatar look={c.star ? { ...c.look, effect: 'sparkle' } : c.look} size={64} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
         </div>
         <span className="tabular text-[1.3vw] font-bold text-ink-3">{c.number}</span>
@@ -289,6 +315,7 @@ function TopicCount({ agora }: { agora: DisplayAgora }) {
 function AgoraReady({ agora, joinUrl }: { agora: DisplayAgora; joinUrl: string }) {
   const t = agora.topic;
   const long = [...t.text].length;
+  const dictation = t.kind === 'dictation';
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[1.4vw]">
       <div className="flex items-center gap-4">
@@ -302,8 +329,17 @@ function AgoraReady({ agora, joinUrl }: { agora: DisplayAgora; joinUrl: string }
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div key={t.id} className="cls-drop-in flex max-h-full w-full max-w-[84vw] flex-col items-center gap-[1.2vw] overflow-hidden rounded-[2.4vw] bg-white px-[4vw] py-[3vw] text-center">
           <div className="rounded-full bg-ink px-[1.2vw] py-[0.4vw] text-[1.4vw] font-bold text-white">주제 {agora.index + 1}</div>
-          <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${long > 90 ? 'text-[2.8vw]' : long > 40 ? 'text-[3.6vw]' : 'text-[4.4vw]'}`}>{t.text}</div>
-          {t.note && <div className="whitespace-pre-wrap text-[2.1vw] font-semibold text-ink-2 [overflow-wrap:anywhere]">{t.note}</div>}
+          {dictation ? (
+            <>
+              <div className="text-[4.4vw] font-extrabold leading-tight tracking-tight">🎧 받아쓰기</div>
+              <div className="text-[2.1vw] font-semibold text-ink-2">곧 시작해요 · 잘 들어 주세요</div>
+            </>
+          ) : (
+            <>
+              <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${long > 90 ? 'text-[2.8vw]' : long > 40 ? 'text-[3.6vw]' : 'text-[4.4vw]'}`}>{t.text}</div>
+              {t.note && <div className="whitespace-pre-wrap text-[2.1vw] font-semibold text-ink-2 [overflow-wrap:anywhere]">{t.note}</div>}
+            </>
+          )}
           <div className="mt-[0.4vw] rounded-full bg-bg px-[1.4vw] py-[0.5vw] text-[1.4vw] font-bold text-ink-3">{t.minutes ? `입력 시간 ${t.minutes}분` : '시간 제한 없음'} · 곧 폰에 써요</div>
         </div>
       </div>
@@ -346,7 +382,7 @@ function AgoraEnd({ agora }: { agora: DisplayAgora }) {
           {end.topics.map((t, i) => (
             <div key={i} className={`flex items-center gap-[1vw] font-bold ${many ? 'text-[1.2vw]' : 'text-[1.6vw]'}`}>
               <span className="tabular flex h-[1.9em] w-[1.9em] shrink-0 items-center justify-center rounded-full bg-ink text-[0.7em] font-extrabold text-white">{i + 1}</span>
-              <span className="min-w-0 flex-1 truncate">{t.text}</span>
+              <span className="min-w-0 flex-1 truncate">{t.kind === 'dictation' ? '🎧 받아쓰기' : t.text}</span>
               {t.skipped ? (
                 <span className="shrink-0 rounded-full bg-bg px-[0.8em] py-[0.15em] text-[0.8em] text-ink-3">건너뜀</span>
               ) : (
@@ -468,15 +504,24 @@ function AgoraLobby({ view, agora, serverNow }: { view: DisplayView; agora: Disp
       <LobbyQr view={view} />
       <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
         <LobbyHeader className={agora.className} title={agora.title} sub={sub} count={agora.joined.length} />
-        {howtoAt !== null && <AgoraHowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} />}
+        {howtoAt !== null && <AgoraHowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} dictation={t.kind === 'dictation'} />}
         <LobbyCrowd avatars={agora.joined.map((a) => ({ key: String(a.number), name: a.name, look: a.look }))} wantNames hidden={howtoAt !== null} />
         {/* At least as tall as the arena's reward card (its character box and padding), so the class stands where it does there. */}
         <div className={`flex min-h-[calc(min(16vw,28.4vh)_+_2*min(2.5rem,3.7vh))] gap-[1.2vw] ${howtoAt !== null ? 'hidden' : ''}`}>
           {/* Spacing is capped by the screen height too, as on the reward card, so the class keeps its room at 1280×720. */}
           <div className="flex min-w-0 flex-1 flex-col justify-center gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white">
             <div className="text-2xl font-bold text-gold">{agora.review !== null ? `지난 수업의 답을 다시 봐요${of}` : `오늘의 주제${of}`}</div>
-            <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 50 ? 'text-[1.8vw]' : 'text-[2.3vw]'}`}>{t.text}</div>
-            {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
+            {t.kind === 'dictation' ? (
+              <>
+                <div className="text-[2.3vw] font-bold leading-snug tracking-tight">🎧 받아쓰기</div>
+                <div className="self-start rounded-2xl bg-[#24272F] px-5 py-3 text-xl font-semibold text-[#D5D8DF]">잘 듣고 그대로 써요</div>
+              </>
+            ) : (
+              <>
+                <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 50 ? 'text-[1.8vw]' : 'text-[2.3vw]'}`}>{t.text}</div>
+                {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
+              </>
+            )}
           </div>
           <AgoraRewardCard reward={agora.reward} />
         </div>
@@ -522,38 +567,52 @@ const HOWTO_CAST: { card: AgoraCard; at?: number }[] = [
 ];
 // One caption at a time, in the arena's 12 seconds: 0-3 s, 3-6.5 s, 6.5-10 s and 10-12 s.
 const HOWTO_CAPTIONS = ['① 폰에 답을 써요', '② 낸 친구는 ✓ 냈어요 · 답은 아직 비밀', '③ 선생님이 공개하면 다 같이 봐요', '마감 전에는 고쳐 써도 돼요'];
+// When the first topic is 받아쓰기: the sentence is heard, written, and compared on each phone. 하윤 misses one word.
+const HOWTO_SENTENCE = 'I like apples.';
+const HOWTO_HEARD = 'I like apple.';
+const HOWTO_DICTATION_CAPTIONS = ['① 잘 듣고 폰에 그대로 써요', '② 낸 친구는 ✓ 냈어요 · 답은 각자 폰에만', '③ 정답 공개! 내 답과 비교해요', '마감 전에는 고쳐 써도 돼요'];
 
 /**
  * 놀이 방법 in the 아고라's 대기실: a phone writes its answer and sends it, the class's cards turn to ✓ 냈어요 one by
  * one with their answers still hidden, and then the teacher shows them all, on the real cards. `startedAt` is on the
  * server clock, so a reloaded projector picks up where the demo is.
  */
-function AgoraHowTo({ startedAt, serverNow }: { startedAt: number; serverNow: () => number }) {
+function AgoraHowTo({ startedAt, serverNow, dictation = false }: { startedAt: number; serverNow: () => number; dictation?: boolean }) {
   useTicker(true, 100);
   const t = serverNow() - startedAt;
   const stage = t >= 10000 ? 3 : t >= 6500 ? 2 : t >= 3000 ? 1 : 0;
-  const typed = HOWTO_MINE.slice(0, Math.max(0, Math.floor((t - 300) / 65)));
+  const mine = dictation ? HOWTO_HEARD : HOWTO_MINE;
+  const typed = mine.slice(0, Math.max(0, Math.floor((t - 300) / 65)));
   const sent = t >= 2500;
   const cards = HOWTO_CAST.map(({ card, at }, i) => {
     const has = at !== undefined && t >= at;
-    // Shown one after another, as the teacher's [전체 공개] lands.
-    return { ...card, sent: has, text: has && t >= 6800 + i * 300 ? card.text : undefined };
+    // Shown one after another, as the teacher's [전체 공개] lands; a 받아쓰기 answer never shows.
+    return { ...card, sent: has, text: !dictation && has && t >= 6800 + i * 300 ? card.text : undefined };
   });
+  const revealed = dictation && stage >= 2;
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[1.4vh]">
       <div className="flex items-center gap-4">
         <span className="shrink-0 rounded-full bg-ink px-4 py-1.5 text-xl font-bold text-white">놀이 방법</span>
         <div key={stage} className="cls-slide-up truncate text-[2.6vw] font-extrabold leading-tight tracking-tight">
-          {HOWTO_CAPTIONS[stage]}
+          {(dictation ? HOWTO_DICTATION_CAPTIONS : HOWTO_CAPTIONS)[stage]}
         </div>
       </div>
       <div className="flex min-h-0 flex-1 gap-[2vw]">
         {/* A phone, drawn small: the topic, the answer being typed, and 제출. */}
         <div className="flex aspect-[0.52] h-full shrink-0 flex-col rounded-[2vw] bg-ink p-[0.55vw]">
           <div className="flex min-h-0 flex-1 flex-col gap-[0.8vw] rounded-[1.5vw] bg-white p-[1vw]">
-            <div className="rounded-[0.9vw] bg-bg px-[0.8vw] py-[0.9vw] text-center text-[1.05vw] font-bold leading-snug">{HOWTO_TOPIC}</div>
+            <div className="rounded-[0.9vw] bg-bg px-[0.8vw] py-[0.9vw] text-center text-[1.05vw] font-bold leading-snug">
+              {!dictation ? HOWTO_TOPIC : revealed ? `정답 · ${HOWTO_SENTENCE}` : '🎧 듣고 그대로 써요'}
+            </div>
             <div className={`min-h-[6.5vw] rounded-[0.9vw] border-2 px-[0.8vw] py-[0.6vw] text-[1.15vw] font-bold leading-snug ${sent ? 'border-[#D5D8DF] text-ink-2' : 'border-ink'}`}>
-              {typed}
+              {revealed ? (
+                <>
+                  I like <span className="text-bad underline decoration-2 underline-offset-4">apple.</span>
+                </>
+              ) : (
+                typed
+              )}
               {!sent && <span className="ml-px inline-block h-[1.2vw] w-[2px] animate-pulse bg-ink align-middle" />}
             </div>
             <div className={`rounded-[0.9vw] py-[0.7vw] text-center text-[1vw] font-extrabold transition-colors ${sent ? 'bg-good-soft text-good' : 'bg-ink text-white'}`}>
@@ -563,6 +622,11 @@ function AgoraHowTo({ startedAt, serverNow }: { startedAt: number; serverNow: ()
         </div>
         {/* The board as the projector shows it once writing starts. */}
         <div className="flex min-w-0 flex-1 flex-col gap-[1vw]">
+          {dictation && (
+            <div className="rounded-[1.4vw] bg-white px-[1.6vw] py-[1vw] text-center text-[2vw] font-extrabold">
+              {revealed ? HOWTO_SENTENCE : t < 2500 ? '🔊 잘 들어 보세요' : '🎧 듣고 그대로 써요'}
+            </div>
+          )}
           <div className="flex items-center gap-3 self-end rounded-full bg-ink py-1.5 pl-1.5 pr-5 text-white">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3DDC97] text-lg font-extrabold text-ink">✓</div>
             <div className="tabular text-2xl font-extrabold">
@@ -572,7 +636,7 @@ function AgoraHowTo({ startedAt, serverNow }: { startedAt: number; serverNow: ()
           </div>
           <div className="grid grid-cols-2 content-start gap-[1vw]">
             {cards.map((c) => (
-              <AgoraCardView key={c.number} c={c} open />
+              <AgoraCardView key={c.number} c={c} open listening={dictation && t < 2500} />
             ))}
           </div>
         </div>

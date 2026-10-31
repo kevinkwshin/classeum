@@ -58,6 +58,21 @@ export interface AgoraCard {
   star?: boolean;
 }
 
+/**
+ * A topic as the projector and the phones show it: 작문 with its question, or 받아쓰기 (`kind`), which has no text:
+ * its sentence comes as `answer`, and only once [정답 공개] has shown it.
+ */
+export interface AgoraTopicView {
+  id: string;
+  kind: 'writing' | 'dictation';
+  text: string;
+  note: string;
+  answer?: string;
+}
+
+/** 받아쓰기: the teacher's laptop started reading the sentence then (server clock), for about `ms`. */
+export type AgoraListening = { at: number; ms: number } | null;
+
 /** An 아고라's reward item, for the 대기실 and the phones. */
 export interface AgoraReward {
   itemId: string;
@@ -78,8 +93,9 @@ export interface DisplayAgora {
   index: number;
   count: number;
   reward: AgoraReward;
-  topic: { id: string; text: string; note: string; minutes: number | null; columns: number; sort: TopicSort };
+  topic: AgoraTopicView & { minutes: number | null; columns: number; sort: TopicSort };
   reveal: TopicReveal;
+  listening: AgoraListening;
   joined: { number: number; name: string; look: AvatarLook }[];
   cards: AgoraCard[];
   /** The page the teacher turned to; the projector splits the cards into pages itself and tells the server how many. */
@@ -92,13 +108,18 @@ export interface DisplayAgora {
   /** When the teacher last gave a ⭐ (server clock; 0 before the first): each new one gets applause. */
   praisedAt: number;
   /** At the 끝: answers written, how many got the reward, each topic's count (`skipped` if the class never wrote to it), and who came in. */
-  end: { answers: number; rewarded: number; topics: { text: string; sent: number; of: number; skipped: boolean }[]; parade: { number: number; look: AvatarLook; rewarded: boolean }[] } | null;
+  end: { answers: number; rewarded: number; topics: { text: string; kind: 'writing' | 'dictation'; sent: number; of: number; skipped: boolean }[]; parade: { number: number; look: AvatarLook; rewarded: boolean }[] } | null;
 }
 
-/** One of my answers to an 아고라's topic (`n` is its place), with its 처음 답 if 다시 쓰기 changed it. */
+/**
+ * One of my answers to an 아고라's topic (`n` is its place), with its 처음 답 if 다시 쓰기 changed it. A 받아쓰기 has
+ * no topic text; its sentence (`answer`) comes once my class has been shown it.
+ */
 export interface MyAnswer {
   n: number;
+  kind: 'writing' | 'dictation';
   topic: string;
+  answer: string | null;
   text: string;
   first: string | null;
   /** The teacher's ⭐. */
@@ -117,9 +138,10 @@ export interface StudentAgora {
   index: number;
   count: number;
   reward: AgoraReward;
-  topic: { id: string; text: string; note: string };
-  /** Whether the teacher has shown every answer ([전체 공개]); the cards carry the text either way. */
+  topic: AgoraTopicView;
+  /** Whether the teacher has shown every answer ([전체 공개]), or a 받아쓰기's sentence ([정답 공개]). */
   reveal: TopicReveal;
+  listening: AgoraListening;
   mine: { text: string; first: string | null; at: number; star: boolean } | null;
   /** The reward I got for a ⭐ in this session: the item, whether I had it already, and when. */
   praise: { itemId: string; alreadyOwned: boolean; at: number } | null;
@@ -269,6 +291,8 @@ export interface TeacherAgora {
   lessons: Record<string, number>;
   /** Changes whenever one of its answers does: an open answer list fetches them again (/api/agora-answers). */
   answersKey: string;
+  /** The 받아쓰기 topics (ids) each class (by id) has been shown the sentence of. */
+  released: Record<string, string[]>;
 }
 
 /**
@@ -283,6 +307,11 @@ export interface TeacherTopic {
   sort: TopicSort;
   /** 입력 시간 in minutes; null for no limit. */
   minutes: number | null;
+  /**
+   * 받아쓰기: the sentence the laptop reads aloud (`text` is ''); null for 작문. The teacher screen may be on the
+   * projector, so it shows it only in the [수정] window, never during class.
+   */
+  dictation: string | null;
   /** Answers by class id. */
   counts: Record<string, number>;
   /** Every answer to it, any class. */
@@ -298,6 +327,10 @@ export interface TeacherAnswer {
   shown: boolean | null;
   createdAt: number;
   updatedAt: number;
+  /** 받아쓰기: the answer as it was at the first 마감, which the statistics count; null before (or for 작문). */
+  closed: string | null;
+  /** 받아쓰기: the teacher's 정답 인정 of that answer. */
+  accepted: boolean;
 }
 
 

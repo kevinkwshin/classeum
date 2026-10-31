@@ -12,6 +12,7 @@ import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { MAX_TEXT_ANSWER } from '@/lib/text';
 import { ANSWER_MAX } from '@/lib/agora';
+import { gradeDictation, type DictationWord } from '@/lib/dictation';
 import { zoneCenter, zoneOf } from '@/lib/field';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
 import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
@@ -200,6 +201,10 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
   const me = view.me!;
   const open = a.phase === 'writing';
   const review = a.review !== null;
+  const dictation = a.topic.kind === 'dictation';
+  // 받아쓰기 after 정답 공개: the sentence, and my answer against it, on my screen only.
+  const answer = a.topic.answer;
+  const graded = answer !== undefined && a.mine ? gradeDictation(answer, a.mine.text) : null;
   useTicker(!!a.timer, 500);
   const saved = a.mine?.text ?? null;
   const [value, setValue] = useState(saved ?? '');
@@ -227,7 +232,7 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
       <div className="flex flex-col gap-5">
         <div className="flex items-center justify-between gap-3">
           <div className="text-lg font-extrabold">
-            {me.className} · 아고라
+            {me.className} · {dictation ? '받아쓰기' : '아고라'}
             {a.count > 1 && <span className="tabular text-ink-3"> · {a.index + 1}/{a.count}</span>}
           </div>
           {a.timer ? (
@@ -238,10 +243,27 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
             </span>
           )}
         </div>
-        <div className="cls-drop-in rounded-3xl bg-bg px-5 py-6 text-center">
-          <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{a.topic.text}</div>
-          {a.topic.note && <div className="mt-2 whitespace-pre-wrap text-base font-semibold text-ink-2 [overflow-wrap:anywhere]">{a.topic.note}</div>}
-        </div>
+        {dictation ? (
+          <div key={answer === undefined ? 'listen' : 'answer'} className="cls-drop-in rounded-3xl bg-bg px-5 py-6 text-center">
+            {answer !== undefined ? (
+              <>
+                <div className="text-xs font-extrabold text-ink-3">정답</div>
+                <div className="mt-1 whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{graded ? <Marked words={graded.target} /> : answer}</div>
+              </>
+            ) : a.listening ? (
+              <div className="text-xl font-bold leading-snug">
+                <span className="animate-pulse">🔊</span> 잘 들어 보세요
+              </div>
+            ) : (
+              <div className="text-xl font-bold leading-snug">🎧 듣고 그대로 써요</div>
+            )}
+          </div>
+        ) : (
+          <div className="cls-drop-in rounded-3xl bg-bg px-5 py-6 text-center">
+            <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{a.topic.text}</div>
+            {a.topic.note && <div className="mt-2 whitespace-pre-wrap text-base font-semibold text-ink-2 [overflow-wrap:anywhere]">{a.topic.note}</div>}
+          </div>
+        )}
         {open ? (
           <>
             {/* 다시 쓰기: what I wrote last lesson, to change from. */}
@@ -265,9 +287,11 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
                   setError('');
                 }}
                 maxLength={ANSWER_MAX}
-                rows={4}
-                placeholder="여기에 답을 써요"
+                rows={dictation ? 3 : 4}
+                placeholder={dictation ? '들은 문장을 써요' : '여기에 답을 써요'}
                 aria-label="내 답"
+                // 받아쓰기 checks what was heard, so the keyboard mustn't fix spelling or capitals for it.
+                {...(dictation ? { autoCorrect: 'off', autoCapitalize: 'none', spellCheck: false, lang: 'en' } : {})}
                 className="min-h-32 resize-none rounded-2xl border-2 border-ink px-4 py-3 text-xl font-bold leading-snug outline-none"
               />
               <div className="flex items-center justify-between text-sm">
@@ -287,13 +311,24 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
               </button>
             </form>
           </>
+        ) : graded && a.mine ? (
+          <div className="rounded-2xl bg-good-soft px-4 py-3">
+            <div className="text-xs font-extrabold text-good">
+              내 답
+              {a.mine.star && <span className="ml-1.5 rounded-full bg-gold px-2 py-0.5 text-ink">⭐ 선생님 칭찬</span>}
+            </div>
+            <div className="mt-0.5 whitespace-pre-wrap text-lg font-bold leading-snug [overflow-wrap:anywhere]">
+              <Marked words={graded.answer} />
+            </div>
+            <div className="mt-2 text-base font-extrabold">{graded.perfect ? '잘 들었어요!' : '정답과 내 답을 비교해 봐요'}</div>
+          </div>
         ) : a.mine ? (
           <div className="rounded-2xl bg-good-soft px-4 py-3">
             <div className="text-xs font-extrabold text-good">
-              {review ? `내 답 · ${formatDay(a.mine.at)}` : '내 답 · 마감됐어요'}
+              {review ? `내 답 · ${formatDay(a.mine.at)}` : dictation ? '내 답 · 마감됐어요 · 정답 공개를 기다려요' : '내 답 · 마감됐어요'}
               {a.mine.star && <span className="ml-1.5 rounded-full bg-gold px-2 py-0.5 text-ink">⭐ 선생님 칭찬</span>}
             </div>
-            {a.mine.first !== null && <div className="mt-1 whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{a.mine.first}</s></div>}
+            {a.mine.first !== null && <div className="mt-1 whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 답 · <s>{a.mine.first}</s></div>}
             <div className="mt-0.5 whitespace-pre-wrap text-lg font-bold leading-snug [overflow-wrap:anywhere]">{a.mine.text}</div>
           </div>
         ) : (
@@ -302,7 +337,7 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
       </div>
       <div className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between text-sm font-bold text-ink-2">
-          <span>{a.reveal === 'public' ? '친구들 답' : '우리 반'}</span>
+          <span>{a.reveal === 'public' && !dictation ? '친구들 답' : '우리 반'}</span>
           <span className="tabular text-ink-3">
             ✓ {sent} / {a.cards.length}
           </span>
@@ -330,7 +365,11 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
             );
           })}
         </div>
-        {a.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>}
+        {dictation ? (
+          <div className="text-center text-sm text-ink-3">받아쓰기 답은 각자 폰에서만 봐요</div>
+        ) : (
+          a.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>
+        )}
       </div>
       {a.praise && a.praise.at !== praiseSeen && <PraiseBox praise={a.praise} look={normalizeLook(me.look ?? undefined)} onSeen={onPraiseSeen} />}
     </div>
@@ -370,19 +409,38 @@ function PraiseBox({ praise, look, onSeen }: { praise: NonNullable<StudentAgora[
   );
 }
 
-/** One of my answers: the topic (left out when the 아고라 is just that question), what it first said if changed, and what it says. */
+/** Words as written, the ones that don't match the 받아쓰기 sentence underlined. */
+function Marked({ words }: { words: DictationWord[] }) {
+  return (
+    <>
+      {words.map((w, i) => (
+        <span key={i}>
+          {i > 0 ? ' ' : ''}
+          <span className={w.ok ? '' : 'text-bad underline decoration-2 underline-offset-4'}>{w.word}</span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * One of my answers: the topic (left out when the 아고라 is just that question), what it first said if changed, and
+ * what it says. A 받아쓰기 shows its sentence once my class has been shown it, and my answer marked against it.
+ */
 function AnswerRow({ x, count, title }: { x: MyAnswer; count: number; title: string }) {
+  const graded = x.answer !== null ? gradeDictation(x.answer, x.text) : null;
   return (
     <div className="flex flex-col gap-0.5 border-t border-[#EEF0F3] pt-2.5 first:border-t-0 first:pt-0">
       {(count > 1 || x.topic !== title) && (
         <div className="text-xs font-bold text-ink-3 [overflow-wrap:anywhere]">
           {count > 1 ? `주제 ${x.n} · ` : ''}
-          {x.topic}
+          {x.kind === 'dictation' ? '🎧 받아쓰기' : x.topic}
         </div>
       )}
-      {x.first !== null && <div className="whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 · <s>{x.first}</s></div>}
+      {x.answer !== null && <div className="whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">정답 · {x.answer}</div>}
+      {x.first !== null && <div className="whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">처음 답 · <s>{x.first}</s></div>}
       <div className="whitespace-pre-wrap text-[15px] font-bold leading-snug [overflow-wrap:anywhere]">
-        {x.text}
+        {graded ? <Marked words={graded.answer} /> : x.text}
         {x.star && <span className="ml-1.5 whitespace-nowrap rounded-full bg-gold px-2 py-0.5 align-middle text-[11px] font-extrabold">⭐ 칭찬</span>}
       </div>
     </div>
@@ -738,8 +796,14 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
       {waiting && view.agora && (view.agora.phase === 'lobby' || view.agora.phase === 'ready') && (
         <div key={view.agora.topic.id} className="cls-slide-up rounded-3xl bg-gold p-4">
           <div className="text-xs font-extrabold">{agoraLabel(view.agora)}</div>
-          <div className="mt-0.5 whitespace-pre-wrap break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{view.agora.topic.text}</div>
-          {view.agora.topic.note && <div className="mt-1 whitespace-pre-wrap text-xs font-semibold text-[#4A3A10] [overflow-wrap:anywhere]">{view.agora.topic.note}</div>}
+          {view.agora.topic.kind === 'dictation' ? (
+            <div className="mt-0.5 text-lg font-extrabold leading-snug">🎧 받아쓰기 · 잘 듣고 그대로 써요</div>
+          ) : (
+            <>
+              <div className="mt-0.5 whitespace-pre-wrap break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{view.agora.topic.text}</div>
+              {view.agora.topic.note && <div className="mt-1 whitespace-pre-wrap text-xs font-semibold text-[#4A3A10] [overflow-wrap:anywhere]">{view.agora.topic.note}</div>}
+            </>
+          )}
         </div>
       )}
       {waiting && agoraReward && (

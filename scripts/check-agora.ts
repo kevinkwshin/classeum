@@ -1,7 +1,8 @@
 // Checks 아고라's safety rules against a running Classeum server the way a class uses it: the teacher screen, the
 // projector and five phones over the real streams and actions, through 대기실, 쓰기, 마감, 다음 주제 and the 끝, then
-// 다시 보기 and 다시 쓰기 in a later lesson, each phone's 내 답 노트, the teacher's ⭐ with its reward, and that answer texts reach the
-// teacher screen only for the class in session or when its 답 card asks. It makes two classes of its own (아고라점검A
+// 다시 보기 and 다시 쓰기 in a later lesson, each phone's 내 답 노트, the teacher's ⭐ with its reward, that answer texts reach the
+// teacher screen only for the class in session or when its 답 card asks, and 받아쓰기 (a sentence the laptop reads,
+// which reaches no phone or projector before [정답 공개]). It makes two classes of its own (아고라점검A
 // and 아고라점검B) and 아고라 titled [아고라점검], and deletes them with their students and answers at the end, so real
 // classes, 아고라 and records are never touched. It stops before doing anything if the arena or an 아고라 is open.
 // Usage (from the project folder, with the server on): npm run check:agora -- [baseUrl=http://localhost:3000]
@@ -9,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ANSWER_MAX, TITLE_MAX, TOPICS_MAX } from '../src/lib/agora';
+import { gradeDictation } from '../src/lib/dictation';
 import { ATTENDANCE_UNLOCKS, QUIZ_REWARD_ITEMS } from '../src/lib/items';
 
 const BASE = process.argv[2] ?? 'http://localhost:3000';
@@ -20,7 +22,7 @@ const TEACHER = { Cookie: `cls_teacher=${readFileSync(join(DATA, 'teacher-key'),
 const TEACHER_ONLY = [
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete', 'agora-reward', 'agora-star',
+  'agora-card-delete', 'agora-reward', 'agora-star', 'agora-speak', 'agora-accept',
 ];
 // The one place a page takes HTML: the QR picture the server draws itself.
 const QR_HTML = 'dangerouslySetInnerHTML={{ __html: view.qr }}';
@@ -591,10 +593,106 @@ async function run(teacher: Stream, display: Stream) {
   check('시간 제한이 없으면 ±1분은 아무것도 바꾸지 않는다', (await post({ type: 'agora-time', minutes: 1 })).ok && display.view.agora.timer === null);
   await post({ type: 'agora-end' });
 
+  section('받아쓰기');
+  const SENTENCE = 'Where did you go last weekend?';
+  const SKIPPED = 'My brother let me ride his bike.';
+  /** Whether a stream ever carried words only the sentence has. */
+  const carried = (st: Stream, words: string) => st.raw.some((r) => r.includes(words));
+  check('받아쓰기 문장이 없으면 만들지 않는다', (await post({ type: 'agora-add', title: `${MARK} 빈 받아쓰기`, topics: [{ kind: 'dictation', text: '', note: 'x' }] })).error === '1번 줄의 받아쓰기 문장을 써 주세요.');
+  const dict: string = (
+    await post({
+      type: 'agora-add',
+      title: `${MARK} 받아쓰기`,
+      topics: [{ kind: 'dictation', text: SENTENCE, note: '정답이 들어간 설명' }, { text: SENTENCE, note: 'e.g. I went to the park.' }, { kind: 'dictation', text: SKIPPED }],
+    })
+  ).agoraId;
+  await sleep(200);
+  const dt = agora(dict).topics as View[];
+  const [d1, w2, d3] = dt.map((t) => t.id as string);
+  check('받아쓰기 주제는 문장을 따로 갖고(질문 칸은 비어 있음), 보조 설명은 없고, 입력 시간은 제한 없음', dt[0].dictation === SENTENCE && dt[0].text === '' && dt[0].note === '' && dt[0].minutes === null && dt[1].dictation === null && dt[1].text === SENTENCE);
+  await post({ type: 'agora-open', agoraId: dict, classId: A.id });
+  await sleep(300);
+  check('대기실: 프로젝터와 폰에는 받아쓰기라는 것만 가고 문장은 없다', display.view.agora?.topic.kind === 'dictation' && display.view.agora.topic.text === '' && display.view.agora.topic.answer === undefined && a1.s.view.agora?.topic.kind === 'dictation' && a1.s.view.agora.topic.answer === undefined);
+  check('[정답 공개]는 쓰기 전에는 아무것도 하지 않는다', (await post({ type: 'agora-reveal', public: true, index: 0 })).ok);
+  await post({ type: 'agora-start' });
+  await sleep(300);
+  check('쓰기 시작: 폰과 프로젝터는 받아쓰기로 바뀌고 시계는 없다', display.view.agora?.phase === 'writing' && display.view.agora.timer === null && a1.s.view.agora?.phase === 'writing');
+  check('[▶ 읽어 주기]: 프로젝터와 그 반 폰이 읽는 중인 걸 안다', (await post({ type: 'agora-speak', index: 0, on: true })).ok);
+  await sleep(200);
+  check('…읽는 중', display.view.agora?.listening !== null && a2.s.view.agora?.listening !== null);
+  await post({ type: 'agora-speak', index: 3, on: false });
+  await sleep(150);
+  check('다른 주제를 가리키는 읽기 신호(늦게 도착)는 무시된다', display.view.agora?.listening !== null);
+  await post({ type: 'agora-speak', index: 0, on: false });
+  await sleep(150);
+  check('…다 읽으면 읽는 중이 아니다', display.view.agora?.listening === null);
+  check('1번이 들은 대로 쓴다(대문자·물음표 없이)', (await post({ type: 'agora-answer', token: a1.token, topicId: d1, text: 'where did you go last weekend' }, {})).ok);
+  check('2번은 한 단어를 틀린다', (await post({ type: 'agora-answer', token: a2.token, topicId: d1, text: 'Where did you go last week?' }, {})).ok);
+  await sleep(300);
+  check('쓰는 중에 [정답 공개]는 거절된다', (await post({ type: 'agora-reveal', public: true, index: 0 })).ok && display.view.agora?.reveal === 'hidden' && display.view.agora.topic.answer === undefined);
+  await post({ type: 'agora-card', number: 1, topicId: d1, shown: true });
+  await post({ type: 'agora-star', studentId: studentId(A, 2), topicId: d1, star: true });
+  await sleep(200);
+  check('받아쓰기 카드는 하나씩 공개되지 않고, 쓰는 중에는 ⭐도 없다', (display.view.agora.cards as View[]).every((c) => c.text === undefined && !c.star));
+  check('공개 전에는 문장이 프로젝터, 쓰지 않은 3번, 다른 반 폰에 한 번도 가지 않았다', !carried(display, 'go last weekend') && !carried(a3.s, 'go last weekend') && !carried(b1.s, 'go last weekend') && !carried(a2.s, 'go last weekend'));
+  check('공개 전 보조 설명도 어디에도 가지 않았다', !carried(display, '정답이 들어간 설명') && !carried(a1.s, '정답이 들어간 설명'));
+  check('선생님 화면은 수업 중인 반의 받아쓰기 답을 받는다', liveAnswers(d1).length === 2);
+  await post({ type: 'agora-close' });
+  await sleep(200);
+  check('늦게 도착한(다른 주제를 가리키는) [정답 공개]는 무시된다', (await post({ type: 'agora-reveal', public: true, index: 2 })).ok && display.view.agora?.topic.answer === undefined);
+  await sleep(150);
+  check('[정답 공개]: 마감 뒤에', (await post({ type: 'agora-reveal', public: true, index: 0 })).ok);
+  await sleep(300);
+  check('정답 공개: 프로젝터와 그 반 폰에 문장이 간다', display.view.agora?.topic.answer === SENTENCE && a1.s.view.agora?.topic.answer === SENTENCE && a3.s.view.agora?.topic.answer === SENTENCE);
+  check('…다른 반 폰에는 여전히 가지 않는다', !carried(b1.s, 'go last weekend'));
+  check('…학생 카드에는 여전히 답 글이 없다', (display.view.agora.cards as View[]).every((c) => c.text === undefined) && (a3.s.view.agora.cards as View[]).every((c: View) => c.text === undefined));
+  check('…2번 폰은 자기 답만 받는다(1번 답 없음)', !carried(a2.s, 'where did you go last weekend'));
+  check('마감 뒤에는 ⭐를 줄 수 있다', (await post({ type: 'agora-star', studentId: studentId(A, 2), topicId: d1, star: true })).ok);
+  await sleep(200);
+  check('…2번 카드에 ⭐', (display.view.agora.cards as View[]).find((c) => c.number === 2)?.star === true);
+  await sleep(800);
+  let file = JSON.parse(readFileSync(join(DATA, 'classeum.json'), 'utf8')) as View;
+  check('저장: 마감 때의 답이 남고, 이 반에 공개한 받아쓰기가 남는다(서버를 다시 켜도)', file.topicAnswers[d1][studentId(A, 1)].closed === 'where did you go last weekend' && file.agoras[dict].released[A.id].includes(d1) && !file.agoras[dict].released[B.id]);
+  check('정답 인정은 선생님만', (await post({ type: 'agora-accept', topicId: d1, studentId: studentId(A, 2), accepted: true }, {})).status === 403);
+  check('선생님이 2번 답을 정답으로 인정한다', (await post({ type: 'agora-accept', topicId: d1, studentId: studentId(A, 2), accepted: true })).ok);
+  await sleep(200);
+  check('…선생님 화면에 인정이 보인다', liveAnswers(d1).find((x) => x.studentId === studentId(A, 2))?.accepted === true);
+  await post({ type: 'agora-next' });
+  await sleep(200);
+  check('다음: 같은 질문의 작문 주제가 뜬다', display.view.agora?.topic.kind === 'writing' && display.view.agora.topic.text === SENTENCE);
+  await post({ type: 'agora-next' });
+  await post({ type: 'agora-start' });
+  await sleep(200);
+  check('세 번째 받아쓰기를 쓰다가 건너뛴다', (await post({ type: 'agora-answer', token: a1.token, topicId: d3, text: 'My brother let me ride' }, {})).ok && (await post({ type: 'agora-next' })).ok);
+  await sleep(300);
+  const dEnd = display.view.agora?.end;
+  check('끝 화면: 받아쓰기는 문장 없이 수만', dEnd?.topics[0].kind === 'dictation' && dEnd.topics[0].text === '' && !JSON.stringify(dEnd).includes('ride his bike'));
+  const myEnd = (a1.s.view.agora?.end ?? []) as View[];
+  check('1번 폰의 끝: 공개한 받아쓰기는 문장과 함께, 공개하지 않은 것은 문장 없이', myEnd.find((x) => x.n === 1)?.answer === SENTENCE && myEnd.find((x) => x.n === 3)?.answer === null);
+  check('공개하지 않은 받아쓰기 문장은 어느 화면에도 가지 않았다', ![display, a1.s, a2.s, a3.s, b1.s].some((st) => carried(st, 'ride his bike')));
+  await post({ type: 'agora-end' });
+  await sleep(300);
+  const dNote = (a1.s.view.agoraNotes as View[] | null | undefined)?.find((n) => n.id === dict);
+  check('내 답 노트: 공개한 받아쓰기는 문장과 내 답, 공개하지 않은 것은 내 답만', dNote?.topics.find((x: View) => x.n === 1)?.answer === SENTENCE && dNote?.topics.find((x: View) => x.n === 3)?.answer === null);
+  await sleep(800);
+  file = JSON.parse(readFileSync(join(DATA, 'classeum.json'), 'utf8')) as View;
+  check('쓰다가 건너뛴 받아쓰기 답은 마감된 답이 아니다(통계에서 뺌)', file.topicAnswers[d3][studentId(A, 1)].closed === undefined);
+  const csv = await fetch(`${BASE}/api/agora-answers?agoraId=${dict}&classId=${A.id}&format=csv`, { headers: TEACHER });
+  const csvText = await csv.text();
+  check('받아쓰기 CSV: 선생님은 받는다(정답 · 정답 인정 · 안 냄 · 중단)', csv.status === 200 && csvText.includes('받아쓰기 문장') && csvText.includes(',정답,') && csvText.includes(',정답 인정,') && csvText.includes(',안 냄,') && csvText.includes(',중단,'));
+  check('…선생님 쿠키 없이는 막힌다', (await fetch(`${BASE}/api/agora-answers?agoraId=${dict}&classId=${A.id}&format=csv`)).status === 403);
+  check('답이 있는 받아쓰기는 문장을 바꿀 수 없다', (await post({ type: 'agora-edit', agoraId: dict, title: `${MARK} 받아쓰기`, topics: [{ id: d1, kind: 'dictation', text: 'Where did you go?' }, { id: w2, text: SENTENCE }, { id: d3, kind: 'dictation', text: SKIPPED }] })).error?.includes('답이 있는 받아쓰기는'));
+  check('…작문으로 바꿀 수도 없다', (await post({ type: 'agora-edit', agoraId: dict, title: `${MARK} 받아쓰기`, topics: [{ id: d1, text: SENTENCE }, { id: w2, text: SENTENCE }, { id: d3, kind: 'dictation', text: SKIPPED }] })).error?.includes('답이 있는 받아쓰기는'));
+  const g = (target: string, answer: string) => gradeDictation(target, answer);
+  check('채점: 대소문자와 문장부호는 보지 않는다', g('What did you do?', 'what did you do').perfect);
+  check('채점: 15와 fifteen은 같다', g('I have 15 apples.', 'I have fifteen apples').perfect);
+  check('채점: 줄임말은 들린 대로(don’t ≠ do not)', !g("I don't like it.", 'I do not like it').perfect && g("I don’t like it.", "I don't like it").perfect);
+  check('채점: 한 단어가 빠져도 뒤는 맞게 줄을 맞춘다(5/6)', Math.round(g('I go to school every day.', 'I go school every day').accuracy * 6) === 5);
+
   section('코드');
   const sinks = htmlSinks(join(process.cwd(), 'src'));
   check('화면은 답을 HTML로 넣지 않는다 (HTML로 넣는 곳은 서버가 그린 QR 그림뿐)', sinks.every((m) => m === QR_HTML), sinks.filter((m) => m !== QR_HTML).join(' | '));
-  return { classIds: [A.id, B.id], agoraIds: [agoraId, other, gaps, a3m, aNone], topicIds: [t1, t2, t3, t3m, tNone] };
+  return { classIds: [A.id, B.id], agoraIds: [agoraId, other, gaps, a3m, aNone, dict], topicIds: [t1, t2, t3, t3m, tNone, d1, w2, d3] };
 }
 
 async function main() {

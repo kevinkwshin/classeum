@@ -13,7 +13,7 @@ import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
-import { addAgora, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, resetCards, revealCards, setCardShown, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
+import { acceptAnswer, addAgora, closeDictation, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, releaseDictation, resetCards, revealCards, setCardShown, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -1208,6 +1208,7 @@ class Hub {
       rewarded: new Map(),
       praisedAt: 0,
       pageNumbers: [],
+      listening: null,
     };
     this.agoraOrder.clear();
     // As when an arena lobby opens: other classes' requests can't be approved during this class.
@@ -1266,12 +1267,17 @@ class Hub {
     this.startTimer(t);
   }
 
-  /** [지금 마감], or the end of the 입력 시간: no more writing or changing. The answers stay up to be shown and talked about. */
+  /**
+   * [지금 마감], or the end of the 입력 시간: no more writing or changing. The answers stay up to be shown and talked
+   * about; a 받아쓰기's are kept as they stand, for its statistics.
+   */
   closeAgora() {
     const live = this.agoraLive;
     if (!live || live.phase !== 'writing') return;
     this.stopTimer();
     live.phase = 'closed';
+    const topic = this.agoraNow()?.topic;
+    if (topic) closeDictation(topic, live.classId);
     save();
     this.schedulePush(true);
   }
@@ -1295,6 +1301,7 @@ class Hub {
     live.page = 0;
     live.pages = 1;
     live.pageNumbers = [];
+    live.listening = null;
     if (last) live.phase = 'end';
     else {
       live.index += 1;
@@ -1345,12 +1352,22 @@ class Hub {
     return live && now && (live.phase === 'writing' || live.phase === 'closed') ? { live, topic: now.topic } : undefined;
   }
 
-  /** [전체 공개] / [전체 비공개] while a topic's cards are up. The projector starts again from its first page. */
-  revealAgora(isPublic: boolean) {
+  /**
+   * [전체 공개] / [전체 비공개] while a topic's cards are up. The projector starts again from its first page. For a
+   * 받아쓰기 it is [정답 공개] instead: the sentence shows on the projector and each phone (and stays shown to the
+   * class), never while students write, and never taken back. `from` is the topic the teacher's screen showed (its
+   * place, as for [다음 주제]), so a late click can't show the next topic's answers or sentence.
+   */
+  revealAgora(isPublic: boolean, from?: number) {
     const board = this.agoraBoard();
-    if (!board) return;
+    const agora = this.agoraNow()?.agora;
+    if (!board || !agora) return;
+    if (from !== undefined && from !== board.live.index) return;
+    if (board.topic.dictation !== undefined) {
+      if (!isPublic || board.live.phase !== 'closed') return;
+      releaseDictation(agora, board.topic, board.live.classId);
+    } else if (isPublic) revealCards(board.topic, board.live.classId);
     board.live.reveal = isPublic ? 'public' : 'hidden';
-    if (isPublic) revealCards(board.topic, board.live.classId);
     board.live.page = 0;
     save();
     this.schedulePush(true);
@@ -1368,6 +1385,8 @@ class Hub {
     if (!board) return;
     const { live, topic } = board;
     if (who.topicId !== undefined && who.topicId !== topic.id) return;
+    // A 받아쓰기 answer is never shown on its own: a right one is the sentence, a wrong one its writer's.
+    if (topic.dictation !== undefined) return;
     const student = who.studentId !== undefined ? own(d.students, who.studentId) : Object.values(d.students).find((s) => s.classId === live.classId && s.number === who.number);
     const a = student?.classId === live.classId ? own(d.topicAnswers[topic.id] ?? {}, student.id) : undefined;
     if (!a) return;
@@ -1388,10 +1407,44 @@ class Hub {
     const agora = this.agoraNow()?.agora;
     if (!board || !agora) return;
     if (topicId !== undefined && topicId !== board.topic.id) return;
+    // In 받아쓰기, after 마감: praise for listening and trying, never in the middle of it.
+    if (board.topic.dictation !== undefined && board.live.phase !== 'closed') return;
     const student = own(d.students, studentId);
     const a = student?.classId === board.live.classId ? own(d.topicAnswers[board.topic.id] ?? {}, student.id) : undefined;
     if (!a || (star !== undefined && star === !!a.star)) return;
     toggleStar(agora, board.live, a, studentId);
+    save();
+    this.schedulePush(true);
+  }
+
+  /**
+   * [▶ 읽어 주기] of a 받아쓰기, which the teacher screen reads aloud itself (`on`), or its end: the projector and the
+   * phones show that it is reading, for about as long as the sentence takes. After [쓰기 시작], and again after
+   * [정답 공개]; `from` is the topic the teacher's screen showed, by its place.
+   */
+  speakAgora(from: number, on: boolean) {
+    const live = this.agoraLive;
+    const topic = this.agoraNow()?.topic;
+    if (!live || !topic || live.index !== from || topic.dictation === undefined) return;
+    if (live.phase !== 'writing' && live.phase !== 'closed') return;
+    const listening = on ? { at: Date.now(), ms: Math.min(20_000, 1000 + topic.dictation.split(/\s+/).length * 500) } : null;
+    live.listening = listening;
+    // Over by then even if the teacher's screen never says so (closed mid-sentence).
+    if (listening) {
+      setTimeout(() => {
+        if (live.listening !== listening) return;
+        live.listening = null;
+        this.schedulePush(true);
+      }, listening.ms);
+    }
+    this.schedulePush(true);
+  }
+
+  /** The teacher's 정답 인정 of a student's 받아쓰기 answer as it was at 마감 (in the 답 card, after class), or taking it back. */
+  acceptAgoraAnswer(topicId: string, studentId: string, accepted: boolean) {
+    const found = findTopic(topicId);
+    if (!found) return;
+    acceptAnswer(found.topic, studentId, accepted);
     save();
     this.schedulePush(true);
   }

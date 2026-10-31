@@ -92,9 +92,10 @@ export function musicLevel(phase: Phase | undefined, blank: boolean | undefined,
 
 /**
  * The 아고라's song: fuller in the 대기실, while students write and at the 끝; softly while the teacher reads a topic
- * out (준비), once the answers show, or with writing closed.
+ * out (준비), once the answers show, or with writing closed. A 받아쓰기 topic is listened to, so it has none.
  */
-export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal): number {
+export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal, dictation = false): number {
+  if (dictation && phase !== 'lobby' && phase !== 'end') return 0;
   return phase === 'lobby' || phase === 'end' || (phase === 'writing' && reveal === 'hidden') ? MUSIC_FULL : MUSIC_SOFT;
 }
 
