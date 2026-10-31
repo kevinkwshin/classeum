@@ -3,6 +3,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
+import type { TopicReveal, TopicSort, TopicStatus } from '@/lib/agora';
 
 /** A class (반) the teacher runs; numbers are unique only within one class. */
 export interface ClassRec {
@@ -108,6 +109,32 @@ export interface LastSummaryRec extends StudentSummary {
   at: number;
 }
 
+/** An 아고라 topic: a question one class answers in writing. When the answers show is the teacher's call. */
+export interface TopicRec {
+  id: string;
+  classId: string;
+  text: string;
+  /** 보조 설명 under the question; '' for none. */
+  note: string;
+  /** Columns of answer cards on the projector (1-4); switched during class, it stays for next time. */
+  columns: number;
+  sort: TopicSort;
+  /** Place in the class's list. */
+  order: number;
+  status: TopicStatus;
+  reveal: TopicReveal;
+  createdAt: number;
+}
+
+/** One student's answer to a topic, kept as topicAnswers[topicId][studentId]: one each by construction. */
+export interface TopicAnswerRec {
+  text: string;
+  /** The card's own setting: null follows the topic's reveal; true shows it and false hides it either way. */
+  shown: boolean | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface DB {
   version: 1;
   classes: Record<string, ClassRec>;
@@ -122,13 +149,16 @@ export interface DB {
   attendance: Record<string, string[]>;
   /** Each student's latest session summary, so wrong-answer notes outlive the live arena. */
   lastSummary: Record<string, LastSummaryRec>;
+  /** 아고라. Not 'answers': on disk that key holds the packed quiz responses. */
+  topics: Record<string, TopicRec>;
+  topicAnswers: Record<string, Record<string, TopicAnswerRec>>;
 }
 
 const DIR = join(process.cwd(), '.data');
 const FILE = join(DIR, 'classeum.json');
 
 function empty(): DB {
-  return { version: 1, classes: {}, students: {}, devices: {}, requests: {}, words: {}, events: {}, sessions: [], responses: [], rewards: [], attendance: {}, lastSummary: {} };
+  return { version: 1, classes: {}, students: {}, devices: {}, requests: {}, words: {}, events: {}, sessions: [], responses: [], rewards: [], attendance: {}, lastSummary: {}, topics: {}, topicAnswers: {} };
 }
 
 /** Data saved before classes existed: everyone goes into one class the teacher can rename. */
@@ -150,10 +180,12 @@ function migrate(d: DB): DB {
     if (look.armor === 'lorica' || look.armor === 'gold') look.tunic = look.armor;
     delete look.armor;
   }
+  // Nothing is on screen after a restart (as with the arena), so a topic left open is closed; its answers stay.
+  for (const t of Object.values(d.topics)) if (t.status === 'open') t.status = 'closed';
   return d;
 }
 
-const RECORDS = ['classes', 'students', 'devices', 'requests', 'words', 'events', 'attendance', 'lastSummary'] as const;
+const RECORDS = ['classes', 'students', 'devices', 'requests', 'words', 'events', 'attendance', 'lastSummary', 'topics', 'topicAnswers'] as const;
 const LISTS = ['sessions', 'responses', 'rewards'] as const;
 const isRecord = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v);
 

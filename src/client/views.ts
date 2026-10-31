@@ -1,5 +1,6 @@
 // Shapes of the views the server pushes over SSE (see src/server/hub.ts).
 import type { AvatarLook, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, WrongNote } from '@/lib/types';
+import type { TopicReveal, TopicSort, TopicStatus } from '@/lib/agora';
 
 export type { WrongNote };
 
@@ -120,6 +121,22 @@ export interface TeacherView {
   displayOn: boolean;
   /** Phones connected right now, registered or not. */
   phones: number;
+  /** Every class's 아고라 topics, in each class's order. */
+  agora: { topics: TeacherTopic[] };
+}
+
+/** An 아고라 topic on the teacher screen, with every answer whether shown or not (studentId is one of `students`). */
+export interface TeacherTopic {
+  id: string;
+  classId: string;
+  text: string;
+  note: string;
+  columns: number;
+  sort: TopicSort;
+  status: TopicStatus;
+  reveal: TopicReveal;
+  createdAt: number;
+  answers: { studentId: string; text: string; shown: boolean | null; createdAt: number; updatedAt: number }[];
 }
 
 

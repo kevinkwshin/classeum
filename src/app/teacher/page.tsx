@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import type { TeacherEvent, TeacherLive, TeacherView } from '@/client/views';
+import type { TeacherEvent, TeacherLive, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { MUSIC_TITLE } from '@/client/sound';
@@ -13,9 +13,11 @@ import { SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
+import { COLUMN_CHOICES, NOTE_MAX, TOPIC_MAX, type TopicSort } from '@/lib/agora';
 
 type Send = (a: Record<string, unknown>) => Promise<unknown>;
-type Tab = 'arena' | 'students' | 'stats';
+type Tab = 'arena' | 'students' | 'agora';
+type ArenaView = 'events' | 'stats';
 
 export default function TeacherPage() {
   return (
@@ -31,6 +33,8 @@ function TeacherApp() {
   useAudioUnlock();
   const plays = useTeacherPlaysSound();
   const [tab, setTab] = useState<Tab>('students');
+  // The arena tab shows its events or, switched by its title, the statistics.
+  const [arenaView, setArenaView] = useState<ArenaView>('events');
   // The [직접 작성하기] editor; kept here so the setup card on 반 관리 can open it on the arena.
   const [writing, setWriting] = useState(false);
   const [toast, setToast] = useState('');
@@ -80,7 +84,7 @@ function TeacherApp() {
           {([
             ['students', '반 관리'],
             ['arena', '아레나'],
-            ['stats', '통계'],
+            ['agora', '아고라'],
           ] as [Tab, string][]).map(([key, label]) => (
             <button
               key={key}
@@ -97,7 +101,14 @@ function TeacherApp() {
           <div className="mt-auto flex flex-col gap-2 px-1">
             <div className="flex items-center gap-1.5">
               <ProjectorLink className="min-w-0 flex-1 whitespace-nowrap rounded-xl border border-[#3D4354] px-2 py-2.5 text-center text-sm font-semibold text-white">프로젝터 화면 열기</ProjectorLink>
-              <HelpButton view={view} onTab={setTab} />
+              {/* Its setup steps lead to the arena's events, not its statistics. */}
+              <HelpButton
+                view={view}
+                onTab={(next) => {
+                  setTab(next);
+                  if (next === 'arena') setArenaView('events');
+                }}
+              />
             </div>
             <div className="break-all px-2 text-[11px] leading-snug text-[#737887]">학생 주소 {view.joinUrl}</div>
           </div>
@@ -107,18 +118,26 @@ function TeacherApp() {
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
         {view.live && <TeacherSounds live={view.live} plays={plays} serverNow={serverNow} />}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
-        {(tab === 'arena' || running) && (view.live ? <Console view={view} live={view.live} act={act} serverNow={serverNow} /> : <Events view={view} act={act} notify={notify} writing={writing} setWriting={setWriting} onStudents={() => setTab('students')} />)}
+        {(tab === 'arena' || running) &&
+          (view.live ? (
+            <Console view={view} live={view.live} act={act} serverNow={serverNow} />
+          ) : arenaView === 'stats' ? (
+            <Stats classes={view.classes} title={<ArenaTitle value={arenaView} onChange={setArenaView} />} />
+          ) : (
+            <Events view={view} act={act} notify={notify} writing={writing} setWriting={setWriting} onStudents={() => setTab('students')} title={<ArenaTitle value={arenaView} onChange={setArenaView} />} />
+          ))}
         {tab === 'students' && !running && (
           <Students
             view={view}
             act={act}
             onWrite={() => {
               setTab('arena');
+              setArenaView('events');
               setWriting(true);
             }}
           />
         )}
-        {tab === 'stats' && !running && <Stats classes={view.classes} />}
+        {tab === 'agora' && !running && <Agora view={view} act={act} notify={notify} />}
       </main>
       {/* During a quiz it floats over the console; otherwise it gets its own column on wide screens so it covers no buttons. */}
       {view.requests.length > 0 &&
@@ -172,6 +191,19 @@ function Btn({ children, onClick, kind = 'dark', disabled, className = '', title
     <button type="button" title={title} disabled={disabled} onClick={onClick} className={`h-11 rounded-xl px-4 text-[15px] font-bold disabled:opacity-40 ${style} ${className}`}>
       {children}
     </button>
+  );
+}
+
+/** The arena tab's title: 이벤트 or 통계, with the other one in gray to switch to. */
+function ArenaTitle({ value, onChange }: { value: ArenaView; onChange: (next: ArenaView) => void }) {
+  return (
+    <div className="flex items-baseline gap-4">
+      {(['events', 'stats'] as const).map((v) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={`text-2xl font-bold ${value === v ? 'text-ink' : 'text-[#A3A8B4] hover:text-ink-2'}`}>
+          {v === 'events' ? '이벤트' : '통계'}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -312,7 +344,7 @@ function loadTyped(): TypedDraft {
   return { title: '', rows: blankRows(10) };
 }
 
-function Events({ view, act, notify, writing, setWriting, onStudents }: { view: TeacherView; act: Send; notify: (message: string) => void; writing: boolean; setWriting: (on: boolean) => void; onStudents: () => void }) {
+function Events({ view, act, notify, writing, setWriting, onStudents, title }: { view: TeacherView; act: Send; notify: (message: string) => void; writing: boolean; setWriting: (on: boolean) => void; onStudents: () => void; title: React.ReactNode }) {
   const [upload, setUpload] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
   // Whether the open preview came from [직접 작성하기], so 고치기 goes back to the editor.
@@ -367,7 +399,7 @@ function Events({ view, act, notify, writing, setWriting, onStudents }: { view: 
   return (
     <div className="flex flex-col gap-5 p-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">이벤트</h1>
+        {title}
         {/* One width for all three; the two Excel buttons are dark, typing in the screen is white. */}
         <div className="flex gap-2">
           <button type="button" onClick={() => setWriting(true)} className="flex h-11 w-32 items-center justify-center rounded-xl border border-[#D5D8DF] bg-white text-[15px] font-bold">직접 작성하기</button>
@@ -1290,6 +1322,252 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
   );
 }
 
+// ---------- 아고라 ----------
+
+type TopicDraft = { text: string; note: string; columns: number; sort: TopicSort };
+const NEW_TOPIC: TopicDraft = { text: '', note: '', columns: 2, sort: 'number' };
+const TOPIC_STATUS: Record<TeacherTopic['status'], string> = { draft: '대기', open: '진행 중', closed: '마감' };
+
+/** A topic's status; on the selected (dark) row the colours turn over. */
+function TopicChip({ status, dark = false }: { status: TeacherTopic['status']; dark?: boolean }) {
+  const tone = status === 'open' ? 'bg-accent text-ink' : status === 'closed' ? (dark ? 'bg-white text-ink' : 'bg-ink text-white') : dark ? 'bg-[#24272F] text-[#A3A8B4]' : 'bg-bg text-ink-2';
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${tone}`}>{TOPIC_STATUS[status]}</span>;
+}
+
+/** The 아고라 tab: each class's topics, made before class, in the order the teacher wants them. */
+function Agora({ view, act, notify }: { view: TeacherView; act: Send; notify: (message: string) => void }) {
+  const [classId, setClassId] = useClassChoice(view.classes);
+  const current = view.classes.find((c) => c.id === classId);
+  const topics = view.agora.topics.filter((t) => t.classId === classId);
+  const others = view.classes.filter((c) => c.id !== classId);
+  const [selected, setSelected] = useState<string | null>(null);
+  const topic = topics.find((t) => t.id === selected) ?? topics[0] ?? null;
+  // The form, for a new topic (topicId null) or the one being changed.
+  const [form, setForm] = useState<{ topicId: string | null; draft: TopicDraft } | null>(null);
+  // The other classes picked for [다른 반에 복사], while that box is open.
+  const [copyTo, setCopyTo] = useState<Set<string> | null>(null);
+  const pick = (id: string | null) => {
+    setSelected(id);
+    setForm(null);
+    setCopyTo(null);
+  };
+  const move = (id: string, by: number) => {
+    const ids = topics.map((t) => t.id);
+    const i = ids.indexOf(id);
+    if (i < 0 || i + by < 0 || i + by >= ids.length) return;
+    [ids[i], ids[i + by]] = [ids[i + by], ids[i]];
+    act({ type: 'agora-order', classId, topicIds: ids }).catch(() => undefined);
+  };
+  const save = () => {
+    if (!form) return;
+    const sent = form.topicId ? act({ type: 'agora-edit', topicId: form.topicId, ...form.draft }) : act({ type: 'agora-add', classId, ...form.draft });
+    sent
+      .then((res) => {
+        const id = (res as { topicId?: string }).topicId;
+        if (id) setSelected(id);
+        setForm(null);
+      })
+      .catch(() => undefined);
+  };
+  const remove = (t: TeacherTopic) => {
+    const answers = t.answers.length ? `\n학생 답 ${t.answers.length}개도 함께 지워지고 되돌릴 수 없어요.` : '';
+    if (confirm(`이 주제를 지울까요?${answers}`)) act({ type: 'agora-delete', topicId: t.id }).catch(() => undefined);
+  };
+  const copy = (t: TeacherTopic, to: Set<string>) =>
+    act({ type: 'agora-copy', topicId: t.id, classIds: [...to] })
+      .then((res) => {
+        notify(`${(res as { copied?: number }).copied ?? 0}개 반에 대기 상태로 복사했어요`);
+        setCopyTo(null);
+      })
+      .catch(() => undefined);
+
+  if (view.classes.length === 0) return <div className="p-8 text-ink-3">반 관리에서 반을 먼저 만들어 주세요.</div>;
+  return (
+    <div className="flex flex-col gap-5 p-8">
+      {/* Same height as the other tabs' header rows, so titles line up across tabs. */}
+      <div className="flex min-h-11 items-center justify-between">
+        <h1 className="text-2xl font-bold">아고라</h1>
+        <Btn
+          onClick={() => {
+            setCopyTo(null);
+            setForm({ topicId: null, draft: NEW_TOPIC });
+          }}
+        >
+          새 주제
+        </Btn>
+      </div>
+      {/* Each class with how many topics it has here, rather than its students. */}
+      <ClassTabs
+        classes={view.classes.map((c) => ({ id: c.id, name: c.name, students: view.agora.topics.filter((t) => t.classId === c.id).length }))}
+        value={classId}
+        onChange={(id) => {
+          setClassId(id);
+          pick(null);
+        }}
+      />
+      {topics.length === 0 && !form ? (
+        <Card className="flex flex-col items-center gap-3 py-16 text-center">
+          <div className="text-xl font-bold">{current?.name} 주제가 아직 없어요</div>
+          <div className="text-ink-3">수업 전에 [새 주제]로 만들어 두면, 수업 중에 눌러서 프로젝터와 학생 화면에 띄울 수 있어요.</div>
+        </Card>
+      ) : (
+        <div className="flex items-start gap-5">
+          {topics.length > 0 && (
+            <div className="flex w-96 shrink-0 flex-col gap-2">
+              {topics.map((t, i) => {
+                const on = form ? form.topicId === t.id : topic?.id === t.id;
+                return (
+                  <div key={t.id} className={`flex items-stretch rounded-2xl ${on ? 'bg-ink text-white' : 'bg-white'}`}>
+                    <button type="button" onClick={() => pick(t.id)} className="min-w-0 flex-1 p-4 text-left">
+                      <div className="flex items-center gap-2">
+                        <TopicChip status={t.status} dark={on} />
+                        {t.status !== 'draft' && <span className={`tabular text-xs font-bold ${on ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>답 {t.answers.length}</span>}
+                      </div>
+                      <div className="mt-1.5 line-clamp-2 break-keep font-bold [overflow-wrap:anywhere]">{t.text}</div>
+                    </button>
+                    <div className="flex flex-col justify-center gap-0.5 pr-2">
+                      {([['위로', -1, '▲'], ['아래로', 1, '▼']] as const).map(([label, by, mark]) => (
+                        <button
+                          key={label}
+                          type="button"
+                          aria-label={`${label} 옮기기`}
+                          title={`${label} 옮기기`}
+                          disabled={by < 0 ? i === 0 : i === topics.length - 1}
+                          onClick={() => move(t.id, by)}
+                          className={`h-8 w-8 rounded-lg text-xs disabled:opacity-20 ${on ? 'text-[#A3A8B4] hover:bg-[#24272F]' : 'text-ink-3 hover:bg-bg'}`}
+                        >
+                          {mark}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex min-w-0 flex-1 flex-col gap-5">
+            {form ? (
+              <TopicForm key={form.topicId ?? 'new'} draft={form.draft} setDraft={(draft) => setForm({ ...form, draft })} isNew={!form.topicId} className={current?.name ?? ''} onSave={save} onCancel={() => setForm(null)} />
+            ) : (
+              topic && (
+                <Card className="flex flex-col gap-5">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm text-ink-3">
+                      <TopicChip status={topic.status} />
+                      {dayOf(topic.createdAt)} 만듦
+                    </div>
+                    <h2 className="mt-3 whitespace-pre-wrap break-keep text-2xl font-bold leading-snug [overflow-wrap:anywhere]">{topic.text}</h2>
+                    {topic.note && <p className="mt-2 whitespace-pre-wrap text-ink-2 [overflow-wrap:anywhere]">{topic.note}</p>}
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-sm font-semibold text-ink-2">
+                    <span className="rounded-full bg-bg px-3 py-1">프로젝터 {topic.columns}열</span>
+                    <span className="rounded-full bg-bg px-3 py-1">{topic.sort === 'time' ? '낸 순서' : '번호순'}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Btn kind="ghost" onClick={() => setForm({ topicId: topic.id, draft: { text: topic.text, note: topic.note, columns: topic.columns, sort: topic.sort } })}>수정</Btn>
+                    <Btn kind="ghost" disabled={others.length === 0} title={others.length === 0 ? '다른 반이 없어요' : undefined} onClick={() => setCopyTo(new Set())}>다른 반에 복사</Btn>
+                    <Btn kind="ghost" className="!text-bad" onClick={() => remove(topic)}>지우기</Btn>
+                  </div>
+                  {copyTo && (
+                    <div className="flex flex-col gap-3 rounded-xl bg-bg p-4">
+                      <div className="text-sm font-bold">
+                        어느 반에 복사할까요? <span className="font-semibold text-ink-3">대기 상태로, 학생 답은 빼고</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {others.map((c) => {
+                          const on = copyTo.has(c.id);
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() =>
+                                setCopyTo((prev) => {
+                                  const next = new Set(prev ?? []);
+                                  if (next.has(c.id)) next.delete(c.id);
+                                  else next.add(c.id);
+                                  return next;
+                                })
+                              }
+                              className={`flex h-10 items-center gap-1.5 rounded-full border px-4 text-[15px] font-bold ${on ? 'border-ink bg-ink text-white' : 'border-[#D5D8DF] bg-white text-ink-3'}`}
+                            >
+                              <span aria-hidden>{on ? '✓' : '+'}</span>
+                              {c.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex gap-2">
+                        <Btn disabled={copyTo.size === 0} onClick={() => copy(topic, copyTo)}>복사</Btn>
+                        <Btn kind="ghost" onClick={() => setCopyTo(null)}>취소</Btn>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              )
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Writing a topic: the question, an optional note under it, and how the projector lays out the answer cards. */
+function TopicForm({ draft, setDraft, isNew, className, onSave, onCancel }: { draft: TopicDraft; setDraft: (next: TopicDraft) => void; isNew: boolean; className: string; onSave: () => void; onCancel: () => void }) {
+  const choice = (on: boolean) => `flex h-10 min-w-10 items-center justify-center rounded-full border px-4 text-[15px] font-bold ${on ? 'border-ink bg-ink text-white' : 'border-[#D5D8DF] bg-white text-ink-3'}`;
+  return (
+    <Card className="flex flex-col gap-5">
+      <h2 className="text-lg font-bold">{isNew ? `${className} 새 주제` : '주제 고치기'}</h2>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-bold">주제</span>
+        <textarea
+          value={draft.text}
+          onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+          rows={3}
+          maxLength={TOPIC_MAX}
+          autoFocus
+          placeholder="주말에 가족이 허락해 준 일을 let으로 한 문장 써 보세요"
+          className="resize-none rounded-xl bg-bg p-3 text-lg font-bold outline-none"
+        />
+        <span className="tabular self-end text-xs text-ink-3">{[...draft.text].length} / {TOPIC_MAX}</span>
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-bold">
+          보조 설명 <span className="font-semibold text-ink-3">선택</span>
+        </span>
+        <textarea value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} rows={2} maxLength={NOTE_MAX} placeholder="예) My mom let me …" className="resize-none rounded-xl bg-bg p-3 text-[15px] outline-none" />
+      </label>
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <div className="flex items-center gap-2" role="group" aria-label="프로젝터 열 수">
+          <span className="mr-1 text-sm font-bold">프로젝터</span>
+          {COLUMN_CHOICES.map((n) => (
+            <button key={n} type="button" aria-pressed={draft.columns === n} onClick={() => setDraft({ ...draft, columns: n })} className={choice(draft.columns === n)}>
+              {n}열
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2" role="group" aria-label="카드 순서">
+          <span className="mr-1 text-sm font-bold">카드 순서</span>
+          {([['number', '번호순'], ['time', '낸 순서']] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={draft.sort === v} onClick={() => setDraft({ ...draft, sort: v })} className={choice(draft.sort === v)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Btn disabled={!draft.text.trim()} onClick={onSave}>
+          {isNew ? '만들기' : '저장'}
+        </Btn>
+        <Btn kind="ghost" onClick={onCancel}>
+          취소
+        </Btn>
+      </div>
+    </Card>
+  );
+}
+
 // ---------- stats ----------
 
 interface StatsData {
@@ -1366,7 +1644,7 @@ function StudentMistakes({ studentId }: { studentId: string }) {
   );
 }
 
-function Stats({ classes }: { classes: TeacherView['classes'] }) {
+function Stats({ classes, title }: { classes: TeacherView['classes']; title: React.ReactNode }) {
   const [classId, setClassId] = useClassChoice(classes);
   const [data, setData] = useState<{ classId: string; stats: StatsData } | null>(null);
   const [mode, setMode] = useState<'students' | 'words'>('students');
@@ -1390,13 +1668,20 @@ function Stats({ classes }: { classes: TeacherView['classes'] }) {
   );
   const student = useMemo(() => students.find((s) => s.id === picked) ?? students[0], [students, picked]);
   const pct = (v: number | null | undefined) => (v === null || v === undefined ? '-' : `${Math.round(v * 100)}%`);
-  if (classes.length === 0) return <div className="p-8 text-ink-3">반 관리에서 반을 먼저 만들어 주세요.</div>;
-  if (!stats) return <div className="p-8 text-ink-3">불러오는 중…</div>;
+  // The title switches back to 이벤트, so it shows while there is nothing to show too.
+  if (classes.length === 0 || !stats) {
+    return (
+      <div className="flex flex-col gap-5 p-8">
+        <div className="flex min-h-11 items-center">{title}</div>
+        <div className="text-ink-3">{classes.length === 0 ? '반 관리에서 반을 먼저 만들어 주세요.' : '불러오는 중…'}</div>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-5 p-8">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold">통계</h1>
+          {title}
           <div className="flex gap-1 rounded-xl bg-[#E9EBEF] p-1">
             {(['students', 'words'] as const).map((m) => (
               <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`h-9 rounded-lg px-3.5 text-sm ${mode === m ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>{m === 'students' ? '학생별' : '단어별'}</button>

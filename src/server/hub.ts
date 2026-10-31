@@ -13,6 +13,7 @@ import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
+import { dropClassTopics, dropStudentAnswers, teacherAgora } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -646,7 +647,7 @@ class Hub {
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
     const displayOn = [...this.clients].some((c) => c.role === 'display');
     const phones = new Set([...this.clients].filter((c) => c.role === 'student' && c.tokenHash).map((c) => c.tokenHash)).size;
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones };
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora() };
   }
 
   private registrationContext(): RegistrationContext {
@@ -985,6 +986,7 @@ class Hub {
         r.reason = 'gone';
       }
     }
+    dropClassTopics(classId);
     delete d.classes[classId];
     save();
     this.schedulePush(true);
@@ -1043,7 +1045,7 @@ class Hub {
   }
 
   /**
-   * Takes students off the roster with their phone, character, saved notes and attendance.
+   * Takes students off the roster with their phone, character, saved notes, attendance and 아고라 answers.
    * Past answers stay in the class's word statistics. Not while their class is mid-quiz.
    */
   removeStudents(studentIds: string[]): number {
@@ -1061,9 +1063,20 @@ class Hub {
       delete d.attendance[id];
       delete d.students[id];
     }
+    dropStudentAnswers(ids);
     save();
     this.schedulePush(true);
     return ids.length;
+  }
+
+  // ---------- 아고라 ----------
+
+  /** A change to the 아고라 records (agora.ts): saved, and every screen gets its new view. */
+  changeAgora<T>(change: () => T): T {
+    const out = change();
+    save();
+    this.schedulePush(true);
+    return out;
   }
 
   private stampAttendance(studentId: string) {

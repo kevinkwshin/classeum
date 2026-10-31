@@ -1,10 +1,12 @@
 import type { NextRequest } from 'next/server';
 import { hashToken, hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
+import { addTopic, copyTopic, deleteTopic, editTopic, orderTopics } from '@/server/agora';
 
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
+  'agora-add', 'agora-edit', 'agora-delete', 'agora-order', 'agora-copy',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -94,6 +96,19 @@ export async function POST(request: NextRequest) {
         case 'control':
           h.control(String(body.action));
           break;
+        case 'agora-add':
+          return Response.json({ ok: true, topicId: h.changeAgora(() => addTopic(String(body.classId), body)) });
+        case 'agora-edit':
+          h.changeAgora(() => editTopic(String(body.topicId), body));
+          break;
+        case 'agora-delete':
+          h.changeAgora(() => deleteTopic(String(body.topicId)));
+          break;
+        case 'agora-order':
+          h.changeAgora(() => orderTopics(String(body.classId), Array.isArray(body.topicIds) ? body.topicIds.slice(0, 500).map(String) : []));
+          break;
+        case 'agora-copy':
+          return Response.json({ ok: true, copied: h.changeAgora(() => copyTopic(String(body.topicId), Array.isArray(body.classIds) ? body.classIds.slice(0, 100).map(String) : [])) });
       }
       return Response.json({ ok: true });
     }
