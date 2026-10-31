@@ -1,6 +1,6 @@
 // The projector's sounds, in public/sounds (credits in CREDITS.txt there): "Yeah!" at a reveal where some of the
-// class got it right, crickets when nobody did, a wood-block tick-tock over a question's last three seconds, and the
-// background song through the whole session, softer under the questions.
+// class got it right, crickets when nobody did, a wood-block tick-tock over a question's last three seconds, the
+// background song through the whole session, softer under the questions, and the 아고라's own song while a topic is up.
 // Browsers keep audio off until the page is clicked or a key is pressed; the projector calls unlockAudio() on
 // its first touch (the teacher clicks it or presses F for full screen anyway), which also loads the sounds.
 // Only MP3 and WAV: every browser decodes them itself, while AAC (.m4a) leans on Windows' own decoders, which some
@@ -38,18 +38,22 @@ function load(c: AudioContext, sound: Sound): Promise<AudioBuffer | null> {
 export async function unlockAudio(): Promise<boolean> {
   const c = context();
   if (!c) return false;
-  // The song's <audio> element first, synchronously inside the click: Safari lets it play only within the gesture
-  // itself (the first resume() below finishes outside it), and once it has played there it may play later too. Its
-  // gain stays at 0 until playMusic raises it, so this makes no sound.
-  const m = musicNode(c);
-  if (!m.primed || (musicLevel > 0 && m.el.paused)) {
-    m.primed = true;
-    void m.el.play().then(
-      () => musicLevel <= 0 && m.el.pause(),
-      () => {
-        m.primed = false; // refused: try again at the next click
-      },
-    );
+  // The songs' <audio> elements first, synchronously inside the click: Safari lets one play only within the gesture
+  // itself (the first resume() below finishes outside it), and once it has played there it may play later too. Both
+  // songs, so switching between the arena and the 아고라 later needs no click. Their gain stays at 0 until playMusic
+  // raises it, so this makes no sound.
+  for (const src of SONGS) {
+    const m = songNode(c, src);
+    const playing = () => src === musicSrc && musicLevel > 0;
+    if (!m.primed || (playing() && m.el.paused)) {
+      m.primed = true;
+      void m.el.play().then(
+        () => !playing() && m.el.pause(),
+        () => {
+          m.primed = false; // refused: try again at the next click
+        },
+      );
+    }
   }
   if (c.state === 'suspended') await c.resume().catch(() => undefined);
   if (c.state === 'running') {
@@ -122,11 +126,15 @@ export function playTickTock(offset: number): () => void {
   };
 }
 
-// The song plays from an <audio> element, through a gain node for the fades: decoded whole, two minutes of music
+// A song plays from an <audio> element, through a gain node for the fades: decoded whole, two minutes of music
 // would take some 50 MB in each window. Paused, the element keeps its place, so the song carries on from there.
-const MUSIC_SRC = '/sounds/music.mp3';
+export const MUSIC_SRC = '/sounds/music.mp3';
 /** The song's name, shown on the teacher screen beside its switch. */
 export const MUSIC_TITLE = '오늘은 내가 정해';
+/** The 아고라's song while a topic is up, and its name. */
+export const AGORA_MUSIC_SRC = '/sounds/agora.mp3';
+export const AGORA_MUSIC_TITLE = '너의 답을 말해줘';
+const SONGS = [MUSIC_SRC, AGORA_MUSIC_SRC];
 /** Music volumes: fuller in the lobby and on the results, softly under the questions. */
 export const MUSIC_FULL = 0.25;
 export const MUSIC_SOFT = 0.12;
@@ -137,31 +145,43 @@ let ticking = 0;
 let musicPause: ReturnType<typeof setTimeout> | undefined;
 // The gain's current ramp, so a new ramp starts from where the last one has got to (gain.value can still read 1
 // before the audio thread has run a new node).
-let music: { el: HTMLAudioElement; gain: GainNode; from: number; to: number; t0: number; t1: number; primed: boolean } | null = null;
+type Song = { el: HTMLAudioElement; gain: GainNode; from: number; to: number; t0: number; t1: number; primed: boolean };
+// One element per song, kept, so going back to a song carries on where it paused. One plays at a time: musicSrc.
+const songs = new Map<string, Song>();
+let musicSrc = MUSIC_SRC;
+let music: Song | null = null;
+
+function songNode(c: AudioContext, src: string): Song {
+  let song = songs.get(src);
+  if (!song) {
+    const el = new Audio(src);
+    el.loop = true;
+    el.preload = 'auto';
+    const gain = c.createGain();
+    gain.gain.value = 0;
+    c.createMediaElementSource(el).connect(gain).connect(c.destination);
+    song = { el, gain, from: 0, to: 0, t0: 0, t1: 0, primed: false };
+    songs.set(src, song);
+  }
+  return song;
+}
 
 function musicNode(c: AudioContext) {
-  if (music) return music;
-  const el = new Audio(MUSIC_SRC);
-  el.loop = true;
-  el.preload = 'auto';
-  const gain = c.createGain();
-  gain.gain.value = 0;
-  c.createMediaElementSource(el).connect(gain).connect(c.destination);
-  music = { el, gain, from: 0, to: 0, t0: 0, t1: 0, primed: false };
+  music ??= songNode(c, musicSrc);
   return music;
 }
 
 const musicTarget = () => musicLevel * (ticking > 0 ? MUSIC_DUCK : 1);
 
-function rampMusic(to: number, seconds: number) {
-  if (!music || !ctx) return;
+function rampMusic(to: number, seconds: number, song: Song | null = music) {
+  if (!song || !ctx) return;
   const t = ctx.currentTime;
-  const { from, to: was, t0, t1 } = music;
+  const { from, to: was, t0, t1 } = song;
   const now = t >= t1 ? was : from + (was - from) * Math.max(0, (t - t0) / (t1 - t0));
-  music.gain.gain.cancelScheduledValues(t);
-  music.gain.gain.setValueAtTime(now, t);
-  music.gain.gain.linearRampToValueAtTime(to, t + seconds);
-  Object.assign(music, { from: now, to, t0: t, t1: t + seconds });
+  song.gain.gain.cancelScheduledValues(t);
+  song.gain.gain.setValueAtTime(now, t);
+  song.gain.gain.linearRampToValueAtTime(to, t + seconds);
+  Object.assign(song, { from: now, to, t0: t, t1: t + seconds });
 }
 
 function playMusic() {
@@ -175,9 +195,19 @@ function playMusic() {
 
 /**
  * Sets the background music's volume (MUSIC_FULL, MUSIC_SOFT, or 0 to fade it out and pause), easing between levels;
- * started again, it carries on where it paused. Asked before audio is on, it starts at the first click.
+ * started again, it carries on where it paused. Asked before audio is on, it starts at the first click. Another
+ * song (`src`) takes over from the one playing, which fades out and pauses where it is.
  */
-export function setMusic(level: number) {
+export function setMusic(level: number, src = MUSIC_SRC) {
+  if (src !== musicSrc) {
+    const old = music;
+    if (old) {
+      rampMusic(0, 0.6, old);
+      setTimeout(() => music !== old && old.el.pause(), 700);
+    }
+    musicSrc = src;
+    music = null;
+  }
   musicLevel = level;
   if (level > 0) {
     playMusic();

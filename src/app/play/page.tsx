@@ -194,7 +194,7 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
         </div>
         <div className="cls-drop-in rounded-3xl bg-bg px-5 py-6 text-center">
           <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{a.topic.text}</div>
-          {a.topic.note && <div className="mt-2 whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">{a.topic.note}</div>}
+          {a.topic.note && <div className="mt-2 whitespace-pre-wrap text-base font-semibold text-ink-2 [overflow-wrap:anywhere]">{a.topic.note}</div>}
         </div>
         <form
           className="flex flex-col gap-2"

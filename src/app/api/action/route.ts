@@ -7,6 +7,7 @@ const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
   'agora-add', 'agora-edit', 'agora-delete', 'agora-order', 'agora-copy', 'agora-show', 'agora-close', 'agora-down', 'agora-time',
+  'agora-reveal', 'agora-layout', 'agora-page', 'agora-pages', 'agora-music', 'agora-card', 'agora-card-delete',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -120,6 +121,28 @@ export async function POST(request: NextRequest) {
           break;
         case 'agora-time':
           h.adjustTopicTime(Number(body.minutes));
+          break;
+        case 'agora-reveal':
+          h.revealTopic(String(body.topicId), body.public === true);
+          break;
+        case 'agora-layout':
+          h.layoutTopic(String(body.topicId), { columns: body.columns, sort: body.sort });
+          break;
+        case 'agora-page':
+          h.turnPage(Number(body.dir));
+          break;
+        // From the projector window, which holds the teacher cookie too.
+        case 'agora-pages':
+          h.setTopicPages(Number(body.count));
+          break;
+        case 'agora-music':
+          h.toggleTopicMusic();
+          break;
+        case 'agora-card':
+          h.flipTopicCard(String(body.topicId), { studentId: body.studentId === undefined ? undefined : String(body.studentId), number: body.number === undefined ? undefined : Number(body.number) });
+          break;
+        case 'agora-card-delete':
+          h.removeTopicCard(String(body.topicId), String(body.studentId));
           break;
       }
       return Response.json({ ok: true });

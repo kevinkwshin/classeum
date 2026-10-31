@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
-import type { DisplayAgora, DisplayView, SessionPublic } from '@/client/views';
+import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
+import { AGORA_MUSIC_SRC, MUSIC_SRC } from '@/client/sound';
+import type { AgoraCard, DisplayAgora, DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
 import { GrammarCard, zoneLabels } from '@/components/GrammarCard';
@@ -38,14 +39,26 @@ function DisplayApp() {
   useRevealSound(s?.question?.seq ?? -1, reveal, soundOn && audioOn);
   useCountdownTick(s?.phase === 'moving' ? s.phaseEndsAt : null, serverNow, soundOn && audioOn);
   useSoundPreview(soundOn && audioOn);
-  useBackgroundMusic(musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0);
+  // An 아고라 topic is never up while a session is open; while one is, its own song plays instead.
+  const agora = s ? null : (view?.agora ?? null);
+  useBackgroundMusic(
+    agora ? (agora.music && audioOn ? agoraMusicLevel(agora.topic.status, agora.topic.reveal) : 0) : musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0,
+    agora ? AGORA_MUSIC_SRC : MUSIC_SRC,
+  );
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;
+  const agoraUp = !!agora;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Shift+S (다음 유형) asks for confirmation on the teacher screen, so it isn't taken here.
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || (e.shiftKey && e.code === 'KeyS')) return;
+      // With an 아고라 topic up, ←/→ turn the pages of answer cards.
+      if (agoraUp && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
+        e.preventDefault();
+        send({ type: 'agora-page', dir: e.code === 'ArrowRight' ? 1 : -1 }).catch(() => undefined);
+        return;
+      }
       const action = shortcutAction(e.code, paused);
       if (action) {
         e.preventDefault();
@@ -55,11 +68,20 @@ function DisplayApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paused, send]);
+  }, [paused, send, agoraUp]);
 
   if (!view) return <Shell><Center>연결 중…</Center></Shell>;
   if (view.blank) return <Shell><Center><span className="font-display text-7xl font-bold">Classeum</span></Center></Shell>;
-  if (!s && view.agora) return <Shell><AgoraBoard agora={view.agora} joinUrl={view.joinUrl} now={serverNow()} /><FullscreenHint /></Shell>;
+  if (agora) {
+    return (
+      <Shell>
+        {conn === 'lost' && <div className="absolute right-6 top-4 z-50 rounded-full bg-bad px-4 py-1 text-sm font-bold text-white">연결 끊김 · 다시 연결 중</div>}
+        {agora.music && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 소리를 켜려면 이 화면을 한 번 클릭하세요</div>}
+        <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />
+        <FullscreenHint />
+      </Shell>
+    );
+  }
   if (!s) return <Shell><Idle view={view} /><FullscreenHint /></Shell>;
 
   return (
@@ -103,9 +125,51 @@ function Idle({ view }: { view: DisplayView }) {
  * and every student in the room as a card in the teacher's columns. A card carries an answer only once it shows;
  * before that the server sends no text, so the card just says whether one came.
  */
-function AgoraBoard({ agora, joinUrl, now }: { agora: DisplayAgora; joinUrl: string; now: number }) {
+function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUrl: string; now: number; send: (a: Record<string, unknown>) => Promise<unknown> }) {
   const t = agora.topic;
   const sent = agora.cards.filter((c) => c.sent).length;
+  const grid = { gridTemplateColumns: `repeat(${t.columns}, minmax(0, 1fr))` };
+  // Pages that fit the screen: every card is laid out once, unseen, at the real width, and its rows (each as tall as
+  // its tallest card) go onto a page for as long as they fit the space under the topic.
+  const area = useRef<HTMLDivElement>(null);
+  const ruler = useRef<HTMLDivElement>(null);
+  const [pages, setPages] = useState<number[][]>([]);
+  const layout = agora.cards.map((c) => `${c.number}/${c.sent ? 1 : 0}/${c.text ?? ''}`).join('|');
+  useLayoutEffect(() => {
+    const measure = () => {
+      const box = area.current;
+      if (!box || !ruler.current) return;
+      const cards = [...ruler.current.children] as HTMLElement[];
+      const next: number[][] = [];
+      let page: number[] = [];
+      let top = 0;
+      for (let i = 0; i < cards.length; i += t.columns) {
+        const row = cards.slice(i, i + t.columns);
+        const bottom = Math.max(...row.map((el) => el.offsetTop + el.offsetHeight));
+        if (page.length && bottom - top > box.clientHeight) {
+          next.push(page);
+          page = [];
+        }
+        if (!page.length) top = row[0].offsetTop;
+        row.forEach((_, k) => page.push(i + k));
+      }
+      if (page.length || !next.length) next.push(page);
+      setPages((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    };
+    measure();
+    // Again when the window changes size (full screen) or the cards do (fonts arriving).
+    const ro = new ResizeObserver(measure);
+    if (area.current) ro.observe(area.current);
+    if (ruler.current) ro.observe(ruler.current);
+    return () => ro.disconnect();
+  }, [layout, t.columns]);
+  const count = Math.max(1, pages.length);
+  // The server keeps the page the teacher turns to, so it needs to know how many there are.
+  useEffect(() => {
+    send({ type: 'agora-pages', count }).catch(() => undefined);
+  }, [count, t.id, send]);
+  const page = Math.min(agora.page, count - 1);
+  const shown = (pages[page] ?? agora.cards.map((_, i) => i)).map((i) => agora.cards[i]).filter(Boolean);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[1.4vw]">
       <div className="flex items-center gap-4">
@@ -125,30 +189,59 @@ function AgoraBoard({ agora, joinUrl, now }: { agora: DisplayAgora; joinUrl: str
       </div>
       <div key={t.id} className="cls-drop-in rounded-[2vw] bg-white px-[3vw] py-[1.8vw] text-center">
         <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${t.text.length > 40 ? 'text-[2.6vw]' : 'text-[3.4vw]'}`}>{t.text}</div>
-        {t.note && <div className="mt-[0.6vw] whitespace-pre-wrap text-[1.5vw] font-semibold text-ink-3">{t.note}</div>}
+        {/* Often an example sentence, so it is read from the back of the room too. */}
+        {t.note && <div className="mt-[0.6vw] whitespace-pre-wrap text-[1.9vw] font-semibold text-ink-2 [overflow-wrap:anywhere]">{t.note}</div>}
       </div>
-      <div className="grid min-h-0 flex-1 content-start gap-[1vw] overflow-y-auto" style={{ gridTemplateColumns: `repeat(${t.columns}, minmax(0, 1fr))` }}>
-        {agora.cards.map((c) => (
-          <div key={c.number} className="flex min-w-0 flex-col gap-[0.6vw] rounded-[1.4vw] bg-white px-[1.2vw] py-[0.9vw]">
-            <div className="flex min-w-0 items-center gap-[0.8vw]">
-              {/* Sized by the screen, like the rest of the projector. */}
-              <div className="h-[3.4vw] w-[3.4vw] shrink-0 [&>svg]:h-full [&>svg]:w-full">
-                <PixelAvatar look={c.look} size={64} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
-              </div>
-              <span className="tabular text-[1.3vw] font-bold text-ink-3">{c.number}</span>
-              <span className="truncate text-[1.6vw] font-extrabold">{c.name}</span>
-              {c.text === undefined && (
-                <span className={`ml-auto shrink-0 rounded-full px-[0.9vw] py-[0.3vw] text-[1.2vw] font-extrabold ${c.sent ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'}`}>
-                  {c.sent ? '✓ 냈어요' : t.status === 'open' ? '생각 중…' : '미답변'}
-                </span>
-              )}
-            </div>
-            {c.text !== undefined && <div className="whitespace-pre-wrap text-[1.8vw] font-bold leading-snug [overflow-wrap:anywhere]">{c.text}</div>}
-          </div>
-        ))}
-        {agora.cards.length === 0 && <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요</div>}
+      <div ref={area} className="relative min-h-0 flex-1 overflow-hidden">
+        <div ref={ruler} aria-hidden className="invisible absolute inset-x-0 top-0 grid content-start gap-[1vw]" style={grid}>
+          {agora.cards.map((c) => (
+            <AgoraCardView key={c.number} c={c} open={t.status === 'open'} />
+          ))}
+        </div>
+        {/* A card taller than the whole space (a long answer in four columns) can still be scrolled to. */}
+        <div className="grid h-full content-start gap-[1vw] overflow-y-auto" style={grid}>
+          {/* The teacher can click an answer here too, to show or hide just that one. */}
+          {shown.map((c) => (
+            <AgoraCardView key={c.number} c={c} open={t.status === 'open'} onFlip={c.sent ? () => send({ type: 'agora-card', topicId: t.id, number: c.number }).catch(() => undefined) : undefined} />
+          ))}
+          {agora.cards.length === 0 && <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요</div>}
+        </div>
       </div>
-      <div className="tabular text-right text-lg text-ink-3">{joinUrl}</div>
+      <div className="flex items-center justify-between text-lg text-ink-3">
+        <span className="tabular">{joinUrl}</span>
+        {count > 1 && (
+          <span className="tabular rounded-full bg-white px-4 py-1 font-bold text-ink-2">
+            {page + 1} / {count}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A student's card: character, number and name, then the answer once it shows, or else whether one came. */
+function AgoraCardView({ c, open, onFlip }: { c: AgoraCard; open: boolean; onFlip?: () => void }) {
+  return (
+    <div
+      onClick={onFlip}
+      title={onFlip ? (c.text === undefined ? '눌러서 이 답 공개' : '눌러서 이 답 숨기기') : undefined}
+      className={`flex min-w-0 flex-col gap-[0.6vw] rounded-[1.4vw] bg-white px-[1.2vw] py-[0.9vw] ${onFlip ? 'cursor-pointer' : ''}`}
+    >
+      <div className="flex min-w-0 items-center gap-[0.8vw]">
+        {/* Sized by the screen, like the rest of the projector. */}
+        <div className="h-[3.4vw] w-[3.4vw] shrink-0 [&>svg]:h-full [&>svg]:w-full">
+          <PixelAvatar look={c.look} size={64} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
+        </div>
+        <span className="tabular text-[1.3vw] font-bold text-ink-3">{c.number}</span>
+        <span className="truncate text-[1.6vw] font-extrabold">{c.name}</span>
+        {c.text === undefined && (
+          <span className={`ml-auto shrink-0 rounded-full px-[0.9vw] py-[0.3vw] text-[1.2vw] font-extrabold ${c.sent ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'}`}>
+            {c.sent ? '✓ 냈어요' : open ? '생각 중…' : '미답변'}
+          </span>
+        )}
+      </div>
+      {/* A long answer in a smaller size, so one card doesn't take a whole page. */}
+      {c.text !== undefined && <div className={`whitespace-pre-wrap font-bold leading-snug [overflow-wrap:anywhere] ${c.text.length > 120 ? 'text-[1.45vw]' : 'text-[1.8vw]'}`}>{c.text}</div>}
     </div>
   );
 }

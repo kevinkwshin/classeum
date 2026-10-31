@@ -21,3 +21,8 @@ ticktock.wav
 music.mp3
   "오늘은 내가 정해" (Today I Decide), made for Classeum by the teacher with Suno (https://suno.com), 2026-10-26.
   Changed: the MP3's tags (lyrics, cover art, Suno ids) removed; the audio is untouched.
+
+agora.mp3
+  "너의 답을 말해줘" (Tell Me Your Answer), the 아고라's song, made for Classeum by the teacher with Suno
+  (https://suno.com), 2026-10-31.
+  Changed: the MP3's tags (lyrics, cover art, Suno ids, content credentials) removed; the audio is untouched.

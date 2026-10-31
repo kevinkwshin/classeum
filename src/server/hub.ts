@@ -13,7 +13,7 @@ import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
-import { deleteTopic, displayAgora, dropAnswer, dropClassTopics, dropStudentAnswers, putAnswer, studentAgora, teacherAgora, type AgoraTimer } from './agora';
+import { deleteTopic, displayAgora, dropAnswer, dropClassTopics, dropStudentAnswers, flipCard, putAnswer, setLayout, setReveal, studentAgora, teacherAgora, type AgoraScreen } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -259,11 +259,8 @@ class Hub {
   private ticker: NodeJS.Timeout | null = null;
   private pushTimer: NodeJS.Timeout | null = null;
   private lastPush = 0;
-  /**
-   * The 아고라 topic on the projector and its class's phones, the projector's page, and its 입력 시간 while answers are
-   * open. In memory only, like the arena.
-   */
-  agoraScreen: { topicId: string; page: number; timer: AgoraTimer } | null = null;
+  /** The 아고라 topic on the projector and its class's phones (see AgoraScreen). In memory only, like the arena. */
+  agoraScreen: AgoraScreen | null = null;
   /** Closes the topic when its 입력 시간 runs out. */
   private agoraTimeout: NodeJS.Timeout | null = null;
   /** Students of that class who have had it open; they keep a card, answered or not. */
@@ -534,7 +531,8 @@ class Hub {
     const base = { role: 'display', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, session: this.sessionPublic() };
     if (!live) {
       const topic = this.screenTopic();
-      return { ...base, agora: topic ? displayAgora(topic, this.agoraPresent, this.agoraScreen?.page ?? 0, this.agoraScreen?.timer ?? null) : null };
+      const screen = this.agoraScreen;
+      return { ...base, agora: topic && screen ? displayAgora(topic, this.agoraPresent, screen) : null };
     }
     const counts = live.phase === 'moving' ? this.movingCounts() : null;
     const howto = live.phase === 'lobby' && live.howtoUntil > Date.now();
@@ -1137,7 +1135,7 @@ class Hub {
     const prev = this.screenTopic();
     if (prev !== t) {
       if (prev?.status === 'open') prev.status = 'closed';
-      this.agoraScreen = { topicId: t.id, page: 0, timer: null };
+      this.agoraScreen = { topicId: t.id, page: 0, pages: 1, music: true, timer: null };
       this.agoraPresent = new Set();
     }
     t.status = 'open';
@@ -1161,6 +1159,81 @@ class Hub {
     this.stopTimer();
     t.status = 'closed';
     save();
+    this.schedulePush(true);
+  }
+
+  /** [공개] / [비공개], for the topic on screen or one being prepared. The projector starts again from its first page. */
+  revealTopic(topicId: string, isPublic: boolean) {
+    const t = own(db().topics, topicId);
+    if (!t) throw new Error('그 주제가 없어졌어요. 화면을 새로 고쳐 주세요.');
+    setReveal(t, isPublic);
+    this.firstPage(t);
+    save();
+    this.schedulePush(true);
+  }
+
+  /**
+   * The teacher clicks an answer, on the teacher screen (by student) or on the projector (by number, as its cards
+   * carry no ids): just that answer is shown or hidden. A student without an answer has nothing to flip.
+   */
+  flipTopicCard(topicId: string, who: { studentId?: string; number?: number }) {
+    const d = db();
+    const t = own(d.topics, topicId);
+    if (!t) throw new Error('그 주제가 없어졌어요. 화면을 새로 고쳐 주세요.');
+    const studentId = who.studentId ?? Object.values(d.students).find((s) => s.classId === t.classId && s.number === who.number)?.id;
+    const a = studentId ? own(d.topicAnswers[t.id] ?? {}, studentId) : undefined;
+    if (!a) return;
+    flipCard(t, a);
+    save();
+    this.schedulePush(true);
+  }
+
+  /** The teacher deletes one answer; while the topic is open, its student can write again. */
+  removeTopicCard(topicId: string, studentId: string) {
+    const t = own(db().topics, topicId);
+    if (!t) return;
+    dropAnswer(t, studentId);
+    save();
+    this.schedulePush(true);
+  }
+
+  /** 열 1~4 and 번호순/낸 순서, in class too. They stay with the topic, and the projector starts from its first page. */
+  layoutTopic(topicId: string, input: { columns?: unknown; sort?: unknown }) {
+    const t = own(db().topics, topicId);
+    if (!t) throw new Error('그 주제가 없어졌어요. 화면을 새로 고쳐 주세요.');
+    setLayout(t, input);
+    this.firstPage(t);
+    save();
+    this.schedulePush(true);
+  }
+
+  private firstPage(t: TopicRec) {
+    if (this.agoraScreen?.topicId === t.id) this.agoraScreen.page = 0;
+  }
+
+  /** ◀ ▶ on the teacher screen and ←/→ on the projector: one page on, or back. */
+  turnPage(dir: number) {
+    const screen = this.agoraScreen;
+    if (!screen || !Number.isFinite(dir)) return;
+    screen.page = clamp(screen.page + Math.sign(dir), 0, screen.pages - 1);
+    this.schedulePush(true);
+  }
+
+  /** How many pages the projector's cards take at its size; it measures them and says whenever that changes. */
+  setTopicPages(count: number) {
+    const screen = this.agoraScreen;
+    if (!screen || !Number.isFinite(count)) return;
+    const pages = clamp(Math.round(count), 1, 99);
+    if (pages === screen.pages) return;
+    screen.pages = pages;
+    screen.page = Math.min(screen.page, pages - 1);
+    this.schedulePush(true);
+  }
+
+  /** The song's switch on the teacher screen. */
+  toggleTopicMusic() {
+    if (!this.agoraScreen) return;
+    this.agoraScreen.music = !this.agoraScreen.music;
     this.schedulePush(true);
   }
 

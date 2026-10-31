@@ -59,7 +59,10 @@ export interface AgoraCard {
 export interface DisplayAgora {
   topic: { id: string; text: string; note: string; className: string; status: TopicStatus; reveal: TopicReveal; columns: number; sort: TopicSort };
   cards: AgoraCard[];
+  /** The page the teacher turned to; the projector splits the cards into pages itself and tells the server how many. */
   page: number;
+  /** The song plays (the teacher's switch). */
+  music: boolean;
   timer: AgoraTimer;
 }
 
@@ -148,7 +151,7 @@ export interface TeacherView {
   /** Phones connected right now, registered or not. */
   phones: number;
   /** Every class's 아고라 topics in each class's order, the one on screen, and the students who have been in its room. */
-  agora: { topics: TeacherTopic[]; screen: { topicId: string; page: number; timer: AgoraTimer } | null; present: string[] };
+  agora: { topics: TeacherTopic[]; screen: { topicId: string; page: number; pages: number; music: boolean; timer: AgoraTimer } | null; present: string[] };
 }
 
 /** The 입력 시간 of the topic on screen, on the server's clock; null with no limit or once closed. */

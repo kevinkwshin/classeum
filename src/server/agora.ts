@@ -141,6 +141,31 @@ export function dropAnswer(t: TopicRec, studentId: string) {
   if (answers && own(answers, studentId)) delete answers[studentId];
 }
 
+/**
+ * [공개] or [비공개]. Going public lets go of cards shown one by one (every card shows now); a card hidden on its own
+ * stays hidden whichever way the topic goes, until the teacher shows it again.
+ */
+export function setReveal(t: TopicRec, isPublic: boolean) {
+  t.reveal = isPublic ? 'public' : 'hidden';
+  if (!isPublic) return;
+  for (const a of Object.values(db().topicAnswers[t.id] ?? {})) if (a.shown === true) a.shown = null;
+}
+
+/** 열 and 순서, which the teacher may switch in class too; either stays with the topic for next time. */
+export function setLayout(t: TopicRec, input: { columns?: unknown; sort?: unknown }) {
+  if ((COLUMN_CHOICES as readonly number[]).includes(Number(input.columns))) t.columns = Number(input.columns);
+  if (input.sort === 'number' || input.sort === 'time') t.sort = input.sort;
+}
+
+/**
+ * The teacher clicks an answer: it flips from what shows now. A card that ends up as the topic would show it anyway
+ * follows the topic again; one that differs keeps its own setting.
+ */
+export function flipCard(t: TopicRec, a: TopicAnswerRec) {
+  const next = !isShown(t, a);
+  a.shown = next === (t.reveal === 'public') ? null : next;
+}
+
 /** Whether an answer's text shows: the card's own setting, or else the topic's. */
 export function isShown(t: TopicRec, a: TopicAnswerRec): boolean {
   return a.shown === null ? t.reveal === 'public' : a.shown;
@@ -180,13 +205,26 @@ export function roomCards(t: TopicRec, present: ReadonlySet<string>): RoomCard[]
 /** The 입력 시간 running for the topic on screen (server clock); null when it has no limit or is closed. */
 export type AgoraTimer = { startedAt: number; endsAt: number } | null;
 
+/**
+ * What the hub keeps about the topic on screen: the projector's page out of the pages its cards take (the projector
+ * measures them and says), whether the song plays, and the 입력 시간.
+ */
+export interface AgoraScreen {
+  topicId: string;
+  page: number;
+  pages: number;
+  music: boolean;
+  timer: AgoraTimer;
+}
+
 /** What the projector gets of the topic on screen. */
-export function displayAgora(t: TopicRec, present: ReadonlySet<string>, page: number, timer: AgoraTimer) {
+export function displayAgora(t: TopicRec, present: ReadonlySet<string>, screen: AgoraScreen) {
   return {
     topic: { id: t.id, text: t.text, note: t.note, className: own(db().classes, t.classId)?.name ?? '', status: t.status, reveal: t.reveal, columns: t.columns, sort: t.sort },
     cards: roomCards(t, present),
-    page,
-    timer,
+    page: screen.page,
+    music: screen.music,
+    timer: screen.timer,
   };
 }
 
@@ -205,7 +243,7 @@ export function studentAgora(t: TopicRec, studentId: string, present: ReadonlySe
  * The teacher screen's 아고라: every class's topics with every answer (a few lessons' worth, so all of it), the topic
  * on screen, and who has been in its room.
  */
-export function teacherAgora(screen: { topicId: string; page: number; timer: AgoraTimer } | null, present: ReadonlySet<string>) {
+export function teacherAgora(screen: AgoraScreen | null, present: ReadonlySet<string>) {
   const d = db();
   const topics = Object.values(d.topics)
     .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)

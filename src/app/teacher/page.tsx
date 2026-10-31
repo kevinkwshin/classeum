@@ -4,8 +4,8 @@ import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/
 import type { TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
-import { MUSIC_TITLE } from '@/client/sound';
-import { musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
+import { AGORA_MUSIC_SRC, AGORA_MUSIC_TITLE, MUSIC_TITLE } from '@/client/sound';
+import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
@@ -118,6 +118,7 @@ function TeacherApp() {
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
         {view.live && <TeacherSounds live={view.live} plays={plays} serverNow={serverNow} />}
+        {!view.live && view.agora.screen && <AgoraSounds agora={view.agora} plays={plays} />}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
         {(tab === 'arena' || running) &&
           (view.live ? (
@@ -162,12 +163,12 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
  * The background song's switch at the top of the console: its name, level bars that bounce while it is on, and 켜짐
  * or 꺼짐. `dark` is for the quiz bar.
  */
-function MusicSwitch({ on, onToggle, dark = false }: { on: boolean; onToggle: () => void; dark?: boolean }) {
+function MusicSwitch({ on, onToggle, dark = false, title = MUSIC_TITLE }: { on: boolean; onToggle: () => void; dark?: boolean; title?: string }) {
   return (
     <button
       type="button"
       aria-pressed={on}
-      title={`${MUSIC_TITLE} · ${on ? '끄기' : '켜기'}`}
+      title={`${title} · ${on ? '끄기' : '켜기'}`}
       onClick={(e) => {
         onToggle();
         e.currentTarget.blur();
@@ -180,7 +181,7 @@ function MusicSwitch({ on, onToggle, dark = false }: { on: boolean; onToggle: ()
         ))}
       </span>
       {/* On the quiz bar the name gives way on a narrow screen; the bars, the badge and the tooltip stay. */}
-      <span className={`${on ? '' : 'text-ink-3'} ${dark ? 'hidden min-[1200px]:inline' : ''}`}>{MUSIC_TITLE}</span>
+      <span className={`${on ? '' : 'text-ink-3'} ${dark ? 'hidden min-[1200px]:inline' : ''}`}>{title}</span>
       <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${on ? (dark ? 'bg-accent text-ink' : 'bg-ink text-white') : dark ? 'bg-[#24272F] text-ink-3' : 'bg-bg text-ink-3'}`}>{on ? '켜짐' : '꺼짐'}</span>
     </button>
   );
@@ -818,6 +819,13 @@ function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: {
   return null;
 }
 
+/** The 아고라's song from this screen while the projector can't play it, as TeacherSounds does for the arena's. */
+function AgoraSounds({ agora, plays }: { agora: TeacherView['agora']; plays: { on: boolean } }) {
+  const topic = agora.topics.find((t) => t.id === agora.screen?.topicId);
+  useBackgroundMusic(agora.screen?.music && topic && plays.on ? agoraMusicLevel(topic.status, topic.reveal) : 0, AGORA_MUSIC_SRC);
+  return null;
+}
+
 /** '단어로', '문법 배열로', '보너스 문항으로': 으로 after a final consonant other than ㄹ. */
 function toward(label: string): string {
   const code = label.charCodeAt(label.length - 1) - 0xac00;
@@ -1424,9 +1432,10 @@ function Agora({ view, act, notify, serverNow }: { view: TeacherView; act: Send;
           <div className="text-ink-3">수업 전에 [새 주제]로 만들어 두면, 수업 중에 눌러서 프로젝터와 학생 화면에 띄울 수 있어요.</div>
         </Card>
       ) : (
-        <div className="flex items-start gap-5">
+        // Side by side on a laptop; on a narrower window the list goes on top, so the answers keep a readable width.
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
           {topics.length > 0 && (
-            <div className="flex w-96 shrink-0 flex-col gap-2">
+            <div className="flex flex-col gap-2 xl:w-80 xl:shrink-0">
               {topics.map((t, i) => {
                 const on = form ? form.topicId === t.id : topic?.id === t.id;
                 // The topic on screen is ringed in the accent colour, as in the plan.
@@ -1476,8 +1485,6 @@ function Agora({ view, act, notify, serverNow }: { view: TeacherView; act: Send;
                   </div>
                   <div className="flex flex-wrap gap-2 text-sm font-semibold text-ink-2">
                     <span className="rounded-full bg-bg px-3 py-1">{topic.minutes ? `입력 시간 ${topic.minutes}분` : '시간 제한 없음'}</span>
-                    <span className="rounded-full bg-bg px-3 py-1">프로젝터 {topic.columns}열</span>
-                    <span className="rounded-full bg-bg px-3 py-1">{topic.sort === 'time' ? '낸 순서' : '번호순'}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {live && topic.status === 'open' ? (
@@ -1513,6 +1520,31 @@ function Agora({ view, act, notify, serverNow }: { view: TeacherView; act: Send;
                       )}
                     </div>
                   )}
+                  {/* What the projector shows, switched in class too: answers, columns, order, its page and the song. */}
+                  <div className="flex flex-col gap-3 rounded-xl border border-[#EEF0F3] px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                      <Choices label="학생 답" value={topic.reveal} options={[['hidden', '전체 비공개'], ['public', '전체 공개']] as const} onPick={(v) => act({ type: 'agora-reveal', topicId: topic.id, public: v === 'public' }).catch(() => undefined)} />
+                      <Choices label="열" value={topic.columns} options={COLUMN_CHOICES.map((n) => [n, String(n)] as const)} onPick={(n) => act({ type: 'agora-layout', topicId: topic.id, columns: n }).catch(() => undefined)} />
+                      <Choices label="순서" value={topic.sort} options={[['number', '번호순'], ['time', '낸 순서']] as const} onPick={(v) => act({ type: 'agora-layout', topicId: topic.id, sort: v }).catch(() => undefined)} />
+                    </div>
+                    {live && screen && (
+                      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="mr-1 text-sm font-bold text-ink-2">프로젝터 페이지</span>
+                          <button type="button" aria-label="이전 페이지" disabled={screen.page === 0} onClick={() => act({ type: 'agora-page', dir: -1 }).catch(() => undefined)} className="h-9 w-9 rounded-full border border-[#D5D8DF] bg-white text-sm font-bold disabled:opacity-30">
+                            ◀
+                          </button>
+                          <span className="tabular w-14 text-center text-sm font-bold">
+                            {screen.page + 1} / {screen.pages}
+                          </span>
+                          <button type="button" aria-label="다음 페이지" disabled={screen.page >= screen.pages - 1} onClick={() => act({ type: 'agora-page', dir: 1 }).catch(() => undefined)} className="h-9 w-9 rounded-full border border-[#D5D8DF] bg-white text-sm font-bold disabled:opacity-30">
+                            ▶
+                          </button>
+                        </div>
+                        <MusicSwitch on={screen.music} onToggle={() => act({ type: 'agora-music' }).catch(() => undefined)} title={AGORA_MUSIC_TITLE} />
+                      </div>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <Btn kind="ghost" onClick={() => setForm({ topicId: topic.id, draft: { text: topic.text, note: topic.note, columns: topic.columns, sort: topic.sort, minutes: topic.minutes } })}>수정</Btn>
                     <Btn kind="ghost" disabled={others.length === 0} title={others.length === 0 ? '다른 반이 없어요' : undefined} onClick={() => setCopyTo(new Set())}>다른 반에 복사</Btn>
@@ -1556,7 +1588,7 @@ function Agora({ view, act, notify, serverNow }: { view: TeacherView; act: Send;
                 </Card>
               )
             )}
-            {topic && !form && <TopicAnswers view={view} topic={topic} live={live} />}
+            {topic && !form && <TopicAnswers view={view} topic={topic} live={live} act={act} />}
           </div>
         </div>
       )}
@@ -1564,11 +1596,31 @@ function Agora({ view, act, notify, serverNow }: { view: TeacherView; act: Send;
   );
 }
 
+/** A labelled row of pill buttons with one pressed, in the look of the lobby's '오늘 낼 문제'. */
+function Choices<T extends string | number>({ label, value, options, onPick }: { label: string; value: T; options: readonly (readonly [T, string])[]; onPick: (next: T) => void }) {
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label={label}>
+      <span className="mr-1 text-sm font-bold text-ink-2">{label}</span>
+      {options.map(([v, text]) => (
+        <button
+          key={String(v)}
+          type="button"
+          aria-pressed={value === v}
+          onClick={() => value !== v && onPick(v)}
+          className={`h-9 min-w-9 rounded-full border px-3 text-sm font-bold ${value === v ? 'border-ink bg-ink text-white' : 'border-[#D5D8DF] bg-white text-ink-3'}`}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
- * Who has answered a topic and what: the teacher sees every answer, shown on the projector or not. While the topic is
- * up, the students in its room who haven't answered yet are listed under them.
+ * Who has answered a topic and what: the teacher sees every answer, shown on the projector or not, and clicks one to
+ * show or hide just that answer. While the topic is up, the students in its room who haven't answered are listed too.
  */
-function TopicAnswers({ view, topic, live }: { view: TeacherView; topic: TeacherTopic; live: boolean }) {
+function TopicAnswers({ view, topic, live, act }: { view: TeacherView; topic: TeacherTopic; live: boolean; act: Send }) {
   if (topic.status === 'draft' && topic.answers.length === 0) return null;
   const byId = new Map(view.students.map((s) => [s.id, s]));
   const rows = topic.answers
@@ -1584,8 +1636,10 @@ function TopicAnswers({ view, topic, live }: { view: TeacherView; topic: Teacher
     : [];
   return (
     <Card className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-lg font-bold">낸 학생</h2>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-lg font-bold">
+          낸 학생 <span className="ml-1 text-sm font-semibold text-ink-3">답을 누르면 그 답만 공개·비공개</span>
+        </h2>
         <span className="tabular text-2xl font-extrabold">
           {rows.length}
           {live && <span className="text-base font-semibold text-ink-3"> / {rows.length + waiting.length}</span>}
@@ -1593,16 +1647,45 @@ function TopicAnswers({ view, topic, live }: { view: TeacherView; topic: Teacher
       </div>
       {rows.length > 0 ? (
         <div className="flex flex-col">
-          {rows.map(({ a, s }) => (
-            <div key={s.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0">
-              <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
-              <span className="w-24 shrink-0 pt-1 text-sm font-semibold">
-                <span className="tabular mr-1 text-ink-3">{s.number}</span>
-                {s.name}
-              </span>
-              <span className="min-w-0 flex-1 whitespace-pre-wrap pt-0.5 text-[15px] [overflow-wrap:anywhere]">{a.text}</span>
-            </div>
-          ))}
+          {rows.map(({ a, s }) => {
+            const shown = a.shown === null ? topic.reveal === 'public' : a.shown;
+            return (
+              <div key={s.id} className="flex items-start gap-1 border-t border-[#EEF0F3] py-1 first:border-t-0">
+                <button
+                  type="button"
+                  aria-pressed={shown}
+                  title={shown ? '눌러서 이 답만 비공개' : '눌러서 이 답만 공개'}
+                  onClick={() => act({ type: 'agora-card', topicId: topic.id, studentId: s.id }).catch(() => undefined)}
+                  className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl px-2 py-1.5 text-left hover:bg-bg"
+                >
+                  <span className="flex items-center gap-2">
+                    <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
+                    <span className="text-sm font-semibold">
+                      <span className="tabular mr-1 text-ink-3">{s.number}</span>
+                      {s.name}
+                    </span>
+                    {/* '따로': set for this answer alone, apart from 전체 공개·비공개. */}
+                    <span className={`ml-auto shrink-0 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${shown ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'}`}>
+                      {shown ? '공개' : '비공개'}
+                      {a.shown !== null ? ' · 따로' : ''}
+                    </span>
+                  </span>
+                  {/* Under the name, across the whole row. */}
+                  <span className={`whitespace-pre-wrap pl-9 text-[15px] [overflow-wrap:anywhere] ${shown ? '' : 'text-ink-3'}`}>{a.text}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${s.number} ${s.name}의 답 지우기`}
+                  onClick={() => {
+                    if (confirm(`${s.number} ${s.name}의 답을 지울까요?`)) act({ type: 'agora-card-delete', topicId: topic.id, studentId: s.id }).catch(() => undefined);
+                  }}
+                  className="mt-1 h-8 shrink-0 rounded-lg px-2 text-xs font-semibold text-ink-3 hover:bg-bad-soft hover:text-bad"
+                >
+                  지우기
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="text-sm text-ink-3">아직 낸 학생이 없어요</div>
@@ -1644,9 +1727,9 @@ function TopicForm({ draft, setDraft, isNew, className, onSave, onCancel }: { dr
       </label>
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-bold">
-          보조 설명 <span className="font-semibold text-ink-3">선택</span>
+          보조 설명 · 예시 문장 <span className="font-semibold text-ink-3">선택 · 질문 아래에 나와요</span>
         </span>
-        <textarea value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} rows={2} maxLength={NOTE_MAX} placeholder="예) My mom let me …" className="resize-none rounded-xl bg-bg p-3 text-[15px] outline-none" />
+        <textarea value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} rows={2} maxLength={NOTE_MAX} placeholder="예) My mom let me play games after dinner." className="resize-none rounded-xl bg-bg p-3 text-[15px] outline-none" />
       </label>
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="입력 시간">
         <span className="mr-1 text-sm font-bold">입력 시간</span>
