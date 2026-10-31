@@ -5,7 +5,7 @@ import type { TeacherAgora, TeacherAgoraLive, TeacherEvent, TeacherLive, Teacher
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { AGORA_MUSIC_SRC, AGORA_MUSIC_TITLE, MUSIC_TITLE } from '@/client/sound';
-import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
+import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, usePraiseSound, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
@@ -841,9 +841,10 @@ function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: {
   return null;
 }
 
-/** The 아고라's song from this screen while the projector can't play it, as TeacherSounds does for the arena's. */
-function AgoraSounds({ live, plays }: { live: TeacherAgoraLive; plays: { on: boolean } }) {
+/** The 아고라's song and the ⭐ applause from this screen while the projector can't play them, as TeacherSounds does for the arena's. */
+function AgoraSounds({ live, plays }: { live: TeacherAgoraLive; plays: { now: () => boolean; on: boolean } }) {
   useBackgroundMusic(live.music && plays.on ? agoraMusicLevel(live.phase, live.reveal) : 0, AGORA_MUSIC_SRC);
+  usePraiseSound(live.praisedAt, true, plays.now);
   return null;
 }
 

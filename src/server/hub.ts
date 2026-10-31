@@ -1193,6 +1193,7 @@ class Hub {
       howtoAt: null,
       id: newId('agl'),
       rewarded: new Map(),
+      praisedAt: 0,
     };
     // As when an arena lobby opens: other classes' requests can't be approved during this class.
     for (const r of Object.values(d.requests)) {

@@ -89,6 +89,8 @@ export interface DisplayAgora {
   timer: AgoraTimer;
   /** The 놀이 방법 demo is playing in the 대기실 since then (server clock); null otherwise. */
   howtoAt: number | null;
+  /** When the teacher last gave a ⭐ (server clock; 0 before the first): each new one gets applause. */
+  praisedAt: number;
   /** At the 끝: answers written, how many got the reward, each topic's count (`skipped` if the class never wrote to it), and who came in. */
   end: { answers: number; rewarded: number; topics: { text: string; sent: number; of: number; skipped: boolean }[]; parade: { number: number; look: AvatarLook; rewarded: boolean }[] } | null;
 }
@@ -240,6 +242,8 @@ export interface TeacherAgoraLive {
   wrote: string[];
   /** Students this session has rewarded for a ⭐. */
   rewarded: string[];
+  /** When the teacher last gave a ⭐ (server clock; 0 before the first), for the applause. */
+  praisedAt: number;
   /** The 놀이 방법 demo is playing on the projector. */
   howto: boolean;
 }

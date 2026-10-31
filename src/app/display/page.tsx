@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
+import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, usePraiseSound, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import { AGORA_MUSIC_SRC, MUSIC_SRC } from '@/client/sound';
 import type { AgoraCard, DisplayAgora, DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
@@ -46,6 +46,8 @@ function DisplayApp() {
     agora ? (agora.music && audioOn ? agoraMusicLevel(agora.phase, agora.reveal) : 0) : musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0,
     agora ? AGORA_MUSIC_SRC : MUSIC_SRC,
   );
+  // The 아고라 has no 효과음 switch of its own, so its applause plays whenever this window has sound.
+  usePraiseSound(agora?.praisedAt ?? 0, audioOn);
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;

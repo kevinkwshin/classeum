@@ -1,12 +1,13 @@
 // The projector's sounds, in public/sounds (credits in CREDITS.txt there): "Yeah!" at a reveal where some of the
 // class got it right, crickets when nobody did, a wood-block tick-tock over a question's last three seconds, the
-// background song through the whole session, softer under the questions, and the 아고라's own song while a topic is up.
+// background song through the whole session, softer under the questions, the 아고라's own song while a topic is up,
+// and children's applause when the teacher gives an 아고라 answer a ⭐.
 // Browsers keep audio off until the page is clicked or a key is pressed; the projector calls unlockAudio() on
 // its first touch (the teacher clicks it or presses F for full screen anyway), which also loads the sounds.
 // Only MP3 and WAV: every browser decodes them itself, while AAC (.m4a) leans on Windows' own decoders, which some
 // editions (N/KN without the media pack) lack.
 
-const SOUNDS = { yeah: '/sounds/yeah.mp3', crickets: '/sounds/crickets.wav', tick: '/sounds/ticktock.wav' };
+const SOUNDS = { yeah: '/sounds/yeah.mp3', crickets: '/sounds/crickets.wav', tick: '/sounds/ticktock.wav', applause: '/sounds/applause.wav' };
 type Sound = keyof typeof SOUNDS;
 
 let ctx: AudioContext | null = null;
@@ -89,6 +90,11 @@ export function playCheer(share: number) {
 /** Two seconds of crickets for a reveal where nobody got it right: an awkward little silence. */
 export function playCrickets() {
   play('crickets', 0.7);
+}
+
+/** Five seconds of a class clapping, for the teacher's ⭐ on an 아고라 answer. */
+export function playApplause() {
+  play('applause', 0.9);
 }
 
 /** The tick-tock file's six hits sit on a half-second grid, each starting 10 ms into its slot. */

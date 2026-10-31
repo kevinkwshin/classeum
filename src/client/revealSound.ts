@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Phase, RevealInfo } from '@/lib/types';
 import type { AgoraPhase, TopicReveal } from '@/lib/agora';
-import { MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
+import { MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playApplause, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
 
 const CHANNEL = 'classeum-sound';
 // One function for every render: a fresh `() => true` default would re-run the sound effects on each re-render
@@ -102,6 +102,23 @@ export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal): number 
 export function useBackgroundMusic(level: number, src = MUSIC_SRC) {
   useEffect(() => setMusic(level, src), [level, src]);
   useEffect(() => () => setMusic(0), []);
+}
+
+/**
+ * Applause each time the teacher gives an 아고라 answer a ⭐ (`praisedAt`: the server's time of the latest, 0 for
+ * none). The value a window first sees is only noted, so opening or reloading one doesn't clap for an earlier ⭐.
+ * `canPlay` is asked at that moment, as in useRevealSound.
+ */
+export function usePraiseSound(praisedAt: number, on: boolean, canPlay: () => boolean = always) {
+  const seen = useRef<number | null>(null);
+  useEffect(() => {
+    if (seen.current === null || praisedAt === seen.current) {
+      seen.current = praisedAt;
+      return;
+    }
+    seen.current = praisedAt;
+    if (on && praisedAt > 0 && canPlay()) playApplause();
+  }, [praisedAt, on, canPlay]);
 }
 
 /**

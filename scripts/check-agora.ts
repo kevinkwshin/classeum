@@ -174,6 +174,8 @@ async function run(teacher: Stream, display: Stream) {
   const answerOf = (n: number, id = t1): View | undefined => (topic(id).answers as View[]).find((a) => a.studentId === studentId(A, n));
   const owns = (p: Phone) => !!(p.s.view.me?.inventory as string[] | undefined)?.includes(REWARD.id);
   const rewarded = (): string[] => teacher.view.agora.live?.rewarded ?? [];
+  // When the teacher last gave a ⭐, as the projector and the teacher screen see it (the applause plays when it changes).
+  const praisedAt = (): [number, number] => [display.view.agora?.praisedAt ?? -1, teacher.view.agora.live?.praisedAt ?? -1];
   /** Whether a stream ever carried this answer's text. */
   const leaks = (s: Stream, secret: string) => s.raw.some((r) => r.includes(secret.split(' ')[1]));
 
@@ -329,19 +331,25 @@ async function run(teacher: Stream, display: Stream) {
 
   section('칭찬 별과 보상');
   check('별을 받기 전에는 그 아이템이 없다', !owns(a1) && !owns(a2));
+  check('별을 주기 전에는 박수 신호가 없다', praisedAt().every((t) => t === 0), praisedAt().join());
   check('선생님이 1번 답에 칭찬 별을 준다', (await post({ type: 'agora-star', studentId: studentId(A, 1) })).ok);
   await sleep(300);
   check('그 답에 별이 남고, 프로젝터 카드에도 별이 뜬다', answerOf(1)?.star === true && card(1)?.star === true);
+  const clapped = praisedAt();
+  check('별을 주면 프로젝터와 선생님 화면에 박수 신호가 간다', clapped[0] > 0 && clapped[0] === clapped[1], clapped.join());
   check('비공개 카드에도 별은 보이고 답은 숨겨진 그대로다', display.view.agora.reveal === 'hidden' && card(1)?.text === undefined);
   check('1번은 그 자리에서 보상을 받는다: 보관함에 들어가고 폰에 상자가 열린다', owns(a1) && a1.s.view.agora?.praise?.itemId === REWARD.id && a1.s.view.agora.praise.alreadyOwned === false && rewarded().includes(studentId(A, 1)));
   check('보상 상자는 받은 학생 폰에만 간다', a2.s.view.agora?.praise === null && a3.s.view.agora?.praise === null && !b1.s.view.agora);
   check('2번 답에도 별', (await post({ type: 'agora-star', studentId: studentId(A, 2) })).ok);
   await sleep(200);
   check('보상 받은 학생이 둘', rewarded().length === 2 && owns(a2));
+  check('별마다 박수 신호가 새로 간다', praisedAt()[0] > clapped[0], praisedAt().join());
+  const before = praisedAt()[0];
   check('별을 다시 누르면 뺀다', (await post({ type: 'agora-star', studentId: studentId(A, 1) })).ok);
   await sleep(200);
   check('…답과 카드에서 별이 빠진다', answerOf(1)?.star === false && card(1)?.star === undefined);
   check('…받은 보상은 그대로다', owns(a1) && rewarded().includes(studentId(A, 1)));
+  check('…별을 뺄 때는 박수 신호가 없다', praisedAt()[0] === before, praisedAt().join());
   await post({ type: 'agora-star', studentId: studentId(A, 1) });
   // The server saves 0.4 s after a change.
   await sleep(800);

@@ -267,6 +267,8 @@ export interface AgoraLive {
   id: string;
   /** The students this session has rewarded for a ⭐, with what they got: once each. */
   rewarded: Map<string, Praise>;
+  /** When the teacher last gave a ⭐ (server clock; 0 before the first), so the projector claps for each one. */
+  praisedAt: number;
 }
 
 /** A reward for a ⭐: the item, whether the student already had it (then nothing new reaches their 보관함), and when. */
@@ -287,6 +289,8 @@ export function toggleStar(a: AgoraRec, live: AgoraLive, x: TopicAnswerRec, stud
     return;
   }
   x.star = true;
+  // Applause for every ⭐ given, a reward or not; taking one back is quiet.
+  live.praisedAt = Date.now();
   const d = db();
   const s = own(d.students, studentId);
   if (!s || live.rewarded.has(studentId)) return;
@@ -376,6 +380,7 @@ export function displayAgora(a: AgoraRec, t: TopicRec, live: AgoraLive) {
     music: live.music,
     timer: live.timer,
     howtoAt: live.phase === 'lobby' ? live.howtoAt : null,
+    praisedAt: live.praisedAt,
     end: live.phase === 'end' ? endSummary(a, live) : null,
   };
 }
@@ -466,6 +471,7 @@ export function teacherAgora(live: AgoraLive | null) {
     joined: [...live.joined],
     wrote: [...live.wrote],
     rewarded: [...live.rewarded.keys()],
+    praisedAt: live.praisedAt,
     howto: live.howtoAt !== null,
   };
   return { agoras, live: session };
