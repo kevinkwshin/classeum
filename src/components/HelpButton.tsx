@@ -17,6 +17,18 @@ const KEYS: [string, string][] = [
   ['F', '전체 화면'],
 ];
 
+// The 아고라 from start to end in its buttons' names, and its keys on the teacher screen.
+const AGORA_HOW = [
+  '[새 주제] → 주제 고르고 오늘 반 → [대기실 열기] (대기실의 [놀이 방법]은 12초 시범)',
+  '다 모이면 [쓰기 시작] → 오른쪽 아래 큰 버튼: [지금 마감] → [전체 공개] → [다음 쪽] → [아고라 닫기]',
+  '답 하나만 보이거나 숨기려면 선생님 화면의 그 답이나 프로젝터의 카드를 누르기',
+];
+const AGORA_KEYS: [string, string][] = [
+  ['Enter', '마감 · 공개'],
+  ['← →', '쪽 넘기기'],
+  ['↑ ↓', '1분 더 · 덜'],
+];
+
 /** Where each step is done, in the screen's own button names, for someone who has never seen these screens. */
 const HOW: Record<StepKey, string[]> = {
   class: ['왼쪽 메뉴 [반 관리] → 반 이름 쓰고 [반 추가]'],
@@ -34,8 +46,8 @@ const HOW: Record<StepKey, string[]> = {
 const LABEL = 'w-[4.5rem] shrink-0 pt-1 text-sm font-bold text-ink-3';
 const GO = 'flex h-8 shrink-0 items-center whitespace-nowrap rounded-xl border border-[#D5D8DF] bg-white px-2.5 text-[13px] font-bold';
 
-/** The round ? in the teacher menu: the setup steps and where each is done, the quiz keys, and how to stop the server. */
-export function HelpButton({ view, onTab }: { view: TeacherView; onTab: (tab: 'students' | 'arena') => void }) {
+/** The round ? in the teacher menu: the setup steps and where each is done, the quiz keys, the 아고라, and how to stop the server. */
+export function HelpButton({ view, onTab }: { view: TeacherView; onTab: (tab: 'students' | 'arena' | 'agora') => void }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -46,7 +58,7 @@ export function HelpButton({ view, onTab }: { view: TeacherView; onTab: (tab: 's
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
   const steps = setupSteps(view);
-  const go = (tab: 'students' | 'arena', label: string) => (
+  const go = (tab: 'students' | 'arena' | 'agora', label: string) => (
     <button
       type="button"
       onClick={() => {
@@ -106,7 +118,7 @@ export function HelpButton({ view, onTab }: { view: TeacherView; onTab: (tab: 's
               </ol>
             </section>
             <section className="flex gap-4 border-t border-[#EEF0F3] pt-4">
-              <h3 className={LABEL}>수업 중 키</h3>
+              <h3 className={LABEL}>아레나 키</h3>
               <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
                 {KEYS.map(([key, label]) => (
                   <span key={key} className="flex items-center gap-1.5 rounded-xl bg-bg py-1 pl-1 pr-2.5 text-sm font-semibold">
@@ -114,6 +126,26 @@ export function HelpButton({ view, onTab }: { view: TeacherView; onTab: (tab: 's
                     {label}
                   </span>
                 ))}
+              </div>
+            </section>
+            <section className="flex gap-4 border-t border-[#EEF0F3] pt-4">
+              <h3 className={LABEL}>아고라</h3>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="pt-1 font-bold">주제 → 대기실 → 쓰기 → 함께 보기</span>
+                  {go('agora', '아고라로')}
+                </div>
+                {AGORA_HOW.map((line) => (
+                  <div key={line} className="mt-0.5 text-[13px] leading-relaxed text-ink-2">{line}</div>
+                ))}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {AGORA_KEYS.map(([key, label]) => (
+                    <span key={key} className="flex items-center gap-1.5 rounded-xl bg-bg py-1 pl-1 pr-2.5 text-sm font-semibold">
+                      <kbd className="min-w-7 rounded-lg bg-white px-1.5 py-0.5 text-center font-sans text-xs font-extrabold shadow-[inset_0_-2px_0_#E3E5EA]">{key}</kbd>
+                      {label}
+                    </span>
+                  ))}
+                </div>
               </div>
             </section>
             <section className="flex gap-4 border-t border-[#EEF0F3] pt-4">

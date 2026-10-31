@@ -263,6 +263,8 @@ class Hub {
   agoraLive: AgoraLive | null = null;
   /** Closes writing when the 입력 시간 runs out. */
   private agoraTimeout: NodeJS.Timeout | null = null;
+  /** Ends the 대기실's 놀이 방법 demo. */
+  private agoraHowtoTimeout: NodeJS.Timeout | null = null;
   /** When each student wrote lately, for AGORA_WRITES. */
   private agoraWrites = new Map<string, number[]>();
 
@@ -1144,7 +1146,7 @@ class Hub {
     if (this.live) throw new Error('아레나가 열려 있어요. 아레나를 닫은 뒤 열어 주세요.');
     if (this.agoraLive) throw new Error('아고라가 이미 열려 있어요. 닫은 뒤 다시 열어 주세요.');
     resetCards(t, classId);
-    this.agoraLive = { topicId: t.id, classId, phase: 'lobby', reveal: 'hidden', page: 0, pages: 1, music: true, timer: null, joined: new Set() };
+    this.agoraLive = { topicId: t.id, classId, phase: 'lobby', reveal: 'hidden', page: 0, pages: 1, music: true, timer: null, joined: new Set(), howtoAt: null };
     // As when an arena lobby opens: other classes' requests can't be approved during this class.
     for (const r of Object.values(d.requests)) {
       if (r.status === 'pending' && r.classId !== classId) {
@@ -1163,6 +1165,7 @@ class Hub {
     const t = this.agoraTopic();
     if (!live || !t || live.phase !== 'lobby') return;
     live.phase = 'writing';
+    this.stopHowto();
     t.runs[live.classId] = Date.now();
     for (const id of live.joined) this.stampAttendance(id);
     this.startTimer(t);
@@ -1189,7 +1192,29 @@ class Hub {
 
   private clearAgora() {
     this.stopTimer();
+    this.stopHowto();
     this.agoraLive = null;
+  }
+
+  /** [놀이 방법] in the 대기실: the arena's 12 seconds of demo on the projector. Pressed again it starts over. */
+  agoraHowto() {
+    const live = this.agoraLive;
+    if (!live || live.phase !== 'lobby') return;
+    this.stopHowto();
+    live.howtoAt = Date.now();
+    this.agoraHowtoTimeout = setTimeout(() => {
+      this.agoraHowtoTimeout = null;
+      live.howtoAt = null;
+      this.schedulePush(true);
+    }, HOWTO_MS);
+    this.schedulePush(true);
+  }
+
+  /** The demo never covers writing, and stops with the 대기실. */
+  private stopHowto() {
+    if (this.agoraHowtoTimeout) clearTimeout(this.agoraHowtoTimeout);
+    this.agoraHowtoTimeout = null;
+    if (this.agoraLive) this.agoraLive.howtoAt = null;
   }
 
   /** [전체 공개] / [전체 비공개], once writing has started. The projector starts again from its first page. */

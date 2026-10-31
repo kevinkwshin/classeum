@@ -69,6 +69,8 @@ export interface DisplayAgora {
   /** The song plays (the teacher's switch). */
   music: boolean;
   timer: AgoraTimer;
+  /** The 놀이 방법 demo is playing in the 대기실 since then (server clock); null otherwise. */
+  howtoAt: number | null;
 }
 
 /** A phone's 아고라: the topic, its own answer whether it shows or not, and the class's cards once writing starts. */
@@ -177,6 +179,8 @@ export interface TeacherAgoraLive {
   music: boolean;
   timer: AgoraTimer;
   joined: string[];
+  /** The 놀이 방법 demo is playing on the projector. */
+  howto: boolean;
 }
 
 /**

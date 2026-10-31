@@ -162,7 +162,8 @@ export type AgoraTimer = { startedAt: number; endsAt: number } | null;
 /**
  * The 아고라 session the hub keeps, in memory only like the arena's: the topic open for one class and its phase
  * (대기실, 쓰기, 마감), whether answers show, the projector's page out of the pages its cards take (the projector
- * measures them and says), whether the song plays, the 입력 시간, and the class's students who have come in.
+ * measures them and says), whether the song plays, the 입력 시간, the class's students who have come in, and when the
+ * 대기실's 놀이 방법 demo began (server clock; null when it isn't playing).
  */
 export interface AgoraLive {
   topicId: string;
@@ -174,6 +175,7 @@ export interface AgoraLive {
   music: boolean;
   timer: AgoraTimer;
   joined: Set<string>;
+  howtoAt: number | null;
 }
 
 /**
@@ -219,6 +221,7 @@ export function displayAgora(t: TopicRec, live: AgoraLive) {
     page: live.page,
     music: live.music,
     timer: live.timer,
+    howtoAt: lobby ? live.howtoAt : null,
   };
 }
 
@@ -265,6 +268,7 @@ export function teacherAgora(live: AgoraLive | null) {
     music: live.music,
     timer: live.timer && { ...live.timer },
     joined: [...live.joined],
+    howto: live.howtoAt !== null,
   };
   return { topics, live: session };
 }

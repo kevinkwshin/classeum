@@ -6,6 +6,7 @@ import { CountUp } from '@/components/CountUp';
 import { GrammarCard, filledSentence, zoneLabels } from '@/components/GrammarCard';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { PixelAvatar } from '@/components/PixelAvatar';
+import { AgoraPracticeCard } from '@/components/AgoraPracticeCard';
 import { PracticeCard } from '@/components/PracticeCard';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
@@ -570,7 +571,8 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
         </div>
       )}
       {/* A first-timer (no footprints yet) can try one pretend question while waiting. */}
-      {me.stamps === 0 && <PracticeCard look={look} />}
+      {/* In an 아고라's 대기실 the practice is writing an answer; otherwise a first-timer taps a box. */}
+      {waiting && view.agora?.phase === 'lobby' ? <AgoraPracticeCard look={look} /> : me.stamps === 0 && <PracticeCard look={look} />}
       <div className="rounded-3xl bg-white p-4">
         <div className="mb-3 flex items-center justify-between text-sm font-bold">
           <span>출석 발자국</span>

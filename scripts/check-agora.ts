@@ -16,7 +16,7 @@ const DATA = join(process.cwd(), '.data');
 // Acts as the teacher with the key the server keeps in .data, like npm run sim.
 const TEACHER = { Cookie: `cls_teacher=${readFileSync(join(DATA, 'teacher-key'), 'utf8').trim()}` };
 const TEACHER_ONLY = [
-  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-start', 'agora-close', 'agora-end', 'agora-time',
+  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-howto', 'agora-start', 'agora-close', 'agora-end', 'agora-time',
   'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card', 'agora-card-delete',
 ];
 // The one place a page takes HTML: the QR picture the server draws itself.
@@ -160,6 +160,9 @@ async function run(teacher: Stream, display: Stream) {
   check('그 반 기기는 대기실에서 주제를 미리 본다 (친구 카드는 아직 없음)', [a1, a2, a3].every((p) => p.s.view.agora?.phase === 'lobby' && p.s.view.agora.topic.id === topicId && p.s.view.agora.cards.length === 0));
   check('다른 반 기기에는 주제가 가지 않고, 지금 수업 중인 반 이름만 간다', !b1.s.view.agora && b1.s.view.elsewhere === A.name, b1.s.view.elsewhere);
   check('선생님 화면에 대기실과 들어온 학생이 보인다', teacher.view.agora.live?.phase === 'lobby' && [1, 2, 3].every((n) => teacher.view.agora.live.joined.includes(studentId(A, n))));
+  check('놀이 방법을 누른다', (await post({ type: 'agora-howto' })).ok);
+  await sleep(200);
+  check('프로젝터에 놀이 방법 시범이 나오고, 선생님 화면도 안다', typeof display.view.agora?.howtoAt === 'number' && teacher.view.agora.live?.howto === true);
   check('대기실에서는 아직 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId, text: 'x' }, {})).error === '선생님이 시작하면 쓸 수 있어요.');
   check('아고라는 한 번에 하나만 연다', (await post({ type: 'agora-open', topicId: other, classId: B.id })).error?.includes('이미 열려'));
   await post({ type: 'agora-settings', minutes: 5 });
@@ -172,6 +175,10 @@ async function run(teacher: Stream, display: Stream) {
   section('쓰기 시작');
   check('쓰기 시작', (await post({ type: 'agora-start' })).ok);
   await sleep(300);
+  check('쓰기를 시작하면 놀이 방법은 멈춘다', display.view.agora?.howtoAt === null && teacher.view.agora.live?.howto === false);
+  await post({ type: 'agora-howto' });
+  await sleep(200);
+  check('쓰는 중에는 놀이 방법이 나오지 않는다', display.view.agora?.howtoAt === null);
   check('프로젝터와 기기가 쓰기로 바뀌고, 들어온 세 명의 카드가 생긴다', display.view.agora?.phase === 'writing' && a1.s.view.agora?.phase === 'writing' && [1, 2, 3].every((n) => card(n) && !card(n)!.sent));
   const t10 = display.view.agora?.timer;
   check('입력 시간(10분)이 쓰기 시작부터 흐른다', t10 && t10.endsAt - t10.startedAt === 600_000, t10 && `${t10.endsAt - t10.startedAt} ms`);
@@ -332,6 +339,9 @@ async function run(teacher: Stream, display: Stream) {
   await post({ type: 'agora-open', topicId: t3, classId: A.id });
   await sleep(200);
   check('대기실에서는 시계가 흐르지 않는다', display.view.agora?.phase === 'lobby' && display.view.agora.timer === null);
+  await post({ type: 'agora-howto' });
+  await sleep(12_500);
+  check('놀이 방법은 12초 뒤 저절로 끝난다', display.view.agora?.howtoAt === null && teacher.view.agora.live?.howto === false);
   await post({ type: 'agora-start' });
   await sleep(200);
   const tm = display.view.agora?.timer;

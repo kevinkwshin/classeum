@@ -78,7 +78,7 @@ function DisplayApp() {
       <Shell>
         {conn === 'lost' && <div className="absolute right-6 top-4 z-50 rounded-full bg-bad px-4 py-1 text-sm font-bold text-white">연결 끊김 · 다시 연결 중</div>}
         {agora.music && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 소리를 켜려면 이 화면을 한 번 클릭하세요</div>}
-        {agora.phase === 'lobby' ? <AgoraLobby view={view} agora={agora} /> : <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />}
+        {agora.phase === 'lobby' ? <AgoraLobby view={view} agora={agora} serverNow={serverNow} /> : <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />}
         <FullscreenHint />
       </Shell>
     );
@@ -328,19 +328,93 @@ function Lobby({ view, s, serverNow }: { view: DisplayView; s: SessionPublic; se
  * The 아고라's 대기실, in the arena lobby's frame: the QR, the class and who has come in, and the topic in the card where
  * the arena shows today's reward. Names always show, as they do on the answer cards that follow.
  */
-function AgoraLobby({ view, agora }: { view: DisplayView; agora: DisplayAgora }) {
+function AgoraLobby({ view, agora, serverNow }: { view: DisplayView; agora: DisplayAgora; serverNow: () => number }) {
   const t = agora.topic;
+  // While the teacher's 놀이 방법 plays, the demo takes the characters' and the topic card's place, as in the arena.
+  const howtoAt = agora.howtoAt;
   return (
     <div className="flex min-h-0 flex-1 gap-[3vw]">
       <LobbyQr view={view} />
       <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
         <LobbyHeader className={agora.className} title="아고라" sub={t.minutes ? `입력 시간 ${t.minutes}분` : '시간 제한 없음'} count={agora.joined.length} />
-        <LobbyCrowd avatars={agora.joined.map((a) => ({ key: String(a.number), name: a.name, look: a.look }))} wantNames />
+        {howtoAt !== null && <AgoraHowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} />}
+        <LobbyCrowd avatars={agora.joined.map((a) => ({ key: String(a.number), name: a.name, look: a.look }))} wantNames hidden={howtoAt !== null} />
         {/* Spacing is capped by the screen height too, as on the reward card, so the class keeps its room at 1280×720. */}
-        <div className="flex flex-col gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white">
+        <div className={`flex flex-col gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white ${howtoAt !== null ? 'hidden' : ''}`}>
           <div className="text-2xl font-bold text-gold">오늘의 주제</div>
           <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 60 ? 'text-[2vw]' : 'text-[2.7vw]'}`}>{t.text}</div>
           {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-2xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The 아고라's 놀이 방법 is a made-up class answering a made-up topic, so it never shows a real answer. `at` is when
+// each card turns to ✓ 냈어요 (ms into the demo); 지후 is still thinking. 하윤 is the phone being typed on.
+const HOWTO_TOPIC = '가장 좋아하는 계절은? 이유도 한 줄로';
+const HOWTO_MINE = 'Summer! I can swim every day.';
+const HOWTO_CAST: { card: AgoraCard; at?: number }[] = [
+  { card: { number: 1, name: '하람', look: { ...DEFAULT_LOOK, hair: 'black', hairStyle: 'ponytail', tunic: 'sky' }, sent: true, text: 'Winter, because I love snow.' }, at: 3500 },
+  { card: { number: 2, name: '도윤', look: { ...DEFAULT_LOOK, skin: 'tan', hairStyle: 'spiky', tunic: 'hoodie', helmet: 'cap' }, sent: true, text: 'Spring. Flowers make me happy.' }, at: 4400 },
+  { card: { number: 3, name: '하윤', look: { ...DEFAULT_LOOK, hair: 'pink', hairStyle: 'twinbun', eyes: 'big', tunic: 'stripe' }, sent: true, text: HOWTO_MINE }, at: 2700 },
+  { card: { number: 4, name: '지후', look: { ...DEFAULT_LOOK, skin: 'deep', hair: 'black', hairStyle: 'curly', tunic: 'vest' }, sent: false } },
+];
+// One caption at a time, in the arena's 12 seconds: 0-3 s, 3-6.5 s, 6.5-10 s and 10-12 s.
+const HOWTO_CAPTIONS = ['① 폰에 답을 써요', '② 낸 친구는 ✓ 냈어요 · 답은 아직 비밀', '③ 선생님이 공개하면 다 같이 봐요', '마감 전에는 고쳐 써도 돼요'];
+
+/**
+ * 놀이 방법 in the 아고라's 대기실: a phone writes its answer and sends it, the class's cards turn to ✓ 냈어요 one by
+ * one with their answers still hidden, and then the teacher shows them all, on the real cards. `startedAt` is on the
+ * server clock, so a reloaded projector picks up where the demo is.
+ */
+function AgoraHowTo({ startedAt, serverNow }: { startedAt: number; serverNow: () => number }) {
+  useTicker(true, 100);
+  const t = serverNow() - startedAt;
+  const stage = t >= 10000 ? 3 : t >= 6500 ? 2 : t >= 3000 ? 1 : 0;
+  const typed = HOWTO_MINE.slice(0, Math.max(0, Math.floor((t - 300) / 65)));
+  const sent = t >= 2500;
+  const cards = HOWTO_CAST.map(({ card, at }, i) => {
+    const has = at !== undefined && t >= at;
+    // Shown one after another, as the teacher's [전체 공개] lands.
+    return { ...card, sent: has, text: has && t >= 6800 + i * 300 ? card.text : undefined };
+  });
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-[1.4vh]">
+      <div className="flex items-center gap-4">
+        <span className="shrink-0 rounded-full bg-ink px-4 py-1.5 text-xl font-bold text-white">놀이 방법</span>
+        <div key={stage} className="cls-slide-up truncate text-[2.6vw] font-extrabold leading-tight tracking-tight">
+          {HOWTO_CAPTIONS[stage]}
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 gap-[2vw]">
+        {/* A phone, drawn small: the topic, the answer being typed, and 제출. */}
+        <div className="flex aspect-[0.52] h-full shrink-0 flex-col rounded-[2vw] bg-ink p-[0.55vw]">
+          <div className="flex min-h-0 flex-1 flex-col gap-[0.8vw] rounded-[1.5vw] bg-white p-[1vw]">
+            <div className="rounded-[0.9vw] bg-bg px-[0.8vw] py-[0.9vw] text-center text-[1.05vw] font-bold leading-snug">{HOWTO_TOPIC}</div>
+            <div className={`min-h-[6.5vw] rounded-[0.9vw] border-2 px-[0.8vw] py-[0.6vw] text-[1.15vw] font-bold leading-snug ${sent ? 'border-[#D5D8DF] text-ink-2' : 'border-ink'}`}>
+              {typed}
+              {!sent && <span className="ml-px inline-block h-[1.2vw] w-[2px] animate-pulse bg-ink align-middle" />}
+            </div>
+            <div className={`rounded-[0.9vw] py-[0.7vw] text-center text-[1vw] font-extrabold transition-colors ${sent ? 'bg-good-soft text-good' : 'bg-ink text-white'}`}>
+              {!sent ? '제출' : stage === 3 ? '제출했어요 · 고칠 수 있어요' : '✓ 제출했어요'}
+            </div>
+          </div>
+        </div>
+        {/* The board as the projector shows it once writing starts. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-[1vw]">
+          <div className="flex items-center gap-3 self-end rounded-full bg-ink py-1.5 pl-1.5 pr-5 text-white">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#3DDC97] text-lg font-extrabold text-ink">✓</div>
+            <div className="tabular text-2xl font-extrabold">
+              {cards.filter((c) => c.sent).length}
+              <span className="text-ink-3"> / {cards.length}</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 content-start gap-[1vw]">
+            {cards.map((c) => (
+              <AgoraCardView key={c.number} c={c} open />
+            ))}
+          </div>
         </div>
       </div>
     </div>

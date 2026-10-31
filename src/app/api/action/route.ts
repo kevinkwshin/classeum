@@ -6,7 +6,7 @@ import { addTopic, editTopic } from '@/server/agora';
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
-  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-start', 'agora-close', 'agora-end', 'agora-time',
+  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-howto', 'agora-start', 'agora-close', 'agora-end', 'agora-time',
   'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card', 'agora-card-delete',
 ]);
 
@@ -107,6 +107,9 @@ export async function POST(request: NextRequest) {
           break;
         case 'agora-open':
           h.openAgora(String(body.topicId), String(body.classId));
+          break;
+        case 'agora-howto':
+          h.agoraHowto();
           break;
         case 'agora-start':
           h.startAgora();

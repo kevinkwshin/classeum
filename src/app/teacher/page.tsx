@@ -9,7 +9,7 @@ import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCou
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
-import { SetupGuide } from '@/components/SetupGuide';
+import { AgoraGuide, SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
@@ -1379,6 +1379,8 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
           새 주제
         </button>
       </div>
+      {/* Until the first 아고라, as 수업 준비 does for the arena; hidden while requests wait, as that card is. */}
+      {view.requests.length === 0 && <AgoraGuide view={view} onNew={() => setForm({ topicId: null, draft: NEW_TOPIC })} />}
       {topics.length === 0 && !form ? (
         <Card className="flex flex-col items-center gap-3 py-16 text-center">
           <div className="text-xl font-bold">아직 주제가 없어요</div>
@@ -1594,6 +1596,11 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           <ProjectorLink className="flex h-11 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-[15px] font-bold">프로젝터 화면 열기</ProjectorLink>
+          {/* A 12-second demo on the projector, as in the arena's 대기실; pressed again it starts over. */}
+          <Btn kind="ghost" onClick={() => act({ type: 'agora-howto' }).catch(() => undefined)} className={live.howto ? '!border-ink !bg-ink !text-white' : ''}>
+            {live.howto && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-accent align-middle" />}
+            놀이 방법
+          </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'agora-end' }).catch(() => undefined)}>대기실 닫기</Btn>
           <Btn kind="accent" onClick={() => act({ type: 'agora-start' }).catch(() => undefined)} className="px-6">쓰기 시작</Btn>
         </div>
