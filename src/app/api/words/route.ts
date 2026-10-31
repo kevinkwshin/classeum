@@ -3,6 +3,9 @@ import { importTypedWords } from '@/server/excel';
 import { hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
 
+/** Words one [직접 작성하기] can make; the editor counts toward it too. */
+const WORDS_MAX = 200;
+
 /** [직접 작성하기]: a title and typed words become a draft, previewed and created like an uploaded file. */
 export async function POST(request: NextRequest) {
   if (!isTeacher(request)) return Response.json({ ok: false, error: '노트북의 선생님 화면에서만 만들 수 있어요.' }, { status: 403 });
@@ -18,12 +21,15 @@ export async function POST(request: NextRequest) {
   // Cut by characters so an emoji at the limit isn't split in half.
   const str = (v: unknown, max: number) => (typeof v === 'string' ? Array.from(v.trim()).slice(0, max).join('') : '');
   const rows = (Array.isArray(body.words) ? body.words : [])
-    .slice(0, 200)
     .map((w) => {
       const r = (w ?? {}) as Record<string, unknown>;
       return { spelling: str(r.spelling, 60), meaning: str(r.meaning, 100), example: str(r.example, 200) };
     })
     .filter((w) => w.spelling || w.meaning || w.example);
+  // Said, not cut off quietly: the rows past the limit would be lost with the draft once the event is made.
+  if (rows.length > WORDS_MAX) {
+    return Response.json({ ok: false, error: `단어는 한 번에 ${WORDS_MAX}개까지 만들 수 있어요. 지금 ${rows.length}개예요. 나눠서 만들어 주세요.` }, { status: 413 });
+  }
   const result = importTypedWords(rows);
   const h = hub();
   const draft = h.makeDraft(result, undefined, str(body.name, 40));

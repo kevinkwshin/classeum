@@ -7,7 +7,7 @@ const TEACHER_ACTIONS = new Set([
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete', 'agora-reward', 'agora-star',
+  'agora-card-delete', 'agora-reward', 'agora-star', 'save-now',
 ]);
 
 /** Largest request: an 아고라 of ten topics, each with the longest question and 보조 설명 in Hangul, fits. */
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
           h.rewriteAgora();
           break;
         case 'agora-next':
-          h.nextAgoraTopic();
+          h.nextAgoraTopic(Number.isInteger(body.index) ? Number(body.index) : undefined);
           break;
         case 'agora-close':
           h.closeAgora();
@@ -142,17 +142,22 @@ export async function POST(request: NextRequest) {
           h.agoraSettings({ columns: body.columns, sort: body.sort });
           break;
         case 'agora-page':
-          h.turnAgoraPage(Number(body.dir));
+          h.turnAgoraPage(Number(body.dir), Number.isInteger(body.from) ? Number(body.from) : undefined);
           break;
         // From the projector window, which holds the teacher cookie too.
         case 'agora-pages':
-          h.setAgoraPages(Number(body.count));
+          h.setAgoraPages(Number(body.count), body.numbers);
           break;
         case 'agora-music':
           h.toggleAgoraMusic();
           break;
         case 'agora-card':
-          h.flipAgoraCard({ studentId: body.studentId === undefined ? undefined : String(body.studentId), number: body.number === undefined ? undefined : Number(body.number) });
+          h.flipAgoraCard({
+            studentId: body.studentId === undefined ? undefined : String(body.studentId),
+            number: body.number === undefined ? undefined : Number(body.number),
+            topicId: body.topicId === undefined ? undefined : String(body.topicId),
+            shown: typeof body.shown === 'boolean' ? body.shown : undefined,
+          });
           break;
         case 'agora-card-delete':
           h.removeAgoraCard(String(body.topicId), String(body.studentId));
@@ -161,8 +166,11 @@ export async function POST(request: NextRequest) {
           h.setAgoraReward(String(body.agoraId), String(body.itemId));
           break;
         case 'agora-star':
-          h.starAgoraCard(String(body.studentId));
+          h.starAgoraCard(String(body.studentId), body.topicId === undefined ? undefined : String(body.topicId), typeof body.star === 'boolean' ? body.star : undefined);
           break;
+        // The next `npm run class`, before it stops this server: whether the records reached the disk.
+        case 'save-now':
+          return Response.json({ ok: true, saved: h.saveNow() });
       }
       return Response.json({ ok: true });
     }
@@ -184,19 +192,19 @@ export async function POST(request: NextRequest) {
         h.setLook(tokenHash, (body.look ?? {}) as Record<string, string>);
         break;
       case 'pos':
-        h.move(tokenHash, Number(body.seq), { x: Number(body.x), y: Number(body.y) }, Number(body.n ?? NaN));
+        h.move(tokenHash, Number(body.seq), { x: Number(body.x), y: Number(body.y) }, Number(body.n ?? NaN), body.sid === undefined ? undefined : String(body.sid));
         break;
       case 'text':
-        h.submitText(tokenHash, Number(body.seq), String(body.value ?? ''), body.final === true, Number(body.n ?? NaN));
+        h.submitText(tokenHash, Number(body.seq), String(body.value ?? ''), body.final === true, Number(body.n ?? NaN), body.sid === undefined ? undefined : String(body.sid));
         break;
       case 'practice':
         h.recordPractice(tokenHash, String(body.questionId), Number(body.choice));
         break;
       case 'agora-answer':
-        h.answerTopic(tokenHash, String(body.topicId ?? ''), body.text);
+        h.answerTopic(tokenHash, String(body.topicId ?? ''), body.text, Number(body.n ?? NaN));
         break;
       case 'agora-unanswer':
-        h.unanswerTopic(tokenHash, String(body.topicId ?? ''));
+        h.unanswerTopic(tokenHash, String(body.topicId ?? ''), Number(body.n ?? NaN));
         break;
       default:
         return Response.json({ ok: false, error: '알 수 없는 요청이에요.' }, { status: 400 });

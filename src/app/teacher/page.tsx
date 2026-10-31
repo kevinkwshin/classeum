@@ -133,6 +133,12 @@ function TeacherApp() {
       )}
       <main className="min-w-0 flex-1">
         {conn === 'lost' && <div className="bg-bad py-1.5 text-center text-sm font-bold text-white">서버 연결이 끊겼어요 · 다시 연결 중</div>}
+        {/* The records live in memory until they reach the disk; while they can't, the teacher has to know. */}
+        {view.saveTrouble && (
+          <div role="alert" title={view.saveTrouble} className="bg-bad px-4 py-1.5 text-center text-sm font-bold text-white">
+            기록을 저장하지 못하고 있어요 · 1초마다 다시 해요 · 디스크 공간과, 백신이나 OneDrive가 .data 폴더를 잡고 있지 않은지 확인해 주세요
+          </div>
+        )}
         {view.live && <TeacherSounds live={view.live} plays={plays} serverNow={serverNow} />}
         {!view.live && agoraLive && <AgoraSounds live={agoraLive} plays={plays} />}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
@@ -350,6 +356,8 @@ interface UploadResult {
 type TypedRow = { spelling: string; meaning: string; example: string };
 type TypedDraft = { title: string; rows: TypedRow[] };
 const TYPED_KEY = 'classeum.typed';
+/** Rows one [직접 작성하기] can make into an event, as the server allows. */
+const TYPED_WORDS_MAX = 200;
 const blankRows = (n: number): TypedRow[] => Array.from({ length: n }, () => ({ spelling: '', meaning: '', example: '' }));
 
 /** What was being typed in [직접 작성하기] survives closing the window or reloading the page, on this laptop only. */
@@ -664,6 +672,9 @@ function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { dr
   const filled = draft.rows.filter((r) => r.spelling.trim() && r.meaning.trim()).length;
   // Half-written rows go into the file too, to finish in Excel.
   const anyRow = draft.rows.some((r) => keys.some((k) => r[k].trim()));
+  // The server makes at most this many rows into one event (it counts half-written ones too), so the editor says so first.
+  const used = draft.rows.filter((r) => keys.some((k) => r[k].trim())).length;
+  const over = used > TYPED_WORDS_MAX;
   const setCell = (row: number, col: number, value: string) => setDraft((d) => ({ ...d, rows: d.rows.map((r, i) => (i === row ? { ...r, [keys[col]]: value } : r)) }));
   const focus = (row: number, col: number) => requestAnimationFrame(() => cells.current[row]?.[col]?.focus());
   const paste = (row: number, col: number) => (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -757,9 +768,13 @@ function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { dr
             <Btn kind="ghost" disabled={!anyRow} onClick={onExcel}>엑셀로 받기</Btn>
           </div>
           <div className="flex items-center gap-3">
-            {filled > 0 && filled < 4 && <span className="text-sm text-ink-3">단어가 4개 이상이면 보기를 잘 만들 수 있어요</span>}
+            {over ? (
+              <span className="text-sm font-semibold text-bad">한 번에 {TYPED_WORDS_MAX}개까지예요 (지금 {used}개) · 나눠서 만들어 주세요</span>
+            ) : (
+              filled > 0 && filled < 4 && <span className="text-sm text-ink-3">단어가 4개 이상이면 보기를 잘 만들 수 있어요</span>
+            )}
             <Btn kind="ghost" onClick={onClose}>닫기</Btn>
-            <Btn disabled={busy || filled === 0} onClick={onPreview}>{busy ? '만드는 중…' : '미리보기'}</Btn>
+            <Btn disabled={busy || filled === 0 || over} onClick={onPreview}>{busy ? '만드는 중…' : '미리보기'}</Btn>
           </div>
         </div>
       </div>
@@ -1929,16 +1944,16 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   }, [live.phase, send]);
   const skip = useCallback(() => {
     if (!canSkip || (live.phase === 'writing' && !confirm('아직 쓰는 중이에요. 이 주제를 여기서 끝내고 넘어갈까요?'))) return;
-    send({ type: 'agora-next' });
-  }, [canSkip, live.phase, send]);
+    send({ type: 'agora-next', index: live.index });
+  }, [canSkip, live.phase, live.index, send]);
   const primary = useCallback(() => {
     if (step === 'start') send({ type: 'agora-start' });
     else if (step === 'close') send({ type: 'agora-close' });
     else if (step === 'reveal') send({ type: 'agora-reveal', public: true });
-    else if (step === 'page') send({ type: 'agora-page', dir: 1 });
-    else if (step === 'next' || step === 'finish') send({ type: 'agora-next' });
+    else if (step === 'page') send({ type: 'agora-page', dir: 1, from: live.page });
+    else if (step === 'next' || step === 'finish') send({ type: 'agora-next', index: live.index });
     else end();
-  }, [step, send, end]);
+  }, [step, send, end, live.page, live.index]);
   useTicker(writing && !!live.timer, 250);
   const left = writing && live.timer ? Math.max(0, live.timer.endsAt - serverNow()) : null;
 
@@ -1953,8 +1968,8 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
       const keys: Record<string, () => void> = {
         Enter: () => step !== 'page' && step !== 'finish' && step !== 'end' && primary(),
         NumpadEnter: () => step !== 'page' && step !== 'finish' && step !== 'end' && primary(),
-        ArrowRight: () => send({ type: 'agora-page', dir: 1 }),
-        ArrowLeft: () => send({ type: 'agora-page', dir: -1 }),
+        ArrowRight: () => send({ type: 'agora-page', dir: 1, from: live.page }),
+        ArrowLeft: () => send({ type: 'agora-page', dir: -1, from: live.page }),
         ArrowUp: () => send({ type: 'agora-time', minutes: 1 }),
         ArrowDown: () => send({ type: 'agora-time', minutes: -1 }),
         KeyS: skip,
@@ -1967,7 +1982,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [step, primary, send, skip]);
+  }, [step, primary, send, skip, live.page]);
 
   if (!agora || !topic) return null;
   const answers = new Map(topic.answers.map((a) => [a.studentId, a]));
@@ -1980,6 +1995,9 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     .filter((s) => s.classId === live.classId && ((wrote && inRoom.has(s.id)) || answers.has(s.id)))
     .sort((a, b) => (topic.sort === 'time' ? firstAt(a.id) - firstAt(b.id) : 0) || a.number - b.number);
   const sent = cards.filter((s) => answers.has(s.id));
+  // The preview shows the page the projector shows (its own measure of which cards fit); all of them until it says.
+  const pageNumbers = live.pageNumbers[live.page];
+  const onPage = pageNumbers ? cards.filter((s) => pageNumbers.includes(s.number)) : cards;
   const waiting = cards.filter((s) => !answers.has(s.id));
   const shownOf = (a: TeacherTopic['answers'][number]) => (a.shown === null ? isPublic : a.shown);
   const next = agora.topics[live.index + 1];
@@ -2039,9 +2057,9 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                 <span className="font-bold text-ink">{live.phase === 'ready' ? '준비 · 주제를 읽어 줘요' : isPublic ? '전체 공개' : '비공개'}</span>
                 <span className="flex items-center gap-1.5">
                   {/* 28px, the height of the arena's question here, so the preview starts where the arena's does. */}
-                  <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1 })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
+                  <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1, from: live.page })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
                   <span className="tabular w-12 text-center font-bold text-ink">{live.page + 1} / {live.pages}</span>
-                  <button type="button" aria-label="다음 쪽" disabled={live.page >= live.pages - 1} onClick={() => send({ type: 'agora-page', dir: 1 })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">▶</button>
+                  <button type="button" aria-label="다음 쪽" disabled={live.page >= live.pages - 1} onClick={() => send({ type: 'agora-page', dir: 1, from: live.page })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">▶</button>
                 </span>
               </div>
               {/* The projector's board in miniature: what each card shows right now. */}
@@ -2061,7 +2079,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                       {topic.note && <div className="mt-0.5 line-clamp-1 text-xs font-semibold text-ink-2">{topic.note}</div>}
                     </div>
                     <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto" style={{ gridTemplateColumns: `repeat(${topic.columns}, minmax(0, 1fr))` }}>
-                      {cards.map((s) => {
+                      {onPage.map((s) => {
                         const a = answers.get(s.id);
                         const shown = !!a && shownOf(a);
                         return (
@@ -2123,7 +2141,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                       aria-pressed={shown}
                       disabled={live.phase === 'ready'}
                       title={shown ? '눌러서 이 답만 비공개' : '눌러서 이 답만 공개'}
-                      onClick={() => send({ type: 'agora-card', studentId: s.id })}
+                      onClick={() => send({ type: 'agora-card', studentId: s.id, topicId: topic.id, shown: !shown })}
                       className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl px-3 py-2 text-left hover:bg-[#ECEEF2] disabled:hover:bg-transparent"
                     >
                       <span className="flex items-center gap-2">
@@ -2149,7 +2167,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                       aria-pressed={a.star}
                       disabled={live.phase === 'ready'}
                       title={a.star ? '칭찬 별 빼기 (받은 보상은 그대로)' : '칭찬 별: 이 학생이 오늘의 보상을 받아요'}
-                      onClick={() => send({ type: 'agora-star', studentId: s.id })}
+                      onClick={() => send({ type: 'agora-star', studentId: s.id, topicId: topic.id, star: !a.star })}
                       className={`mt-1.5 h-8 shrink-0 rounded-full border px-2.5 text-xs font-extrabold disabled:opacity-40 ${a.star ? 'border-gold bg-gold text-ink' : 'border-[#D5D8DF] bg-white text-ink-3 hover:text-ink'}`}
                     >
                       ⭐ {a.star ? '칭찬함' : '칭찬'}

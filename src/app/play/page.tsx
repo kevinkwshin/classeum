@@ -23,10 +23,10 @@ function buzz(pattern: number | number[]) {
   } catch {}
 }
 
-// Moves are numbered across remounts and reloads, so the server never mistakes a new move for an old one.
-const MOVE_BASE = Date.now() * 1000;
-let moveCount = 0;
-const nextMoveNumber = () => MOVE_BASE + ++moveCount;
+// Sends are numbered by when they are made (in microseconds, always rising within this page), so the server keeps
+// the newest one even across reloads and a second tab on the same phone: a tab opened earlier and used later wins.
+let lastMove = 0;
+const nextMoveNumber = () => (lastMove = Math.max(Date.now() * 1000, lastMove + 1));
 
 export default function PlayPage() {
   const [token, setToken] = useState<string | null>(null);
@@ -216,7 +216,7 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
   const write = (action: Record<string, unknown>, after?: () => void) => {
     setBusy(true);
     setError('');
-    send({ ...action, topicId: a.topic.id })
+    send({ ...action, topicId: a.topic.id, n: nextMoveNumber() })
       .then(() => after?.())
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
@@ -864,7 +864,7 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
       if (!p) return;
       lastSent.current = Date.now();
       acked.current = false;
-      send({ type: 'pos', seq: q.seq, n: nextMoveNumber(), x: p.x, y: p.y })
+      send({ type: 'pos', sid: s.id, seq: q.seq, n: nextMoveNumber(), x: p.x, y: p.y })
         .then(() => {
           if (latest.current === p) acked.current = true;
         })
@@ -876,7 +876,7 @@ function GamePad({ view, send, serverNow, conn }: { view: StudentView; send: Sen
         });
     };
     attempt();
-  }, [send, q.seq]);
+  }, [send, s.id, q.seq]);
 
   const push = useCallback(
     (p: FieldPoint) => {
@@ -1065,7 +1065,8 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
   const active = s.phase === 'moving' && !s.paused;
   const submit = useCallback(
     (text: string, final: boolean) => {
-      if (isEmptyAnswer(text)) return;
+      // An empty box can't be 제출; as a draft it is sent, so an answer wiped off the phone isn't graded.
+      if (final && isEmptyAnswer(text)) return;
       setError('');
       // 제출 cancels a pending autosave, so a late draft can't undo it.
       if (final && timer.current) {
@@ -1074,7 +1075,7 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
       }
       const attempt = (left: number) => {
         // Numbered like moves, so the server drops a draft that arrives after a newer answer.
-        send({ type: 'text', seq: q.seq, value: text, final, n: nextMoveNumber() })
+        send({ type: 'text', sid: s.id, seq: q.seq, value: text, final, n: nextMoveNumber() })
           .then(() => setSaved((prev) => (!final && prev.final && prev.text === text ? prev : { text, final })))
           .catch(() => {
             if (left > 0 && latest.current === text) setTimeout(() => attempt(left - 1), 400);
@@ -1083,7 +1084,7 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
       };
       attempt(1);
     },
-    [send, q.seq],
+    [send, s.id, q.seq],
   );
   const change = (text: string) => {
     setValue(text);
@@ -1092,7 +1093,7 @@ function TextAnswer({ view, send, serverNow, drafts }: { view: StudentView; send
   };
   // While typing, the latest text is saved at most every 0.3 s (not only after a pause).
   useEffect(() => {
-    if (!active || value === saved.text || isEmptyAnswer(value) || timer.current) return;
+    if (!active || value === saved.text || (isEmptyAnswer(value) && isEmptyAnswer(saved.text)) || timer.current) return;
     timer.current = setTimeout(() => {
       timer.current = null;
       submit(latest.current, false);

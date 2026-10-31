@@ -506,7 +506,26 @@ const g = globalThis as unknown as {
   __classeumDb?: DB;
   __classeumSaveTimer?: NodeJS.Timeout;
   __classeumLoadError?: Error;
+  /** Why the last save failed; null once one succeeds. */
+  __classeumSaveTrouble?: string | null;
+  __classeumSaveWatcher?: () => void;
 };
+
+/** Why saving is failing right now (the disk, an antivirus or a sync app), or null when the last save worked. */
+export function saveTrouble(): string | null {
+  return g.__classeumSaveTrouble ?? null;
+}
+
+/** Called whenever saving starts or stops failing, so the teacher screen can say so. */
+export function watchSaves(onChange: () => void) {
+  g.__classeumSaveWatcher = onChange;
+}
+
+function setSaveTrouble(trouble: string | null) {
+  if ((g.__classeumSaveTrouble ?? null) === trouble) return;
+  g.__classeumSaveTrouble = trouble;
+  g.__classeumSaveWatcher?.();
+}
 
 export function db(): DB {
   if (!g.__classeumDb) {
@@ -550,19 +569,24 @@ export function save(): void {
   }, 400);
 }
 
-export function flush(): void {
+/** Writes the records now; false when that failed (it tries again in a second, and the teacher screen says so). */
+export function flush(): boolean {
   // Only loaded records are saved: before a load, or after a failed one, a save would replace the real file.
   const d = g.__classeumDb;
-  if (!d) return;
+  if (!d) return true;
   try {
     write(d);
+    setSaveTrouble(null);
+    return true;
   } catch (e) {
     // On Windows an antivirus scan or a sync app can hold the file for a moment; try again instead of stopping the class.
     console.error('Classeum: 저장하지 못해서 1초 뒤 다시 저장해요.', e);
+    setSaveTrouble((e as Error).message || String(e));
     if (!g.__classeumSaveTimer) g.__classeumSaveTimer = setTimeout(() => {
       g.__classeumSaveTimer = undefined;
       flush();
     }, 1000);
+    return false;
   }
 }
 

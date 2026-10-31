@@ -6,14 +6,14 @@ import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { zoneOf } from '@/lib/field';
-import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec, type AgoraRec, type TopicRec } from './store';
+import { db, flush, newId, save, saveTrouble, watchSaves, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec, type AgoraRec, type TopicRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
 import { answerLabelOf, correctLabelOf } from './answers';
 import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
-import { addAgora, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, resetCards, revealCards, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
+import { addAgora, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, resetCards, revealCards, setCardShown, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -51,6 +51,9 @@ const BLOCK = 10;
 /** A request lapses 2 minutes after its phone stops waiting (left the page, screen off), or after 15 minutes at most. */
 const REQUEST_TTL_MS = 2 * 60 * 1000;
 const REQUEST_MAX_MS = 15 * 60 * 1000;
+/** Registrations from every phone together: a class of 40 at once fits, a phone (or script) repeating itself doesn't. */
+const REGISTER_BURST = 60;
+const REGISTER_WINDOW_MS = 10_000;
 const MAX_PRACTICE_PER_QUESTION = 5;
 /** Seconds per question when the Excel 시간(초) cell is blank (단답형 gets at least 20). */
 const DEFAULT_SECONDS = 10;
@@ -267,6 +270,10 @@ class Hub {
   private agoraHowtoTimeout: NodeJS.Timeout | null = null;
   /** When each student wrote lately, for AGORA_WRITES. */
   private agoraWrites = new Map<string, number[]>();
+  /** The newest write numbered by each phone, per topic and student, so an older one arriving late is dropped. */
+  private agoraOrder = new Map<string, number>();
+  /** When phones registered lately, for REGISTER_BURST. */
+  private registrations: number[] = [];
 
   // ---------- connections ----------
 
@@ -339,6 +346,14 @@ class Hub {
   /** Ends every open stream, so a stopping server doesn't wait for phones and screens to hang up. */
   closeAll() {
     for (const c of [...this.clients]) c.end?.();
+  }
+
+  /**
+   * Writes the records now, for the next `npm run class` about to stop this server: on Windows that stop ends the
+   * process at once, without the save Ctrl+C gets. Whether the write worked.
+   */
+  saveNow(): boolean {
+    return flush();
   }
 
   removeClient(c: Client) {
@@ -666,7 +681,7 @@ class Hub {
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
     const displayOn = [...this.clients].some((c) => c.role === 'display');
     const phones = new Set([...this.clients].filter((c) => c.role === 'student' && c.tokenHash).map((c) => c.tokenHash)).size;
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora(this.agoraLive) };
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora(this.agoraLive), saveTrouble: saveTrouble() };
   }
 
   private registrationContext(): RegistrationContext {
@@ -783,12 +798,13 @@ class Hub {
     if (!Number.isInteger(number) || number < 1 || number > 99) throw new Error('번호는 1~99 사이로 써 주세요.');
     const name = cleanName(String(input.name ?? ''));
     if (!NAME_RE.test(name)) throw new Error('이름은 한글이나 영어로 써 주세요.');
-    for (const r of Object.values(d.requests)) {
-      if (r.tokenHash === tokenHash && r.status === 'pending') {
-        r.status = 'expired';
-        r.reason = 'cancelled';
-      }
-    }
+    // A whole class registering at once is fine; a phone (or script) sending requests over and over is not.
+    const now = Date.now();
+    this.registrations = this.registrations.filter((t) => now - t < REGISTER_WINDOW_MS);
+    if (this.registrations.length >= REGISTER_BURST) throw new Error('요청이 한꺼번에 너무 많아요. 잠시 뒤에 다시 해 주세요.');
+    this.registrations.push(now);
+    // This phone's earlier requests that never got through go: only its latest matters, and none pile up.
+    for (const [id, r] of Object.entries(d.requests)) if (r.tokenHash === tokenHash && r.status !== 'approved') delete d.requests[id];
     const pending = Object.values(d.requests).filter((r) => r.status === 'pending');
     if (pending.length >= Math.max(60, 3 * Object.keys(d.students).length)) throw new Error('대기 중인 요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.');
     if (pending.filter((r) => r.classId === cls.id && r.number === number).length >= 3) throw new Error('이 번호로 온 요청이 너무 많아요. 선생님께 말해 주세요.');
@@ -835,13 +851,10 @@ class Hub {
     return { kind, at, bound, records, note: notes.join(' · ') };
   }
 
+  /** The phone takes its request back: it goes, rather than staying in the records as a cancelled one. */
   cancelRegistration(tokenHash: string) {
-    for (const r of Object.values(db().requests)) {
-      if (r.tokenHash === tokenHash && r.status !== 'approved') {
-        r.status = 'expired';
-        r.reason = 'cancelled';
-      }
-    }
+    const d = db();
+    for (const [id, r] of Object.entries(d.requests)) if (r.tokenHash === tokenHash && r.status !== 'approved') delete d.requests[id];
     save();
     this.schedulePush(true);
   }
@@ -1194,7 +1207,9 @@ class Hub {
       id: newId('agl'),
       rewarded: new Map(),
       praisedAt: 0,
+      pageNumbers: [],
     };
+    this.agoraOrder.clear();
     // As when an arena lobby opens: other classes' requests can't be approved during this class.
     for (const r of Object.values(d.requests)) {
       if (r.status === 'pending' && r.classId !== classId) {
@@ -1266,16 +1281,20 @@ class Hub {
    * a lesson it comes up to be read first (준비), and after the last topic comes the 끝; in 다시 보기 the class's
    * answers to it come up hidden, and the last topic has no next.
    */
-  nextAgoraTopic() {
+  nextAgoraTopic(from?: number) {
     const live = this.agoraLive;
     const now = this.agoraNow();
     if (!live || !now || live.phase === 'lobby' || live.phase === 'end') return;
+    // `from` is the topic the teacher's screen showed: a second click (or a late repeat) of the same button finds
+    // the next topic up already, and must not skip it.
+    if (from !== undefined && from !== live.index) return;
     const last = live.index >= now.agora.topics.length - 1;
     if (last && live.review !== null) return;
     this.stopTimer();
     live.reveal = 'hidden';
     live.page = 0;
     live.pages = 1;
+    live.pageNumbers = [];
     if (last) live.phase = 'end';
     else {
       live.index += 1;
@@ -1339,33 +1358,39 @@ class Hub {
 
   /**
    * The teacher clicks an answer, on the teacher screen (by student) or on the projector (by number, as its cards
-   * carry no ids): just that answer is shown or hidden. A student without an answer has nothing to flip.
+   * carry no ids): just that answer is shown or hidden. A student without an answer has nothing to flip. The click
+   * says which topic it was on and what it wants (`shown`), so one arriving late, after [다음 주제], can't show an
+   * answer on the next topic; without them (a page from before) it flips.
    */
-  flipAgoraCard(who: { studentId?: string; number?: number }) {
+  flipAgoraCard(who: { studentId?: string; number?: number; topicId?: string; shown?: boolean }) {
     const d = db();
     const board = this.agoraBoard();
     if (!board) return;
     const { live, topic } = board;
+    if (who.topicId !== undefined && who.topicId !== topic.id) return;
     const student = who.studentId !== undefined ? own(d.students, who.studentId) : Object.values(d.students).find((s) => s.classId === live.classId && s.number === who.number);
     const a = student?.classId === live.classId ? own(d.topicAnswers[topic.id] ?? {}, student.id) : undefined;
     if (!a) return;
-    flipCard(live.reveal, a);
+    if (who.shown === undefined) flipCard(live.reveal, a);
+    else setCardShown(live.reveal, a, who.shown);
     save();
     this.schedulePush(true);
   }
 
   /**
    * The teacher's ⭐ on a student's answer to the topic up, from the teacher screen, while its cards are up: given, or
-   * taken back (toggleStar). A student without an answer has nothing to praise.
+   * taken back (toggleStar). A student without an answer has nothing to praise. As with flipAgoraCard, the click says
+   * its topic and whether it gives or takes back, so a late or repeated one does nothing.
    */
-  starAgoraCard(studentId: string) {
+  starAgoraCard(studentId: string, topicId?: string, star?: boolean) {
     const d = db();
     const board = this.agoraBoard();
     const agora = this.agoraNow()?.agora;
     if (!board || !agora) return;
+    if (topicId !== undefined && topicId !== board.topic.id) return;
     const student = own(d.students, studentId);
     const a = student?.classId === board.live.classId ? own(d.topicAnswers[board.topic.id] ?? {}, student.id) : undefined;
-    if (!a) return;
+    if (!a || (star !== undefined && star === !!a.star)) return;
     toggleStar(agora, board.live, a, studentId);
     save();
     this.schedulePush(true);
@@ -1392,20 +1417,29 @@ class Hub {
   }
 
   /** ◀ ▶ on the teacher screen and ←/→ on the projector: one page on, or back. */
-  turnAgoraPage(dir: number) {
+  /** `from` is the page the screen showed, so a double click turns one page, not two. */
+  turnAgoraPage(dir: number, from?: number) {
     const live = this.agoraLive;
     if (!live || !Number.isFinite(dir)) return;
+    if (from !== undefined && from !== live.page) return;
     live.page = clamp(live.page + Math.sign(dir), 0, live.pages - 1);
     this.schedulePush(true);
   }
 
-  /** How many pages the projector's cards take at its size; it measures them and says whenever that changes. */
-  setAgoraPages(count: number) {
+  /**
+   * How many pages the projector's cards take at its size, and which cards (by number) are on each, so the teacher's
+   * preview shows the page the class sees; the projector measures them and says whenever that changes.
+   */
+  setAgoraPages(count: number, numbers?: unknown) {
     const live = this.agoraLive;
     if (!live || !Number.isFinite(count)) return;
     const pages = clamp(Math.round(count), 1, 99);
-    if (pages === live.pages) return;
+    const byPage = Array.isArray(numbers)
+      ? numbers.slice(0, 99).map((p) => (Array.isArray(p) ? p.slice(0, 99).filter((n): n is number => Number.isInteger(n)) : []))
+      : live.pageNumbers;
+    if (pages === live.pages && JSON.stringify(byPage) === JSON.stringify(live.pageNumbers)) return;
     live.pages = pages;
+    live.pageNumbers = byPage;
     live.page = Math.min(live.page, pages - 1);
     this.schedulePush(true);
   }
@@ -1455,8 +1489,9 @@ class Hub {
   }
 
   /** A student's answer to the topic up, new or changed; changed in 다시 쓰기, it keeps its 처음 답. */
-  answerTopic(tokenHash: string, topicId: string, text: unknown) {
+  answerTopic(tokenHash: string, topicId: string, text: unknown, n = NaN) {
     const { student, topic, live } = this.agoraWriter(tokenHash, topicId);
+    if (!this.agoraInOrder(topic.id, student.id, n)) return;
     putAnswer(topic, student.id, text, live.review !== null);
     this.agoraJoin(student.id);
     save();
@@ -1464,12 +1499,25 @@ class Hub {
   }
 
   /** A student takes back their answer; not in 다시 쓰기, where the answer being changed is last lesson's. */
-  unanswerTopic(tokenHash: string, topicId: string) {
+  unanswerTopic(tokenHash: string, topicId: string, n = NaN) {
     const { student, topic, live } = this.agoraWriter(tokenHash, topicId);
     if (live.review !== null) throw new Error('다시 쓰기에서는 지울 수 없어요. 고쳐서 제출해 주세요.');
+    if (!this.agoraInOrder(topic.id, student.id, n)) return;
     dropAnswer(topic, student.id);
     save();
     this.schedulePush(true);
+  }
+
+  /**
+   * Writes and take-backs carry the phone's number for them (as the arena's moves do), so one sent earlier but
+   * arriving later (a retry after a timeout, or a second tab) can't replace a newer answer. Unnumbered ones pass.
+   */
+  private agoraInOrder(topicId: string, studentId: string, n: number): boolean {
+    if (!Number.isFinite(n)) return true;
+    const key = `${topicId}:${studentId}`;
+    if (n <= (this.agoraOrder.get(key) ?? -1)) return false;
+    this.agoraOrder.set(key, n);
+    return true;
   }
 
   /**
@@ -2153,10 +2201,12 @@ class Hub {
 
   // ---------- inputs during play ----------
 
-  move(tokenHash: string, seq: number, point: FieldPoint, n: number) {
+  /** `sid` is the session the phone answered in: every quiz counts its questions from 1, so seq alone can't tell one quiz's late answer from the next quiz's. */
+  move(tokenHash: string, seq: number, point: FieldPoint, n: number, sid?: string) {
     const live = this.live;
     const s = this.studentOf(tokenHash);
     if (!live || !s || live.phase !== 'moving' || live.paused || seq !== live.seq || !live.joined.has(s.id)) return false;
+    if (sid !== undefined && sid !== live.id) return false;
     // Concurrent POSTs can arrive out of order; keep only the newest position.
     const last = live.moveCounter.get(s.id) ?? -1;
     if (Number.isFinite(n) && n <= last) return false;
@@ -2168,15 +2218,17 @@ class Hub {
     return true;
   }
 
-  submitText(tokenHash: string, seq: number, value: string, final: boolean, n: number) {
+  submitText(tokenHash: string, seq: number, value: string, final: boolean, n: number, sid?: string) {
     const live = this.live;
     const s = this.studentOf(tokenHash);
     if (!live || !s || live.phase !== 'moving' || live.paused || seq !== live.seq || !live.joined.has(s.id)) return false;
+    if (sid !== undefined && sid !== live.id) return false;
     if (Number.isFinite(n)) {
       if (n <= (live.textCounter.get(s.id) ?? -1)) return false;
       live.textCounter.set(s.id, n);
     }
-    const text = value.slice(0, MAX_TEXT_ANSWER);
+    // A phone whose box was emptied sends that too, so an answer it no longer shows isn't graded; spaces alone are empty.
+    const text = value.trim() ? value.slice(0, MAX_TEXT_ANSWER) : '';
     const prev = live.texts.get(s.id);
     live.texts.set(s.id, text);
     // A draft of the very same text (an autosave landing after 제출) keeps the answer submitted.
@@ -2447,14 +2499,22 @@ export function hub(): Hub {
   if (!g.__classeumHub) {
     g.__classeumHub = new Hub();
     setInterval(() => g.__classeumHub?.expireRequests(), 10_000);
+    // The teacher screen says when saving fails, and when it works again.
+    watchSaves(() => g.__classeumHub?.schedulePush(true));
     // Ctrl+C (or the next \`npm run class\`) saves and ends every phone, projector and teacher stream, so the
     // server stops at once; left alone, Next waits for those connections to drop and the terminal looks stuck.
     const stop = () => {
-      try {
-        flush();
-      } catch {
-        // Nothing more to save than what the store already wrote.
+      // A save that fails (an antivirus holding the file) is tried a few more times before the server goes.
+      let saved = false;
+      for (let i = 0; i < 5 && !saved; i++) {
+        try {
+          saved = flush();
+        } catch {
+          saved = false;
+        }
+        if (!saved) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
       }
+      if (!saved) process.stderr.write('\n  Classeum: 마지막 기록을 저장하지 못한 채 꺼져요. 저장 오류가 선생님 화면에 떠 있었다면 .data 폴더를 확인해 주세요.\n');
       g.__classeumHub?.closeAll();
       setTimeout(() => process.exit(0), 1500).unref();
     };

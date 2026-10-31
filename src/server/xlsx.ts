@@ -268,6 +268,18 @@ function fromQuestion(key: string, q: Question): Word | null {
 }
 
 /**
+ * A word as an event asked it. The word bank keeps one entry per word, and a later upload can change its spelling or
+ * meaning; an older event's file shows those as its own question had them, with the rest (품사, 헷갈리는 단어, 예문)
+ * from the bank. A question that doesn't say its word plainly leaves the bank's entry as it is.
+ */
+function askedWord(bank: Word | undefined, key: string, q: Question): Word | null {
+  const asked = fromQuestion(key, q);
+  if (!bank) return asked;
+  if (!asked || (asked.spelling === bank.spelling && asked.meaning === bank.meaning)) return bank;
+  return { ...bank, spelling: asked.spelling, meaning: asked.meaning };
+}
+
+/**
  * An event's words and its own questions. Events keep questions, not the word list, so the words are the ones
  * asked, in the order they were first saved (an upload's order, for words new that week).
  */
@@ -279,7 +291,7 @@ export function eventWorkbook(eventId: string) {
   const asked = new Map<string, Question>();
   for (const q of [...e.questions, ...Object.values(e.retry)]) if (q.wordKey && !asked.has(q.wordKey)) asked.set(q.wordKey, q);
   const words = [...asked]
-    .map(([key, q], i) => ({ w: Object.hasOwn(d.words, key) ? d.words[key] : fromQuestion(key, q), at: rank.get(key) ?? rank.size + i }))
+    .map(([key, q], i) => ({ w: askedWord(Object.hasOwn(d.words, key) ? d.words[key] : undefined, key, q), at: rank.get(key) ?? rank.size + i }))
     .filter((x): x is { w: Word; at: number } => !!x.w)
     .sort((a, b) => a.at - b.at)
     .map((x) => wordRow(x.w));

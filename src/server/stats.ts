@@ -188,8 +188,11 @@ export function statsCsv(classId?: string): string {
     s.rewards,
   ]);
   const esc = (v: unknown) => {
-    const t = String(v ?? '');
-    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    let t = String(v ?? '');
+    // Excel runs a cell starting with = + - @ (or a tab or return) as a formula, and a roster pasted by the teacher
+    // can hold any name; a leading ' keeps such a cell plain text. Numbers are left as they are.
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+    return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
   };
   return '﻿' + [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
 }

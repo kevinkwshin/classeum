@@ -267,6 +267,12 @@ async function run(teacher: Stream, display: Stream) {
   const changed = (topic().answers as View[]).find((a) => a.text === '고친 답');
   check('고친 답은 처음 낸 시각을 지킨다 (낸 순서가 바뀌지 않게)', changed && changed.createdAt === firstAt && changed.updatedAt >= changed.createdAt);
   check('수업 중에 고친 답은 처음 답을 따로 남기지 않는다 (다시 쓰기에서만)', changed && changed.first === null);
+  // A phone numbers its writes; one sent earlier that arrives later (a retry, a second tab) must not win.
+  const writeAt = Date.now() * 1000;
+  check('번호가 붙은 새 답이 먼저 도착한다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '고친 답', n: writeAt + 2 }, {})).ok);
+  check('번호가 더 작은 옛 답이 늦게 도착한다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '늦게 온 옛 답', n: writeAt + 1 }, {})).ok);
+  await sleep(200);
+  check('…늦게 온 옛 답은 새 답을 덮지 않는다', a1.s.view.agora.mine?.text === '고친 답' && !(topic().answers as View[]).some((a) => a.text === '늦게 온 옛 답'));
   check('2번이 자기 답을 지운다', (await post({ type: 'agora-unanswer', token: a2.token, topicId: t1 }, {})).ok);
   await sleep(200);
   check('2번 답이 사라졌다', a2.s.view.agora.mine === null && !(topic().answers as View[]).some((a) => a.text === SECRET2));
@@ -294,6 +300,16 @@ async function run(teacher: Stream, display: Stream) {
   check('다시 누르면 보인다', (await post({ type: 'agora-card', studentId: studentId(A, 1) })).ok);
   await sleep(200);
   check('…그리고 다시 전체를 따른다', card(1)?.text === '고친 답' && (topic().answers as View[]).every((x) => x.shown === null));
+  // A click says the topic it was on and what it wants, so a late one can't touch another topic, and a repeat changes nothing.
+  check('다른 주제를 가리키는 숨기기 요청 (늦게 도착한 클릭)', (await post({ type: 'agora-card', studentId: studentId(A, 2), topicId: t2, shown: false })).ok);
+  await sleep(200);
+  check('…은 무시되고 그 답은 그대로 보인다', card(2)?.text === SECRET2);
+  for (let i = 0; i < 2; i++) await post({ type: 'agora-card', studentId: studentId(A, 2), topicId: t1, shown: false });
+  await sleep(200);
+  check('숨기기를 두 번 보내도 숨긴 그대로다 (뒤집지 않는다)', card(2)?.sent && card(2)?.text === undefined);
+  check('보이기로 되돌린다', (await post({ type: 'agora-card', number: 2, topicId: t1, shown: true })).ok);
+  await sleep(200);
+  check('…보이고, 다시 전체를 따른다', card(2)?.text === SECRET2 && (topic().answers as View[]).every((x) => x.shown === null));
 
   section('화면 설정');
   check('열 4개, 번호순', (await post({ type: 'agora-settings', columns: 4, sort: 'number' })).ok);
@@ -357,6 +373,12 @@ async function run(teacher: Stream, display: Stream) {
   check('같은 수업에서 별을 다시 줘도 보상은 한 사람에 한 번 (기록 둘)', praises.length === 2 && praises.every((x) => x.itemId === REWARD.id && /^agl_/.test(x.sessionId)), praises.map((x) => x.studentId).join());
   check('답이 없는 학생에게는 별을 줄 수 없다', (await post({ type: 'agora-star', studentId: studentId(A, 4) })).ok && rewarded().length === 2 && !answerOf(4));
   check('다른 반 학생에게도 줄 수 없다', (await post({ type: 'agora-star', studentId: studentId(B, 7) })).ok && rewarded().length === 2);
+  check('다른 주제를 가리키는 별 요청 (늦게 도착한 클릭)', (await post({ type: 'agora-star', studentId: studentId(A, 3), topicId: t2, star: true })).ok);
+  await sleep(200);
+  check('…은 무시된다', !answerOf(3)?.star && rewarded().length === 2);
+  check('별 주기를 이미 별이 있는 답에 또 보낸다 (두 번 클릭)', (await post({ type: 'agora-star', studentId: studentId(A, 2), topicId: t1, star: true })).ok);
+  await sleep(200);
+  check('…별은 빠지지 않는다', answerOf(2)?.star === true);
 
   section('마감');
   check('선생님이 지금 마감한다', (await post({ type: 'agora-close' })).ok);
@@ -373,10 +395,11 @@ async function run(teacher: Stream, display: Stream) {
 
   section('다음 주제와 건너뛰기');
   const T2A = '주제2 ALPHA-T2';
-  check('다음 주제', (await post({ type: 'agora-next' })).ok);
+  check('다음 주제 (선생님 화면이 보던 주제 1에서)', (await post({ type: 'agora-next', index: 0 })).ok);
+  check('같은 [다음 주제]가 한 번 더 온다 (두 번 클릭)', (await post({ type: 'agora-next', index: 0 })).ok);
   await sleep(300);
   const ready = display.view.agora;
-  check('준비: 프로젝터에 주제 2/3이 먼저 뜨고, 카드와 시계는 없다', ready?.phase === 'ready' && ready.index === 1 && ready.topic.id === t2 && ready.cards.length === 0 && ready.timer === null && ready.reveal === 'hidden');
+  check('준비: 두 번째 클릭은 주제를 건너뛰지 않고, 프로젝터에 주제 2/3이 먼저 뜨고, 카드와 시계는 없다', ready?.phase === 'ready' && ready.index === 1 && ready.topic.id === t2 && ready.cards.length === 0 && ready.timer === null && ready.reveal === 'hidden');
   check('그 반 기기도 주제 2를 보고 기다린다 (친구 카드 없음)', [a1, a2, a3].every((p) => p.s.view.agora?.phase === 'ready' && p.s.view.agora.topic.id === t2 && p.s.view.agora.cards.length === 0));
   check('준비 중에는 별을 줄 수 없다', (await post({ type: 'agora-star', studentId: studentId(A, 3) })).ok && rewarded().length === 2 && !answerOf(3)?.star);
   check('준비 중에는 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId: t2, text: 'x' }, {})).error === '선생님이 시작하면 쓸 수 있어요.');

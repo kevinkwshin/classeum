@@ -215,6 +215,8 @@ export interface TeacherView {
   phones: number;
   /** Every 아고라, the newest first, and the open session if any. */
   agora: { agoras: TeacherAgora[]; live: TeacherAgoraLive | null };
+  /** Why the records aren't reaching the disk right now (it keeps trying); null while saving works. */
+  saveTrouble: string | null;
 }
 
 /** The open 아고라's 입력 시간, on the server's clock; null with no limit, before [쓰기 시작] or once closed. */
@@ -244,6 +246,8 @@ export interface TeacherAgoraLive {
   rewarded: string[];
   /** When the teacher last gave a ⭐ (server clock; 0 before the first), for the applause. */
   praisedAt: number;
+  /** The projector's pages, each its cards' numbers, so the preview shows the same page; [] until it has measured. */
+  pageNumbers: number[][];
   /** The 놀이 방법 demo is playing on the projector. */
   howto: boolean;
 }

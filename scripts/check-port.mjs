@@ -1,5 +1,5 @@
 // Runs before `npm run class`. An older Classeum server still on the port is stopped so the new one can
-// start (asking first if a quiz is running); any other program on the port stops the run instead, before
+// start (asking first if a quiz or an 아고라 is under way); any other program on the port stops the run instead, before
 // the build. Plain Node, so it works on Mac and Windows.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -32,28 +32,55 @@ async function isClasseum() {
   }
 }
 
-/** The running server's quiz phase, read with this folder's teacher key; '' when there is none or it can't tell. */
-async function livePhase() {
+const teacherKey = () => readFileSync(join(process.cwd(), '.data', 'teacher-key'), 'utf8').trim();
+
+/**
+ * What the running server is doing, read with this folder's teacher key: the arena's phase and the 아고라's ('' for
+ * none), or known: false when it can't tell (no answer in time, or another folder's server with another key).
+ */
+async function liveState() {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2000);
   try {
-    const key = readFileSync(join(process.cwd(), '.data', 'teacher-key'), 'utf8').trim();
-    const res = await fetch(`http://localhost:${port}/api/stream?role=teacher`, { headers: { Cookie: `cls_teacher=${key}` }, signal: ctrl.signal });
+    const res = await fetch(`http://localhost:${port}/api/stream?role=teacher`, { headers: { Cookie: `cls_teacher=${teacherKey()}` }, signal: ctrl.signal });
+    if (!res.ok) return { known: false };
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
     for (;;) {
       const { value, done } = await reader.read();
-      if (done) return '';
+      if (done) return { known: false };
       buf += decoder.decode(value, { stream: true });
       const m = buf.match(/data: (.+)\n\n/);
-      if (m) return JSON.parse(m[1]).live?.phase ?? '';
+      if (m) {
+        const view = JSON.parse(m[1]);
+        return { known: true, arena: view.live?.phase ?? '', agora: view.agora?.live?.phase ?? '' };
+      }
     }
   } catch {
-    return '';
+    return { known: false };
   } finally {
     clearTimeout(timer);
     ctrl.abort();
+  }
+}
+
+/**
+ * Has the old server write its records before it is stopped: on Windows the stop below ends it at once, without the
+ * save Ctrl+C gets. An older server without this request just answers no; the stop still goes ahead.
+ */
+async function saveFirst() {
+  try {
+    const res = await fetch(`http://localhost:${port}/api/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: `http://localhost:${port}`, Cookie: `cls_teacher=${teacherKey()}` },
+      body: JSON.stringify({ type: 'save-now' }),
+      signal: AbortSignal.timeout(3000),
+    });
+    const body = await res.json();
+    if (body.ok && body.saved === false) say('켜져 있던 서버가 마지막 기록을 저장하지 못했어요. 끄고 나서 .data 폴더를 확인해 주세요.');
+  } catch {
+    // An older Classeum, or another folder's server: nothing to ask it.
   }
 }
 
@@ -94,6 +121,7 @@ async function stop(pids) {
       // Already gone, or not ours to stop; the checks below decide.
     }
   };
+  await saveFirst();
   pids.forEach((pid) => kill(pid));
   // About 3 s to finish on its own (its pending save goes out meanwhile), then it is stopped for good.
   for (let i = 0; i < 10 && pids.some(alive); i++) await sleep(300);
@@ -114,14 +142,23 @@ if (!(await free())) {
     say(`다른 프로그램이 ${port}번 포트를 쓰고 있어요. 그 프로그램을 끈 다음 다시 실행하세요.`, manual);
     process.exit(1);
   }
-  const phase = await livePhase();
-  if (phase && phase !== 'lobby' && phase !== 'summary') {
+  // A quiz or an 아고라 under way (not just a 대기실 or the results) is asked about first, and so is a server whose
+  // state can't be read: it may be in the middle of one.
+  const state = await liveState();
+  const busy = !state.known
+    ? '켜져 있는 서버가 수업 중인지 확인하지 못했어요.'
+    : state.arena && state.arena !== 'lobby' && state.arena !== 'summary'
+      ? '지금 퀴즈가 진행 중이에요. 끄면 이번 퀴즈는 처음부터 다시 해야 해요.'
+      : ['ready', 'writing', 'closed'].includes(state.agora)
+        ? '지금 아고라가 진행 중이에요. 쓴 답은 남지만, 끄면 [대기실 열기]부터 다시 해야 해요.'
+        : '';
+  if (busy) {
     if (!process.stdin.isTTY) {
-      say('지금 퀴즈가 진행 중이라 켜져 있는 서버를 그대로 둘게요.', '끝난 다음 다시 실행하세요.');
+      say(busy, '켜져 있는 서버를 그대로 둘게요. 끝난 다음 다시 실행하세요.');
       process.exit(1);
     }
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question('\n  지금 퀴즈가 진행 중이에요. 끄면 이번 퀴즈는 처음부터 다시 해야 해요. 끄고 다시 켤까요? (y/N) ');
+    const answer = await rl.question(`\n  ${busy} 끄고 다시 켤까요? (y/N) `);
     rl.close();
     if (!/^(y|yes|ㅛ|네|예)/i.test(answer.trim())) {
       say('켜져 있는 서버를 그대로 둘게요.');

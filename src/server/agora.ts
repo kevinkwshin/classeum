@@ -216,8 +216,12 @@ export function setSettings(t: TopicRec, input: { columns?: unknown; sort?: unkn
  * follows the session again; one that differs keeps its own setting.
  */
 export function flipCard(reveal: TopicReveal, a: TopicAnswerRec) {
-  const next = !isShown(reveal, a);
-  a.shown = next === (reveal === 'public') ? null : next;
+  setCardShown(reveal, a, !isShown(reveal, a));
+}
+
+/** Shows or hides one answer whatever [전체 공개] says; as the session's own setting, it follows that again. */
+export function setCardShown(reveal: TopicReveal, a: TopicAnswerRec, visible: boolean) {
+  a.shown = visible === (reveal === 'public') ? null : visible;
 }
 
 /** Whether an answer's text shows: the card's own setting, or else the session's. */
@@ -269,6 +273,8 @@ export interface AgoraLive {
   rewarded: Map<string, Praise>;
   /** When the teacher last gave a ⭐ (server clock; 0 before the first), so the projector claps for each one. */
   praisedAt: number;
+  /** The cards on each of the projector's pages, by student number, as it measured them; [] until it says. */
+  pageNumbers: number[][];
 }
 
 /** A reward for a ⭐: the item, whether the student already had it (then nothing new reaches their 보관함), and when. */
@@ -472,6 +478,7 @@ export function teacherAgora(live: AgoraLive | null) {
     wrote: [...live.wrote],
     rewarded: [...live.rewarded.keys()],
     praisedAt: live.praisedAt,
+    pageNumbers: live.pageNumbers,
     howto: live.howtoAt !== null,
   };
   return { agoras, live: session };

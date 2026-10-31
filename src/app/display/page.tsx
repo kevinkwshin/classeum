@@ -52,6 +52,7 @@ function DisplayApp() {
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;
   const agoraUp = !!agora;
+  const agoraPage = agora?.page ?? 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Shift+S (다음 유형) asks for confirmation on the teacher screen, so it isn't taken here.
@@ -59,7 +60,7 @@ function DisplayApp() {
       // With an 아고라 topic up, ←/→ turn the pages of answer cards.
       if (agoraUp && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
         e.preventDefault();
-        send({ type: 'agora-page', dir: e.code === 'ArrowRight' ? 1 : -1 }).catch(() => undefined);
+        send({ type: 'agora-page', dir: e.code === 'ArrowRight' ? 1 : -1, from: agoraPage }).catch(() => undefined);
         return;
       }
       const action = shortcutAction(e.code, paused);
@@ -71,7 +72,7 @@ function DisplayApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paused, send, agoraUp]);
+  }, [paused, send, agoraUp, agoraPage]);
 
   if (!view) return <Shell><Center>연결 중…</Center></Shell>;
   if (view.blank) return <Shell><Center><span className="font-display text-7xl font-bold">Classeum</span></Center></Shell>;
@@ -178,9 +179,11 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
   // The server keeps the page the teacher turns to, so it needs to know how many there are; only once measured, so a
   // projector window opened again mid-class doesn't send the teacher back to the first page.
   const measured = pages.length > 0;
+  // Which cards (by number) each page holds, so the teacher's preview shows the page the class sees.
+  const numbersKey = JSON.stringify(pages.map((p) => p.map((i) => agora.cards[i]?.number).filter((n) => n !== undefined)));
   useEffect(() => {
-    if (measured) send({ type: 'agora-pages', count }).catch(() => undefined);
-  }, [measured, count, t.id, send]);
+    if (measured) send({ type: 'agora-pages', count, numbers: JSON.parse(numbersKey) }).catch(() => undefined);
+  }, [measured, count, numbersKey, t.id, send]);
   const page = Math.min(agora.page, count - 1);
   const shown = (pages[page] ?? agora.cards.map((_, i) => i)).map((i) => agora.cards[i]).filter(Boolean);
   return (
@@ -220,7 +223,7 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
         <div className="grid h-full content-start gap-[1vw] overflow-y-auto" style={grid}>
           {/* The teacher can click an answer here too, to show or hide just that one. */}
           {shown.map((c) => (
-            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} onFlip={c.sent ? () => send({ type: 'agora-card', number: c.number }).catch(() => undefined) : undefined} />
+            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} onFlip={c.sent ? () => send({ type: 'agora-card', number: c.number, topicId: t.id, shown: c.text === undefined }).catch(() => undefined) : undefined} />
           ))}
           {agora.cards.length === 0 && (
             <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">{agora.review !== null && agora.phase === 'closed' ? '이 주제에 쓴 답이 없어요' : '태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요'}</div>
