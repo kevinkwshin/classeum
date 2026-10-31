@@ -1566,8 +1566,9 @@ const PICK = 'h-10 w-full rounded-lg border border-[#D5D8DF] bg-white px-2 text-
 
 /**
  * [새 아고라] and [수정]: the arena's [직접 작성하기] window for an 아고라, a title and a table with a topic on each row:
- * its question, 보조 설명, and its own 입력 시간, 열 and 순서. The class does the topics in the table's order; rows left
- * empty are left out.
+ * its kind, question, 보조 설명 and 입력 시간. 열 and 순서 aren't here: a new topic starts at 2열 · 번호순, and the
+ * console changes them in class, where they stay with the topic. The class does the topics in the table's order; rows
+ * left empty are left out.
  */
 function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDraft; change: (next: (d: AgoraDraft) => AgoraDraft) => void; busy: boolean; onClose: () => void; onSave: () => void }) {
   const filled = draft.rows.filter((r) => r.text.trim()).length;
@@ -1585,7 +1586,8 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
   const [reading, setReading] = useState<number | null>(null);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8">
-      <div className="flex max-h-full w-full max-w-5xl flex-col gap-4 overflow-hidden rounded-[24px] bg-white p-7">
+      {/* One height from opening to closing: more rows, or a row turned into 받아쓰기, scroll inside the table. */}
+      <div className="flex h-[min(44rem,100%)] w-full max-w-5xl flex-col gap-4 overflow-hidden rounded-[24px] bg-white p-7">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">{draft.agoraId ? '아고라 고치기' : '새 아고라'}</h2>
           <span className="rounded-full bg-good-soft px-3 py-1 text-sm font-bold text-good">주제 {filled}</span>
@@ -1599,16 +1601,14 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
           aria-label="제목"
           className="h-12 shrink-0 rounded-xl border border-[#D5D8DF] px-4 text-lg font-bold outline-none focus:border-ink"
         />
-        <p className="text-sm text-ink-3">한 줄에 주제 하나. 작문은 질문과 예시 문장을, 받아쓰기는 노트북이 읽어 줄 영어 문장을 써요. 수업에서는 위에서부터 차례로 해요.</p>
+        <p className="text-sm text-ink-3">한 줄에 주제 하나. 작문은 질문과 예시 문장을, 받아쓰기는 노트북이 읽어 줄 영어 문장을 써요(수업 중에는 정답 공개 뒤에 보여요). 수업에서는 위에서부터 차례로 하고, 카드 열과 순서는 진행 화면에서 바꿔요.</p>
         <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-[#EEF0F3]">
           <table className="w-full table-fixed text-[15px]">
             <colgroup>
               <col className="w-10" />
               <col className="w-[8.5rem]" />
-              <col className="w-[32%]" />
+              <col className="w-[38%]" />
               <col />
-              <col className="w-28" />
-              <col className="w-20" />
               <col className="w-28" />
               <col className="w-10" />
             </colgroup>
@@ -1619,8 +1619,6 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
                 <th className="py-2 font-semibold">주제 · 받아쓰기 문장</th>
                 <th className="py-2 font-semibold">보조 설명 (선택)</th>
                 <th className="py-2 font-semibold">입력 시간</th>
-                <th className="py-2 font-semibold">열</th>
-                <th className="py-2 font-semibold">카드 순서</th>
                 <th />
               </tr>
             </thead>
@@ -1660,40 +1658,44 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
                       aria-label={dictation ? `${i + 1}번 받아쓰기 문장` : `${i + 1}번 주제`}
                       className={`${CELL} font-bold ${fixed ? 'text-ink-3' : ''}`}
                     />
-                    {dictation && (
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 px-1">
-                        <span className="text-xs text-ink-3">{fixed ? '답이 있어서 바꿀 수 없어요' : '수업 중에는 정답 공개 뒤에 보여요'}</span>
-                        <button
-                          type="button"
-                          disabled={!r.text.trim() || canSpeak === false}
-                          title={canSpeak === false ? '이 노트북에는 영어 목소리가 없어요. 수업 때 직접 읽어 주세요.' : '노트북 목소리로 미리 들어 봐요'}
-                          onClick={() => {
-                            if (speaking && reading === i) stop();
-                            else {
-                              setReading(i);
-                              speak(r.text);
-                            }
-                          }}
-                          className="h-7 rounded-lg bg-ink px-2.5 text-xs font-bold text-white disabled:opacity-40"
-                        >
-                          {speaking && reading === i ? '■ 멈춤' : '▶ 읽어 주기'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!r.text.trim() || draft.rows.length >= TOPICS_MAX}
-                          title={draft.rows.length >= TOPICS_MAX ? `주제는 ${TOPICS_MAX}개까지예요` : '바로 아래에 같은 질문의 작문 주제를 넣어요'}
-                          onClick={() => answerNext(i)}
-                          className="h-7 rounded-lg border border-[#D5D8DF] bg-white px-2.5 text-xs font-bold text-ink disabled:opacity-40"
-                        >
-                          + 같은 질문으로 작문
-                        </button>
-                        {added === i + 1 && <span className="text-xs font-bold text-good">바로 아래에 작문 주제를 넣었어요</span>}
-                      </div>
-                    )}
                   </td>
                   <td className="py-1.5 pr-2">
+                    {/* A 받아쓰기 has no 보조 설명: its buttons and note sit there instead, so its row is as tall as a 작문's. */}
                     {dictation ? (
-                      <div className="px-3 pt-2.5 text-sm text-ink-3">—</div>
+                      <div className="mt-1 flex flex-col items-start gap-1">
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            disabled={!r.text.trim() || canSpeak === false}
+                            title={canSpeak === false ? '이 노트북에는 영어 목소리가 없어요. 수업 때 직접 읽어 주세요.' : '노트북 목소리로 미리 들어 봐요'}
+                            onClick={() => {
+                              if (speaking && reading === i) stop();
+                              else {
+                                setReading(i);
+                                speak(r.text);
+                              }
+                            }}
+                            className="h-[26px] whitespace-nowrap rounded-lg bg-ink px-2.5 text-xs font-bold text-white disabled:opacity-40"
+                          >
+                            {speaking && reading === i ? '■ 멈춤' : '▶ 읽어 주기'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!r.text.trim() || draft.rows.length >= TOPICS_MAX}
+                            title={draft.rows.length >= TOPICS_MAX ? `주제는 ${TOPICS_MAX}개까지예요` : '바로 아래에 같은 질문의 작문 주제를 넣어요'}
+                            onClick={() => answerNext(i)}
+                            className="h-[26px] whitespace-nowrap rounded-lg border border-[#D5D8DF] bg-white px-2.5 text-xs font-bold text-ink disabled:opacity-40"
+                          >
+                            + 같은 질문으로 작문
+                          </button>
+                        </div>
+                        {/* Only when there is something to say, so the row keeps a 작문 row's height (the window's line says the rest). */}
+                        {(added === i + 1 || fixed) && (
+                          <span className={`whitespace-nowrap text-xs ${added === i + 1 ? 'font-bold text-good' : 'text-ink-3'}`}>
+                            {added === i + 1 ? '바로 아래에 작문 주제를 넣었어요' : '답이 있어서 문장을 바꿀 수 없어요'}
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <textarea
                         value={r.note}
@@ -1714,25 +1716,6 @@ function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDra
                       <option value={0}>제한 없음</option>
                     </select>
                   </td>
-                  {dictation ? (
-                    <td colSpan={2} className="px-3 pt-4 text-sm text-ink-3">—</td>
-                  ) : (
-                    <>
-                      <td className="py-1.5 pr-2">
-                        <select value={r.columns} onChange={(e) => setRow(i, { columns: Number(e.target.value) })} aria-label={`${i + 1}번 프로젝터 열`} className={PICK}>
-                          {COLUMN_CHOICES.map((n) => (
-                            <option key={n} value={n}>{n}열</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-1.5 pr-2">
-                        <select value={r.sort} onChange={(e) => setRow(i, { sort: e.target.value === 'time' ? 'time' : 'number' })} aria-label={`${i + 1}번 카드 순서`} className={PICK}>
-                          <option value="number">번호순</option>
-                          <option value="time">낸 순서</option>
-                        </select>
-                      </td>
-                    </>
-                  )}
                   <td className="pt-1.5">
                     <button
                       type="button"
