@@ -14,5 +14,6 @@ export const DEFAULT_MINUTES = 10;
 
 /** Cards in number order, or in the order students first answered (those who haven't follow, by number). */
 export type TopicSort = 'number' | 'time';
-export type TopicStatus = 'draft' | 'open' | 'closed';
 export type TopicReveal = 'hidden' | 'public';
+/** An open 아고라: its 대기실, writing after [쓰기 시작], and 마감 (by the teacher or the 입력 시간) until it is closed. */
+export type AgoraPhase = 'lobby' | 'writing' | 'closed';

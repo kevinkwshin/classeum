@@ -1,13 +1,13 @@
 import type { NextRequest } from 'next/server';
 import { hashToken, hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
-import { addTopic, copyTopic, editTopic, orderTopics } from '@/server/agora';
+import { addTopic, editTopic } from '@/server/agora';
 
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
-  'agora-add', 'agora-edit', 'agora-delete', 'agora-order', 'agora-copy', 'agora-show', 'agora-close', 'agora-down', 'agora-time',
-  'agora-reveal', 'agora-layout', 'agora-page', 'agora-pages', 'agora-music', 'agora-card', 'agora-card-delete',
+  'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-start', 'agora-close', 'agora-end', 'agora-time',
+  'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card', 'agora-card-delete',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -98,51 +98,50 @@ export async function POST(request: NextRequest) {
           h.control(String(body.action));
           break;
         case 'agora-add':
-          return Response.json({ ok: true, topicId: h.changeAgora(() => addTopic(String(body.classId), body)) });
+          return Response.json({ ok: true, topicId: h.changeAgora(() => addTopic(body)) });
         case 'agora-edit':
           h.changeAgora(() => editTopic(String(body.topicId), body));
           break;
         case 'agora-delete':
           h.removeTopic(String(body.topicId));
           break;
-        case 'agora-order':
-          h.changeAgora(() => orderTopics(String(body.classId), Array.isArray(body.topicIds) ? body.topicIds.slice(0, 500).map(String) : []));
+        case 'agora-open':
+          h.openAgora(String(body.topicId), String(body.classId));
           break;
-        case 'agora-copy':
-          return Response.json({ ok: true, copied: h.changeAgora(() => copyTopic(String(body.topicId), Array.isArray(body.classIds) ? body.classIds.slice(0, 100).map(String) : [])) });
-        case 'agora-show':
-          h.showTopic(String(body.topicId));
+        case 'agora-start':
+          h.startAgora();
           break;
         case 'agora-close':
-          h.closeTopic();
+          h.closeAgora();
           break;
-        case 'agora-down':
-          h.takeDownTopic();
+        case 'agora-end':
+          h.endAgora();
           break;
         case 'agora-time':
-          h.adjustTopicTime(Number(body.minutes));
+          h.adjustAgoraTime(Number(body.minutes));
           break;
         case 'agora-reveal':
-          h.revealTopic(String(body.topicId), body.public === true);
+          h.revealAgora(body.public === true);
           break;
-        case 'agora-layout':
-          h.layoutTopic(String(body.topicId), { columns: body.columns, sort: body.sort });
+        case 'agora-settings':
+          // minutes: null is 제한 없음; left out, the 입력 시간 stays.
+          h.agoraSettings({ minutes: 'minutes' in body ? body.minutes : undefined, columns: body.columns, sort: body.sort });
           break;
         case 'agora-page':
-          h.turnPage(Number(body.dir));
+          h.turnAgoraPage(Number(body.dir));
           break;
         // From the projector window, which holds the teacher cookie too.
         case 'agora-pages':
-          h.setTopicPages(Number(body.count));
+          h.setAgoraPages(Number(body.count));
           break;
         case 'agora-music':
-          h.toggleTopicMusic();
+          h.toggleAgoraMusic();
           break;
         case 'agora-card':
-          h.flipTopicCard(String(body.topicId), { studentId: body.studentId === undefined ? undefined : String(body.studentId), number: body.number === undefined ? undefined : Number(body.number) });
+          h.flipAgoraCard({ studentId: body.studentId === undefined ? undefined : String(body.studentId), number: body.number === undefined ? undefined : Number(body.number) });
           break;
         case 'agora-card-delete':
-          h.removeTopicCard(String(body.topicId), String(body.studentId));
+          h.removeAgoraCard(String(body.topicId), String(body.studentId));
           break;
       }
       return Response.json({ ok: true });

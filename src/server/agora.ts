@@ -1,8 +1,9 @@
 // 아고라: topics a class answers in writing, and the answers. The records live in store.ts; this keeps them in shape
-// (what the teacher may type, each class's order, copies for other classes, the answers students send), tidies up
-// after deleted classes and students, and builds what each screen gets. Which topic is on screen, and who may write,
-// is the hub's (Hub.showTopic, Hub.answerTopic); it saves and pushes every screen its new view after each change.
-import { ANSWER_MAX, COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TOPIC_MAX, type TopicSort } from '@/lib/agora';
+// (what the teacher may type, the answers students send), tidies up after deleted classes and
+// students, and builds what each screen gets. A topic is made once and opened for one class at a time, the way an
+// arena event is: the session (대기실, 쓰기, 마감) is the hub's (Hub.openAgora, Hub.answerTopic), and it saves and
+// pushes every screen its new view after each change.
+import { ANSWER_MAX, COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TOPIC_MAX, type AgoraPhase, type TopicReveal, type TopicSort } from '@/lib/agora';
 import { normalizeLook } from '@/lib/avatar';
 import type { AvatarLook } from '@/lib/types';
 import { db, newId, type TopicAnswerRec, type TopicRec } from './store';
@@ -30,14 +31,10 @@ export function cleanText(raw: unknown): string {
     .trim();
 }
 
-/** A class's topics in the teacher's order. */
-function topicsOf(classId: string): TopicRec[] {
-  return Object.values(db().topics)
-    .filter((t) => t.classId === classId)
-    .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
+/** Every topic, the newest first, as the arena lists its events. */
+function topicList(): TopicRec[] {
+  return Object.values(db().topics).sort((a, b) => b.createdAt - a.createdAt);
 }
-
-const nextOrder = (classId: string) => topicsOf(classId).reduce((last, t) => Math.max(last, t.order + 1), 0);
 
 export interface TopicInput {
   text?: unknown;
@@ -62,12 +59,10 @@ function topicFields(input: TopicInput, prev?: TopicRec) {
   return { text, note, columns, sort, minutes };
 }
 
-/** A new topic at the end of the class's list, 대기 until the teacher puts it up. */
-export function addTopic(classId: string, input: TopicInput): string {
-  const d = db();
-  if (!own(d.classes, classId)) throw new Error('반을 먼저 골라 주세요.');
+/** A new topic, for any class to open. */
+export function addTopic(input: TopicInput): string {
   const id = newId('top');
-  d.topics[id] = { id, classId, ...topicFields(input), order: nextOrder(classId), status: 'draft', reveal: 'hidden', createdAt: Date.now() };
+  db().topics[id] = { id, ...topicFields(input), runs: {}, createdAt: Date.now() };
   return id;
 }
 
@@ -85,39 +80,9 @@ export function deleteTopic(topicId: string) {
   delete d.topicAnswers[topicId];
 }
 
-/** The class's topics in the order given; ids that aren't the class's are ignored, and any left out follow in their old order. */
-export function orderTopics(classId: string, topicIds: string[]) {
-  const mine = topicsOf(classId);
-  const given = topicIds.map((id) => mine.find((t) => t.id === id)).filter((t): t is TopicRec => !!t);
-  [...new Set([...given, ...mine])].forEach((t, i) => {
-    t.order = i;
-  });
-}
-
-/** The same topic, 대기 and without answers, at the end of each other class picked; returns how many classes got it. */
-export function copyTopic(topicId: string, classIds: string[]): number {
-  const d = db();
-  const t = own(d.topics, topicId);
-  if (!t) throw new Error('그 주제가 없어졌어요. 화면을 새로 고쳐 주세요.');
-  let copied = 0;
-  for (const classId of new Set(classIds)) {
-    if (classId === t.classId || !own(d.classes, classId)) continue;
-    const id = newId('top');
-    d.topics[id] = { id, classId, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes, order: nextOrder(classId), status: 'draft', reveal: 'hidden', createdAt: Date.now() };
-    copied++;
-  }
-  if (!copied) throw new Error('복사할 다른 반을 골라 주세요.');
-  return copied;
-}
-
-/** A deleted class takes its topics and their answers with it. */
-export function dropClassTopics(classId: string) {
-  const d = db();
-  for (const t of Object.values(d.topics)) {
-    if (t.classId !== classId) continue;
-    delete d.topics[t.id];
-    delete d.topicAnswers[t.id];
-  }
+/** A deleted class leaves no runs behind; its students' answers go with them (dropStudentAnswers). */
+export function dropClassRuns(classId: string) {
+  for (const t of Object.values(db().topics)) delete t.runs[classId];
 }
 
 /** Students taken off the roster take their answers with them. */
@@ -141,34 +106,44 @@ export function dropAnswer(t: TopicRec, studentId: string) {
   if (answers && own(answers, studentId)) delete answers[studentId];
 }
 
-/**
- * [공개] or [비공개]. Going public lets go of cards shown one by one (every card shows now); a card hidden on its own
- * stays hidden whichever way the topic goes, until the teacher shows it again.
- */
-export function setReveal(t: TopicRec, isPublic: boolean) {
-  t.reveal = isPublic ? 'public' : 'hidden';
-  if (!isPublic) return;
-  for (const a of Object.values(db().topicAnswers[t.id] ?? {})) if (a.shown === true) a.shown = null;
+/** One class's answers to a topic. */
+function classAnswers(t: TopicRec, classId: string): TopicAnswerRec[] {
+  const d = db();
+  return Object.entries(d.topicAnswers[t.id] ?? {})
+    .filter(([studentId]) => own(d.students, studentId)?.classId === classId)
+    .map(([, a]) => a);
 }
 
-/** 열 and 순서, which the teacher may switch in class too; either stays with the topic for next time. */
-export function setLayout(t: TopicRec, input: { columns?: unknown; sort?: unknown }) {
+/** A new session starts with every card of the class following it; cards shown or hidden one by one last time let go. */
+export function resetCards(t: TopicRec, classId: string) {
+  for (const a of classAnswers(t, classId)) a.shown = null;
+}
+
+/** [전체 공개] lets go of cards shown one by one (every card shows now); a card hidden on its own stays hidden. */
+export function revealCards(t: TopicRec, classId: string) {
+  for (const a of classAnswers(t, classId)) if (a.shown === true) a.shown = null;
+}
+
+/** 입력 시간, 열 and 순서, which stay with the topic for next time; a value that isn't one of the choices changes nothing. */
+export function setSettings(t: TopicRec, input: { minutes?: unknown; columns?: unknown; sort?: unknown }) {
+  if (input.minutes === null) t.minutes = null;
+  else if ((MINUTE_CHOICES as readonly number[]).includes(Number(input.minutes))) t.minutes = Number(input.minutes);
   if ((COLUMN_CHOICES as readonly number[]).includes(Number(input.columns))) t.columns = Number(input.columns);
   if (input.sort === 'number' || input.sort === 'time') t.sort = input.sort;
 }
 
 /**
- * The teacher clicks an answer: it flips from what shows now. A card that ends up as the topic would show it anyway
- * follows the topic again; one that differs keeps its own setting.
+ * The teacher clicks an answer: it flips from what shows now. A card that ends up as the session would show it anyway
+ * follows the session again; one that differs keeps its own setting.
  */
-export function flipCard(t: TopicRec, a: TopicAnswerRec) {
-  const next = !isShown(t, a);
-  a.shown = next === (t.reveal === 'public') ? null : next;
+export function flipCard(reveal: TopicReveal, a: TopicAnswerRec) {
+  const next = !isShown(reveal, a);
+  a.shown = next === (reveal === 'public') ? null : next;
 }
 
-/** Whether an answer's text shows: the card's own setting, or else the topic's. */
-export function isShown(t: TopicRec, a: TopicAnswerRec): boolean {
-  return a.shown === null ? t.reveal === 'public' : a.shown;
+/** Whether an answer's text shows: the card's own setting, or else the session's. */
+export function isShown(reveal: TopicReveal, a: TopicAnswerRec): boolean {
+  return a.shown === null ? reveal === 'public' : a.shown;
 }
 
 /** A student's card on the projector and the class's phones. */
@@ -181,84 +156,115 @@ export interface RoomCard {
   text?: string;
 }
 
+/** The 입력 시간 running (server clock); null when the topic has no limit or writing is over. */
+export type AgoraTimer = { startedAt: number; endsAt: number } | null;
+
 /**
- * The cards for a topic on screen: the class's students who have been in the room while it was up (`present`) and
- * anyone with an answer on it, by number or by when they first answered. This is the only way answers reach the
- * projector and the phones.
+ * The 아고라 session the hub keeps, in memory only like the arena's: the topic open for one class and its phase
+ * (대기실, 쓰기, 마감), whether answers show, the projector's page out of the pages its cards take (the projector
+ * measures them and says), whether the song plays, the 입력 시간, and the class's students who have come in.
  */
-export function roomCards(t: TopicRec, present: ReadonlySet<string>): RoomCard[] {
+export interface AgoraLive {
+  topicId: string;
+  classId: string;
+  phase: AgoraPhase;
+  reveal: TopicReveal;
+  page: number;
+  pages: number;
+  music: boolean;
+  timer: AgoraTimer;
+  joined: Set<string>;
+}
+
+/**
+ * The cards once writing starts: the class's students who have come in and anyone of the class with an answer, by
+ * number or by when they first answered. This is the only way answers reach the projector and the phones.
+ */
+export function roomCards(t: TopicRec, live: AgoraLive): RoomCard[] {
   const d = db();
   const answers = d.topicAnswers[t.id] ?? {};
   // A student who hasn't answered goes after those who have, by number.
   const firstAt = (id: string) => own(answers, id)?.createdAt ?? Infinity;
   return Object.values(d.students)
-    .filter((s) => s.classId === t.classId && (present.has(s.id) || own(answers, s.id)))
+    .filter((s) => s.classId === live.classId && (live.joined.has(s.id) || own(answers, s.id)))
     .sort((a, b) => (t.sort === 'time' ? firstAt(a.id) - firstAt(b.id) : 0) || a.number - b.number)
     .map((s) => {
       const a = own(answers, s.id);
       const card: RoomCard = { number: s.number, name: s.name, look: normalizeLook(s.look ?? undefined), sent: !!a };
-      if (a && isShown(t, a)) card.text = a.text;
+      if (a && isShown(live.reveal, a)) card.text = a.text;
       return card;
     });
 }
 
-/** The 입력 시간 running for the topic on screen (server clock); null when it has no limit or is closed. */
-export type AgoraTimer = { startedAt: number; endsAt: number } | null;
-
-/**
- * What the hub keeps about the topic on screen: the projector's page out of the pages its cards take (the projector
- * measures them and says), whether the song plays, and the 입력 시간.
- */
-export interface AgoraScreen {
-  topicId: string;
-  page: number;
-  pages: number;
-  music: boolean;
-  timer: AgoraTimer;
+/** Who has come in, for the 대기실 on the projector. */
+function joinedStudents(live: AgoraLive) {
+  const students = db().students;
+  return [...live.joined]
+    .map((id) => own(students, id))
+    .filter((s) => s !== undefined)
+    .sort((a, b) => a.number - b.number)
+    .map((s) => ({ number: s.number, name: s.name, look: normalizeLook(s.look ?? undefined) }));
 }
 
-/** What the projector gets of the topic on screen. */
-export function displayAgora(t: TopicRec, present: ReadonlySet<string>, screen: AgoraScreen) {
+/** What the projector gets: in the 대기실 the topic and who has come in, then the cards. */
+export function displayAgora(t: TopicRec, live: AgoraLive) {
+  const lobby = live.phase === 'lobby';
   return {
-    topic: { id: t.id, text: t.text, note: t.note, className: own(db().classes, t.classId)?.name ?? '', status: t.status, reveal: t.reveal, columns: t.columns, sort: t.sort },
-    cards: roomCards(t, present),
-    page: screen.page,
-    music: screen.music,
-    timer: screen.timer,
+    phase: live.phase,
+    className: own(db().classes, live.classId)?.name ?? '',
+    topic: { id: t.id, text: t.text, note: t.note, minutes: t.minutes, columns: t.columns, sort: t.sort },
+    reveal: live.reveal,
+    joined: lobby ? joinedStudents(live) : [],
+    cards: lobby ? [] : roomCards(t, live),
+    page: live.page,
+    music: live.music,
+    timer: live.timer,
   };
 }
 
-/** What a student of the topic's class gets: the topic, their own answer whether it shows or not, and the class's cards. */
-export function studentAgora(t: TopicRec, studentId: string, present: ReadonlySet<string>, timer: AgoraTimer) {
+/** What a student of the session's class gets: the topic, their own answer whether it shows or not, and the class's cards once writing starts. */
+export function studentAgora(t: TopicRec, live: AgoraLive, studentId: string) {
   const mine = own(db().topicAnswers[t.id] ?? {}, studentId);
   return {
-    topic: { id: t.id, text: t.text, note: t.note, status: t.status, reveal: t.reveal },
+    phase: live.phase,
+    topic: { id: t.id, text: t.text, note: t.note },
+    reveal: live.reveal,
     mine: mine ? { text: mine.text } : null,
-    cards: roomCards(t, present),
-    timer,
+    cards: live.phase === 'lobby' ? [] : roomCards(t, live),
+    timer: live.timer,
   };
 }
 
 /**
- * The teacher screen's 아고라: every class's topics with every answer (a few lessons' worth, so all of it), the topic
- * on screen, and who has been in its room.
+ * The teacher screen's 아고라: every topic, the newest first, with the classes that did it and every answer (a few
+ * lessons' worth, so all of it), and the open session.
  */
-export function teacherAgora(screen: AgoraScreen | null, present: ReadonlySet<string>) {
+export function teacherAgora(live: AgoraLive | null) {
   const d = db();
-  const topics = Object.values(d.topics)
-    .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
-    .map((t) => ({
-      id: t.id,
-      classId: t.classId,
-      text: t.text,
-      note: t.note,
-      columns: t.columns,
-      sort: t.sort,
-      minutes: t.minutes,
-      status: t.status,
-      reveal: t.reveal,
-      createdAt: t.createdAt,
-      answers: Object.entries(d.topicAnswers[t.id] ?? {}).map(([studentId, a]) => ({ studentId, text: a.text, shown: a.shown, createdAt: a.createdAt, updatedAt: a.updatedAt })),
-    }));
-  return { topics, screen: screen && { ...screen, timer: screen.timer && { ...screen.timer } }, present: [...present] };
+  const topics = topicList().map((t) => ({
+    id: t.id,
+    text: t.text,
+    note: t.note,
+    columns: t.columns,
+    sort: t.sort,
+    minutes: t.minutes,
+    createdAt: t.createdAt,
+    runs: Object.entries(t.runs)
+      .filter(([classId]) => own(d.classes, classId))
+      .map(([classId, at]) => ({ classId, at })),
+    answers: Object.entries(d.topicAnswers[t.id] ?? {}).map(([studentId, a]) => ({ studentId, text: a.text, shown: a.shown, createdAt: a.createdAt, updatedAt: a.updatedAt })),
+  }));
+  const session = live && {
+    topicId: live.topicId,
+    classId: live.classId,
+    className: own(d.classes, live.classId)?.name ?? '',
+    phase: live.phase,
+    reveal: live.reveal,
+    page: live.page,
+    pages: live.pages,
+    music: live.music,
+    timer: live.timer && { ...live.timer },
+    joined: [...live.joined],
+  };
+  return { topics, live: session };
 }

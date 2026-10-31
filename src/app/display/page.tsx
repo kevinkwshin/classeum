@@ -13,6 +13,7 @@ import { PixelAvatar } from '@/components/PixelAvatar';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK } from '@/lib/avatar';
 import { itemById, previewLook } from '@/lib/items';
+import type { AvatarLook } from '@/lib/types';
 
 export default function DisplayPage() {
   return (
@@ -42,7 +43,7 @@ function DisplayApp() {
   // An 아고라 topic is never up while a session is open; while one is, its own song plays instead.
   const agora = s ? null : (view?.agora ?? null);
   useBackgroundMusic(
-    agora ? (agora.music && audioOn ? agoraMusicLevel(agora.topic.status, agora.topic.reveal) : 0) : musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0,
+    agora ? (agora.music && audioOn ? agoraMusicLevel(agora.phase, agora.reveal) : 0) : musicOn && audioOn ? musicLevel(s?.phase, view?.blank, s?.paused) : 0,
     agora ? AGORA_MUSIC_SRC : MUSIC_SRC,
   );
 
@@ -77,7 +78,7 @@ function DisplayApp() {
       <Shell>
         {conn === 'lost' && <div className="absolute right-6 top-4 z-50 rounded-full bg-bad px-4 py-1 text-sm font-bold text-white">연결 끊김 · 다시 연결 중</div>}
         {agora.music && !audioOn && <div className="absolute bottom-3 right-4 z-50 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ink-3">🔇 소리를 켜려면 이 화면을 한 번 클릭하세요</div>}
-        <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />
+        {agora.phase === 'lobby' ? <AgoraLobby view={view} agora={agora} /> : <AgoraBoard agora={agora} joinUrl={view.joinUrl} now={serverNow()} send={send} />}
         <FullscreenHint />
       </Shell>
     );
@@ -173,9 +174,9 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[1.4vw]">
       <div className="flex items-center gap-4">
-        <div className="text-3xl font-bold text-accent">{t.className}</div>
+        <div className="text-3xl font-bold text-accent">{agora.className}</div>
         <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">아고라</div>
-        {t.status === 'closed' && <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">마감</div>}
+        {agora.phase === 'closed' && <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">마감</div>}
         <div className="ml-auto flex items-center gap-3">
           {agora.timer && <AgoraClock timer={agora.timer} now={now} />}
           <div className="flex items-center gap-4 rounded-full bg-ink py-2 pl-2 pr-7 text-white">
@@ -195,14 +196,14 @@ function AgoraBoard({ agora, joinUrl, now, send }: { agora: DisplayAgora; joinUr
       <div ref={area} className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={ruler} aria-hidden className="invisible absolute inset-x-0 top-0 grid content-start gap-[1vw]" style={grid}>
           {agora.cards.map((c) => (
-            <AgoraCardView key={c.number} c={c} open={t.status === 'open'} />
+            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} />
           ))}
         </div>
         {/* A card taller than the whole space (a long answer in four columns) can still be scrolled to. */}
         <div className="grid h-full content-start gap-[1vw] overflow-y-auto" style={grid}>
           {/* The teacher can click an answer here too, to show or hide just that one. */}
           {shown.map((c) => (
-            <AgoraCardView key={c.number} c={c} open={t.status === 'open'} onFlip={c.sent ? () => send({ type: 'agora-card', topicId: t.id, number: c.number }).catch(() => undefined) : undefined} />
+            <AgoraCardView key={c.number} c={c} open={agora.phase === 'writing'} onFlip={c.sent ? () => send({ type: 'agora-card', number: c.number }).catch(() => undefined) : undefined} />
           ))}
           {agora.cards.length === 0 && <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요</div>}
         </div>
@@ -308,6 +309,74 @@ function Lobby({ view, s, serverNow }: { view: DisplayView; s: SessionPublic; se
   const avatars = view.lobby?.avatars ?? [];
   // While the teacher's 놀이 방법 plays, the demo takes the characters' and the reward card's place.
   const howtoAt = view.howto && view.howtoAt ? view.howtoAt : null;
+  return (
+    // min-h-0: a lobby opened with the class already connected must not stretch past the screen before it is measured.
+    <div className="flex min-h-0 flex-1 gap-[3vw]">
+      <LobbyQr view={view} />
+      <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
+        <LobbyHeader className={s.className} title={s.eventName} sub={`${s.mainCount}문항`} count={avatars.length} />
+        {howtoAt !== null && <HowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} sound={view.sound !== false} />}
+        {/* The teacher's 이름표 switch decides whether names show here too. */}
+        <LobbyCrowd avatars={avatars.map((a) => ({ key: a.studentId, name: a.name, look: a.look }))} wantNames={view.nameLabels !== false} hidden={howtoAt !== null} />
+        {howtoAt === null && <RewardCard s={s} />}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The 아고라's 대기실, in the arena lobby's frame: the QR, the class and who has come in, and the topic in the card where
+ * the arena shows today's reward. Names always show, as they do on the answer cards that follow.
+ */
+function AgoraLobby({ view, agora }: { view: DisplayView; agora: DisplayAgora }) {
+  const t = agora.topic;
+  return (
+    <div className="flex min-h-0 flex-1 gap-[3vw]">
+      <LobbyQr view={view} />
+      <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
+        <LobbyHeader className={agora.className} title="아고라" sub={t.minutes ? `입력 시간 ${t.minutes}분` : '시간 제한 없음'} count={agora.joined.length} />
+        <LobbyCrowd avatars={agora.joined.map((a) => ({ key: String(a.number), name: a.name, look: a.look }))} wantNames />
+        {/* Spacing is capped by the screen height too, as on the reward card, so the class keeps its room at 1280×720. */}
+        <div className="flex flex-col gap-[min(1.25rem,1.9vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white">
+          <div className="text-2xl font-bold text-gold">오늘의 주제</div>
+          <div className={`line-clamp-3 whitespace-pre-wrap break-keep font-bold leading-snug tracking-tight [overflow-wrap:anywhere] ${[...t.text].length > 60 ? 'text-[2vw]' : 'text-[2.7vw]'}`}>{t.text}</div>
+          {t.note && <div className="line-clamp-2 self-start whitespace-pre-wrap rounded-2xl bg-[#24272F] px-5 py-3 text-2xl font-semibold text-[#D5D8DF] [overflow-wrap:anywhere]">{t.note}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The lobby's QR in its arch, with the address under it. */
+function LobbyQr({ view }: { view: DisplayView }) {
+  return (
+    <div className="flex w-[34vw] shrink-0 flex-col items-center justify-center gap-6">
+      <div className="flex aspect-[0.92] w-full items-end justify-center rounded-t-full rounded-b-[32px] bg-white pb-[3vw]">
+        <div className="w-[62%]" dangerouslySetInnerHTML={{ __html: view.qr }} />
+      </div>
+      <div className="tabular text-2xl font-semibold text-ink-3">{view.joinUrl}</div>
+    </div>
+  );
+}
+
+/** The lobby's header: the class, what is about to start, and how many have come in. */
+function LobbyHeader({ className, title, sub, count }: { className: string; title: string; sub: string; count: number }) {
+  return (
+    <div className="flex items-start justify-between">
+      <div>
+        {/* A shorter header on 720p projectors leaves the room to the characters and their names. */}
+        <div className="font-display text-3xl font-bold [@media(max-height:800px)]:text-2xl">Classeum</div>
+        <div className="mt-4 text-3xl font-bold text-accent [@media(max-height:800px)]:mt-2 [@media(max-height:800px)]:text-2xl">{className}</div>
+        <div className="mt-1 text-6xl font-bold tracking-tight [@media(max-height:800px)]:text-5xl">{title}</div>
+        <div className="mt-2 text-3xl font-semibold text-ink-3 [@media(max-height:800px)]:mt-1 [@media(max-height:800px)]:text-2xl">{sub}</div>
+      </div>
+      <div key={count} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{count}</div>
+    </div>
+  );
+}
+
+/** The characters who have come in, as large as fits the height the header and card leave. */
+function LobbyCrowd({ avatars, wantNames, hidden = false }: { avatars: { key: string; name: string; look: AvatarLook }[]; wantNames: boolean; hidden?: boolean }) {
   const area = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   useLayoutEffect(() => {
@@ -324,47 +393,23 @@ function Lobby({ view, s, serverNow }: { view: DisplayView; s: SessionPublic; se
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  // The teacher's 이름표 switch decides whether names show here too.
-  const { size, names } = lobbyLayout(avatars.length, box.w, box.h, view.nameLabels !== false);
+  const { size, names } = lobbyLayout(avatars.length, box.w, box.h, wantNames);
   return (
-    // min-h-0: a lobby opened with the class already connected must not stretch past the screen before it is measured.
-    <div className="flex min-h-0 flex-1 gap-[3vw]">
-      <div className="flex w-[34vw] shrink-0 flex-col items-center justify-center gap-6">
-        <div className="flex aspect-[0.92] w-full items-end justify-center rounded-t-full rounded-b-[32px] bg-white pb-[3vw]">
-          <div className="w-[62%]" dangerouslySetInnerHTML={{ __html: view.qr }} />
-        </div>
-        <div className="tabular text-2xl font-semibold text-ink-3">{view.joinUrl}</div>
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col justify-between gap-6">
-        <div className="flex items-start justify-between">
-          <div>
-            {/* A shorter header on 720p projectors leaves the room to the characters and their names. */}
-            <div className="font-display text-3xl font-bold [@media(max-height:800px)]:text-2xl">Classeum</div>
-            <div className="mt-4 text-3xl font-bold text-accent [@media(max-height:800px)]:mt-2 [@media(max-height:800px)]:text-2xl">{s.className}</div>
-            <div className="mt-1 text-6xl font-bold tracking-tight [@media(max-height:800px)]:text-5xl">{s.eventName}</div>
-            <div className="mt-2 text-3xl font-semibold text-ink-3 [@media(max-height:800px)]:mt-1 [@media(max-height:800px)]:text-2xl">{s.mainCount}문항</div>
-          </div>
-          <div key={avatars.length} className="cls-pop tabular text-[9vw] font-extrabold leading-none tracking-tighter">{avatars.length}</div>
-        </div>
-        {howtoAt !== null && <HowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} sound={view.sound !== false} />}
-        {/* Takes whatever height the header and card leave; avatars shrink to fit, and the top padding (over the gap) gives hops room. */}
-        {/* Hidden, not unmounted, during the demo, so its size keeps being measured. */}
-        <div ref={area} className={`-mt-6 flex min-h-0 flex-1 flex-col justify-center overflow-y-clip pt-6 ${howtoAt !== null ? 'hidden' : ''}`}>
-          <div className="flex min-h-[min(18vh,100%)] flex-wrap content-start gap-2">
-            {avatars.map((a, i) => (
-              <div key={a.studentId} className="cls-drop-in flex flex-col items-center" style={{ width: names ? Math.max(size, LOBBY_NAME_W) : undefined }}>
-                <div className="cls-float" style={{ animationDelay: `-${(i * 0.37) % 2.4}s` }}>
-                  {/* Now and then someone hops or spins while the class waits. */}
-                  <div className="cls-antic origin-bottom" style={{ animationDuration: `${7 + (i % 6)}s`, animationDelay: `-${(i * 2.3) % 9}s` }}>
-                    <PixelAvatar look={a.look} size={size} blink={i} />
-                  </div>
-                </div>
-                {names && <span className="max-w-full truncate text-[13px] font-bold leading-4 text-ink-2">{a.name}</span>}
+    // Takes whatever height the header and card leave; avatars shrink to fit, and the top padding (over the gap) gives hops room.
+    // Hidden, not unmounted, during the arena's demo, so its size keeps being measured.
+    <div ref={area} className={`-mt-6 flex min-h-0 flex-1 flex-col justify-center overflow-y-clip pt-6 ${hidden ? 'hidden' : ''}`}>
+      <div className="flex min-h-[min(18vh,100%)] flex-wrap content-start gap-2">
+        {avatars.map((a, i) => (
+          <div key={a.key} className="cls-drop-in flex flex-col items-center" style={{ width: names ? Math.max(size, LOBBY_NAME_W) : undefined }}>
+            <div className="cls-float" style={{ animationDelay: `-${(i * 0.37) % 2.4}s` }}>
+              {/* Now and then someone hops or spins while the class waits. */}
+              <div className="cls-antic origin-bottom" style={{ animationDuration: `${7 + (i % 6)}s`, animationDelay: `-${(i * 2.3) % 9}s` }}>
+                <PixelAvatar look={a.look} size={size} blink={i} />
               </div>
-            ))}
+            </div>
+            {names && <span className="max-w-full truncate text-[13px] font-bold leading-4 text-ink-2">{a.name}</span>}
           </div>
-        </div>
-        {howtoAt === null && <RewardCard s={s} />}
+        ))}
       </div>
     </div>
   );

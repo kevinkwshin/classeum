@@ -4,7 +4,7 @@
 // because nobody clicked the projector. The two windows talk over a BroadcastChannel (same laptop only).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Phase, RevealInfo } from '@/lib/types';
-import type { TopicReveal, TopicStatus } from '@/lib/agora';
+import type { AgoraPhase, TopicReveal } from '@/lib/agora';
 import { MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
 
 const CHANNEL = 'classeum-sound';
@@ -90,9 +90,9 @@ export function musicLevel(phase: Phase | undefined, blank: boolean | undefined,
   return phase === 'lobby' || phase === 'summary' ? MUSIC_FULL : MUSIC_SOFT;
 }
 
-/** The 아고라's song: fuller while students write, softly once the answers show or the topic is closed. */
-export function agoraMusicLevel(status: TopicStatus, reveal: TopicReveal): number {
-  return status === 'open' && reveal === 'hidden' ? MUSIC_FULL : MUSIC_SOFT;
+/** The 아고라's song: fuller in the 대기실 and while students write, softly once the answers show or writing is closed. */
+export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal): number {
+  return phase === 'lobby' || (phase === 'writing' && reveal === 'hidden') ? MUSIC_FULL : MUSIC_SOFT;
 }
 
 /** Background music at `level` (0 for none), easing between levels and fading out when it stops; `src` picks the song. */

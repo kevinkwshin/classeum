@@ -3,7 +3,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
-import { DEFAULT_MINUTES, type TopicReveal, type TopicSort, type TopicStatus } from '@/lib/agora';
+import { DEFAULT_MINUTES, type TopicSort } from '@/lib/agora';
 
 /** A class (반) the teacher runs; numbers are unique only within one class. */
 export interface ClassRec {
@@ -109,29 +109,32 @@ export interface LastSummaryRec extends StudentSummary {
   at: number;
 }
 
-/** An 아고라 topic: a question one class answers in writing. When the answers show is the teacher's call. */
+/**
+ * An 아고라 topic: a question a class answers in writing. Like an arena event it is made once and opened for one class
+ * at a time; when the answers show is the teacher's call.
+ */
 export interface TopicRec {
   id: string;
-  classId: string;
   text: string;
   /** 보조 설명 under the question; '' for none. */
   note: string;
   /** Columns of answer cards on the projector (1-4); switched during class, it stays for next time. */
   columns: number;
   sort: TopicSort;
-  /** 입력 시간: minutes students get once it is put up, after which it closes by itself; null for no limit. */
+  /** 입력 시간: minutes students get from [쓰기 시작], after which writing closes by itself; null for no limit. */
   minutes: number | null;
-  /** Place in the class's list. */
-  order: number;
-  status: TopicStatus;
-  reveal: TopicReveal;
+  /** Each class that has done it ([쓰기 시작]), with when it last did. */
+  runs: Record<string, number>;
   createdAt: number;
 }
 
-/** One student's answer to a topic, kept as topicAnswers[topicId][studentId]: one each by construction. */
+/**
+ * One student's answer to a topic, kept as topicAnswers[topicId][studentId]: one each by construction, and a class's
+ * answers are its students'.
+ */
 export interface TopicAnswerRec {
   text: string;
-  /** The card's own setting: null follows the topic's reveal; true shows it and false hides it either way. */
+  /** The card's own setting: null follows the session's [전체 공개]/[전체 비공개]; true shows it and false hides it either way. */
   shown: boolean | null;
   createdAt: number;
   updatedAt: number;
@@ -182,13 +185,45 @@ function migrate(d: DB): DB {
     if (look.armor === 'lorica' || look.armor === 'gold') look.tunic = look.armor;
     delete look.armor;
   }
-  for (const t of Object.values(d.topics)) {
-    // Nothing is on screen after a restart (as with the arena), so a topic left open is closed; its answers stay.
-    if (t.status === 'open') t.status = 'closed';
-    // Topics from before 입력 시간 get the usual ten minutes.
-    if ((t as Partial<TopicRec>).minutes === undefined) t.minutes = DEFAULT_MINUTES;
-  }
+  migrateTopics(d);
   return d;
+}
+
+/**
+ * 아고라 topics used to belong to one class, each with a status and a [공개] of its own. Now a topic is made once and
+ * opened for any class, as an arena event is. The class a topic was made for keeps it as a run if it was ever put up
+ * or answered; copies made for other classes (the same question and 보조 설명) become one topic again, with their
+ * answers together. The list is the newest first now, as the arena's, so the old order goes. Nothing is open after a
+ * restart, so nothing needs closing.
+ */
+function migrateTopics(d: DB) {
+  type Old = Omit<TopicRec, 'runs'> & { runs?: Record<string, number>; classId?: string; status?: string; reveal?: string; order?: number };
+  const old = (Object.values(d.topics) as Old[]).filter((t) => t.runs === undefined).sort((a, b) => a.createdAt - b.createdAt);
+  if (!old.length) return;
+  const kept = new Map<string, TopicRec>();
+  for (const t of old) {
+    const answers = d.topicAnswers[t.id] ?? {};
+    const last = Math.max(0, ...Object.values(answers).map((a) => a.updatedAt));
+    const runs: Record<string, number> = {};
+    if (t.classId && (t.status !== 'draft' || last)) runs[t.classId] = last || t.createdAt;
+    // Topics from before 입력 시간 get the usual ten minutes.
+    if (t.minutes === undefined) t.minutes = DEFAULT_MINUTES;
+    delete t.classId;
+    delete t.status;
+    delete t.reveal;
+    delete t.order;
+    const into = kept.get(`${t.text}\n${t.note}`);
+    if (!into) {
+      t.runs = runs;
+      kept.set(`${t.text}\n${t.note}`, t as TopicRec);
+      continue;
+    }
+    for (const [classId, at] of Object.entries(runs)) into.runs[classId] = Math.max(into.runs[classId] ?? 0, at);
+    const target = (d.topicAnswers[into.id] ??= {});
+    for (const [studentId, a] of Object.entries(answers)) if (!target[studentId] || target[studentId].updatedAt < a.updatedAt) target[studentId] = a;
+    delete d.topicAnswers[t.id];
+    delete d.topics[t.id];
+  }
 }
 
 const RECORDS = ['classes', 'students', 'devices', 'requests', 'words', 'events', 'attendance', 'lastSummary', 'topics', 'topicAnswers'] as const;

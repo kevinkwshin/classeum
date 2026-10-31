@@ -86,8 +86,8 @@ export default function PlayPage() {
   if (!view) return <Screen><Message title="연결 중…" /></Screen>;
 
   return (
-    // An 아고라 topic gets the width of a tablet; everything else stays phone-sized.
-    <Screen wide={!!view.agora && !view.session}>
+    // An 아고라 being written gets the width of a tablet; everything else, its 대기실 too, stays phone-sized.
+    <Screen wide={!!view.agora && view.agora.phase !== 'lobby' && !view.session}>
       {conn === 'lost' && !view.refused && <div className="fixed inset-x-0 top-0 z-50 bg-bad py-2 text-center text-sm font-bold text-white">연결이 끊겼어요 · 다시 연결 중</div>}
       <Router view={view} send={send} serverNow={serverNow} conn={conn} />
     </Screen>
@@ -102,8 +102,8 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   // Text drafts live here so the pause screen doesn't wipe them.
   const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
-  // The locker and notes only show between questions; a starting quiz, or an 아고라 topic going up, always wins.
-  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && !view.agora;
+  // The locker and notes only show between questions and in a 대기실; a starting quiz or 아고라 always wins.
+  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && (!view.agora || view.agora.phase === 'lobby');
   // A starting quiz closes the locker and notes for good, so they don't cover the results later.
   if (!between && (lockerOpen || notesOpen)) {
     setLockerOpen(false);
@@ -116,8 +116,11 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   const notes = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes;
   if (notesOpen && between && notes) return <Notes key="notes" eventName={notes.eventName} wrong={notes.wrong} practice={notes.practice} send={send} onBack={() => setNotesOpen(false)} />;
   const openNotes = notes ? () => setNotesOpen(true) : undefined;
-  // The server never puts a topic up while a quiz is open, so the two don't meet here.
-  if (view.agora && !s) return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} />;
+  // The server never opens an 아고라 while a quiz is open, so the two don't meet here. Its 대기실 is the arena's.
+  if (view.agora && !s) {
+    if (view.agora.phase === 'lobby') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
+    return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} />;
+  }
   if (!s || s.phase === 'summary') {
     if (s?.phase === 'summary' && view.mySummary) return <Summary view={view} onLocker={() => setLockerOpen(true)} onNotes={() => setNotesOpen(true)} />;
     return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting={false} />;
@@ -164,7 +167,7 @@ function Button({ children, onClick, kind = 'primary', disabled, className = '' 
 function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send; serverNow: () => number }) {
   const a = view.agora!;
   const me = view.me!;
-  const open = a.topic.status === 'open';
+  const open = a.phase === 'writing';
   useTicker(!!a.timer, 500);
   const saved = a.mine?.text ?? null;
   const [value, setValue] = useState(saved ?? '');
@@ -234,7 +237,7 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
       </div>
       <div className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between text-sm font-bold text-ink-2">
-          <span>{a.topic.reveal === 'public' ? '친구들 답' : '우리 반'}</span>
+          <span>{a.reveal === 'public' ? '친구들 답' : '우리 반'}</span>
           <span className="tabular text-ink-3">
             ✓ {sent} / {a.cards.length}
           </span>
@@ -261,7 +264,7 @@ function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send;
             );
           })}
         </div>
-        {a.topic.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>}
+        {a.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>}
       </div>
     </div>
   );
@@ -548,6 +551,14 @@ function Home({ view, onLocker, onNotes, waiting }: { view: StudentView; onLocke
           </div>
         </div>
       </div>
+      {/* In an 아고라's 대기실, today's topic takes the reward card's place, so the class can start thinking. */}
+      {waiting && view.agora?.phase === 'lobby' && (
+        <div className="cls-slide-up rounded-3xl bg-gold p-4">
+          <div className="text-xs font-extrabold">오늘의 주제</div>
+          <div className="mt-0.5 whitespace-pre-wrap break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{view.agora.topic.text}</div>
+          {view.agora.topic.note && <div className="mt-1 whitespace-pre-wrap text-xs font-semibold text-[#4A3A10] [overflow-wrap:anywhere]">{view.agora.topic.note}</div>}
+        </div>
+      )}
       {waiting && s?.reward && (
         <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
           {itemById(s.reward.itemId) && <IdleAvatar look={previewLook(itemById(s.reward.itemId)!, look)} size={64} seed={s.reward.itemId} />}

@@ -1,6 +1,6 @@
 // Shapes of the views the server pushes over SSE (see src/server/hub.ts).
 import type { AvatarLook, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, WrongNote } from '@/lib/types';
-import type { TopicReveal, TopicSort, TopicStatus } from '@/lib/agora';
+import type { AgoraPhase, TopicReveal, TopicSort } from '@/lib/agora';
 
 export type { WrongNote };
 
@@ -43,7 +43,7 @@ export interface DisplayView {
   participants?: number;
   reveal?: RevealInfo | null;
   parade?: { studentId: string; look: AvatarLook; rewarded: boolean }[] | null;
-  /** The 아고라 topic on screen (never while a session is open). */
+  /** The open 아고라 (never while an arena session is open). */
   agora?: DisplayAgora | null;
 }
 
@@ -56,8 +56,13 @@ export interface AgoraCard {
   text?: string;
 }
 
+/** The projector's 아고라: in the 대기실 the topic and who has come in (`joined`), from [쓰기 시작] the cards. */
 export interface DisplayAgora {
-  topic: { id: string; text: string; note: string; className: string; status: TopicStatus; reveal: TopicReveal; columns: number; sort: TopicSort };
+  phase: AgoraPhase;
+  className: string;
+  topic: { id: string; text: string; note: string; minutes: number | null; columns: number; sort: TopicSort };
+  reveal: TopicReveal;
+  joined: { number: number; name: string; look: AvatarLook }[];
   cards: AgoraCard[];
   /** The page the teacher turned to; the projector splits the cards into pages itself and tells the server how many. */
   page: number;
@@ -66,9 +71,12 @@ export interface DisplayAgora {
   timer: AgoraTimer;
 }
 
-/** A phone's 아고라: the topic, its own answer whether it shows or not, and the class's cards. */
+/** A phone's 아고라: the topic, its own answer whether it shows or not, and the class's cards once writing starts. */
 export interface StudentAgora {
-  topic: { id: string; text: string; note: string; status: TopicStatus; reveal: TopicReveal };
+  phase: AgoraPhase;
+  topic: { id: string; text: string; note: string };
+  /** Whether the teacher has shown every answer ([전체 공개]); the cards carry the text either way. */
+  reveal: TopicReveal;
   mine: { text: string } | null;
   cards: AgoraCard[];
   timer: AgoraTimer;
@@ -150,26 +158,41 @@ export interface TeacherView {
   displayOn: boolean;
   /** Phones connected right now, registered or not. */
   phones: number;
-  /** Every class's 아고라 topics in each class's order, the one on screen, and the students who have been in its room. */
-  agora: { topics: TeacherTopic[]; screen: { topicId: string; page: number; pages: number; music: boolean; timer: AgoraTimer } | null; present: string[] };
+  /** The 아고라 topics in the teacher's order, and the open session if any. */
+  agora: { topics: TeacherTopic[]; live: TeacherAgoraLive | null };
 }
 
-/** The 입력 시간 of the topic on screen, on the server's clock; null with no limit or once closed. */
+/** The open 아고라's 입력 시간, on the server's clock; null with no limit, before [쓰기 시작] or once closed. */
 export type AgoraTimer = { startedAt: number; endsAt: number } | null;
 
-/** An 아고라 topic on the teacher screen, with every answer whether shown or not (studentId is one of `students`). */
+/** The open 아고라 on the teacher screen: its topic and class, phase, [공개], projector page, song, 입력 시간, and who has come in. */
+export interface TeacherAgoraLive {
+  topicId: string;
+  classId: string;
+  className: string;
+  phase: AgoraPhase;
+  reveal: TopicReveal;
+  page: number;
+  pages: number;
+  music: boolean;
+  timer: AgoraTimer;
+  joined: string[];
+}
+
+/**
+ * An 아고라 topic on the teacher screen: the classes that did it ([쓰기 시작], latest time) and every answer whether
+ * shown or not, from every class (studentId is one of `students`).
+ */
 export interface TeacherTopic {
   id: string;
-  classId: string;
   text: string;
   note: string;
   columns: number;
   sort: TopicSort;
   /** 입력 시간 in minutes; null for no limit. */
   minutes: number | null;
-  status: TopicStatus;
-  reveal: TopicReveal;
   createdAt: number;
+  runs: { classId: string; at: number }[];
   answers: { studentId: string; text: string; shown: boolean | null; createdAt: number; updatedAt: number }[];
 }
 
