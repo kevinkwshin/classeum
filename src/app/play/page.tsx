@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
-import type { StudentView, WrongNote } from '@/client/views';
+import type { StudentAgora, StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { GrammarCard, filledSentence, zoneLabels } from '@/components/GrammarCard';
 import { IdleAvatar } from '@/components/IdleAvatar';
@@ -10,6 +10,7 @@ import { PracticeCard } from '@/components/PracticeCard';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { MAX_TEXT_ANSWER } from '@/lib/text';
+import { ANSWER_MAX } from '@/lib/agora';
 import { zoneCenter, zoneOf } from '@/lib/field';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
 import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
@@ -85,7 +86,8 @@ export default function PlayPage() {
   if (!view) return <Screen><Message title="연결 중…" /></Screen>;
 
   return (
-    <Screen>
+    // An 아고라 topic gets the width of a tablet; everything else stays phone-sized.
+    <Screen wide={!!view.agora && !view.session}>
       {conn === 'lost' && !view.refused && <div className="fixed inset-x-0 top-0 z-50 bg-bad py-2 text-center text-sm font-bold text-white">연결이 끊겼어요 · 다시 연결 중</div>}
       <Router view={view} send={send} serverNow={serverNow} conn={conn} />
     </Screen>
@@ -100,8 +102,8 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   // Text drafts live here so the pause screen doesn't wipe them.
   const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
-  // The locker and notes only show between questions; a starting quiz always wins.
-  const between = !s || s.phase === 'lobby' || s.phase === 'summary';
+  // The locker and notes only show between questions; a starting quiz, or an 아고라 topic going up, always wins.
+  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && !view.agora;
   // A starting quiz closes the locker and notes for good, so they don't cover the results later.
   if (!between && (lockerOpen || notesOpen)) {
     setLockerOpen(false);
@@ -114,6 +116,8 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   const notes = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes;
   if (notesOpen && between && notes) return <Notes key="notes" eventName={notes.eventName} wrong={notes.wrong} practice={notes.practice} send={send} onBack={() => setNotesOpen(false)} />;
   const openNotes = notes ? () => setNotesOpen(true) : undefined;
+  // The server never puts a topic up while a quiz is open, so the two don't meet here.
+  if (view.agora && !s) return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} />;
   if (!s || s.phase === 'summary') {
     if (s?.phase === 'summary' && view.mySummary) return <Summary view={view} onLocker={() => setLockerOpen(true)} onNotes={() => setNotesOpen(true)} />;
     return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting={false} />;
@@ -129,8 +133,8 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   return <GamePad key={s.question?.seq} view={view} send={send} serverNow={serverNow} conn={conn} />;
 }
 
-function Screen({ children }: { children: React.ReactNode }) {
-  return <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col bg-white text-ink">{children}</main>;
+function Screen({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+  return <main className={`mx-auto flex min-h-[100dvh] flex-col bg-white text-ink ${wide ? 'max-w-5xl' : 'max-w-md'}`}>{children}</main>;
 }
 
 function Message({ title, body, dark }: { title: string; body?: string; dark?: boolean }) {
@@ -148,6 +152,130 @@ function Button({ children, onClick, kind = 'primary', disabled, className = '' 
     <button type="button" disabled={disabled} onClick={onClick} className={`h-14 rounded-2xl text-[17px] font-extrabold disabled:opacity-40 ${style} ${className}`}>
       {children}
     </button>
+  );
+}
+
+// ---------- 아고라 ----------
+
+/**
+ * The topic the teacher put up: my answer (always mine to see), and my class's cards, which carry answers only once
+ * the teacher shows them (until then the server sends no text). Side by side on a landscape tablet.
+ */
+function AgoraAnswer({ view, send, serverNow }: { view: StudentView; send: Send; serverNow: () => number }) {
+  const a = view.agora!;
+  const me = view.me!;
+  const open = a.topic.status === 'open';
+  useTicker(!!a.timer, 500);
+  const saved = a.mine?.text ?? null;
+  const [value, setValue] = useState(saved ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const typed = value.trim();
+  const label = !open ? '마감됐어요' : saved !== null && saved === typed ? '제출했어요 · 고칠 수 있어요' : saved !== null ? '고친 답 제출' : '제출';
+  const write = (action: Record<string, unknown>, after?: () => void) => {
+    setBusy(true);
+    setError('');
+    send({ ...action, topicId: a.topic.id })
+      .then(() => after?.())
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const sent = a.cards.filter((c) => c.sent).length;
+  return (
+    <div className="flex flex-1 flex-col gap-6 px-5 pb-8 pt-8 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start lg:gap-10 lg:px-8">
+      <div className="flex flex-col gap-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-lg font-extrabold">{me.className} · 아고라</div>
+          {a.timer ? (
+            <AgoraCountdown timer={a.timer} now={serverNow()} />
+          ) : (
+            <span className={`rounded-full px-3 py-1 text-sm font-bold ${open ? 'bg-accent text-ink' : 'bg-ink text-white'}`}>{open ? '진행 중' : '마감'}</span>
+          )}
+        </div>
+        <div className="cls-drop-in rounded-3xl bg-bg px-5 py-6 text-center">
+          <div className="whitespace-pre-wrap break-keep text-xl font-bold leading-snug [overflow-wrap:anywhere]">{a.topic.text}</div>
+          {a.topic.note && <div className="mt-2 whitespace-pre-wrap text-sm text-ink-3 [overflow-wrap:anywhere]">{a.topic.note}</div>}
+        </div>
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (open && typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value });
+          }}
+        >
+          <textarea
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setError('');
+            }}
+            disabled={!open}
+            maxLength={ANSWER_MAX}
+            rows={4}
+            placeholder={open ? '여기에 답을 써요' : '마감됐어요'}
+            aria-label="내 답"
+            className="min-h-32 resize-none rounded-2xl border-2 border-ink px-4 py-3 text-xl font-bold leading-snug outline-none disabled:border-[#D5D8DF] disabled:bg-bg disabled:text-ink-2"
+          />
+          <div className="flex items-center justify-between text-sm">
+            <span className="tabular text-ink-3">
+              {[...value].length} / {ANSWER_MAX}
+            </span>
+            {open && saved !== null && (
+              <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => setValue(''))} className="font-bold text-ink-3 underline underline-offset-4">
+                내 답 지우기
+              </button>
+            )}
+          </div>
+          {error && <div className="text-sm font-semibold text-bad">{error}</div>}
+          <button type="submit" disabled={!open || !typed || busy} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
+            {label}
+          </button>
+        </form>
+      </div>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-baseline justify-between text-sm font-bold text-ink-2">
+          <span>{a.topic.reveal === 'public' ? '친구들 답' : '우리 반'}</span>
+          <span className="tabular text-ink-3">
+            ✓ {sent} / {a.cards.length}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2">
+          {a.cards.map((c) => {
+            const mine = c.number === me.number;
+            return (
+              <div key={c.number} className={`flex min-w-0 flex-col gap-1.5 rounded-2xl bg-bg p-3 ${mine ? 'ring-2 ring-accent' : ''}`}>
+                <div className="flex min-w-0 items-center gap-2">
+                  <PixelAvatar look={c.look} size={32} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
+                  <span className="tabular text-xs font-bold text-ink-3">{c.number}</span>
+                  <span className="truncate text-sm font-extrabold">
+                    {c.name}
+                    {mine ? ' · 나' : ''}
+                  </span>
+                </div>
+                {c.text !== undefined ? (
+                  <div className="whitespace-pre-wrap text-sm font-semibold leading-snug [overflow-wrap:anywhere]">{c.text}</div>
+                ) : (
+                  <div className={`text-xs font-extrabold ${c.sent ? 'text-good' : 'text-ink-3'}`}>{c.sent ? '✓ 냈어요' : open ? '생각 중…' : '미답변'}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {a.topic.reveal === 'hidden' && <div className="text-center text-sm text-ink-3">선생님이 공개하면 친구들 답이 보여요</div>}
+      </div>
+    </div>
+  );
+}
+
+/** The 입력 시간 left, in the quiz's clock pill; it turns orange for the last minute. */
+function AgoraCountdown({ timer, now }: { timer: NonNullable<StudentAgora['timer']>; now: number }) {
+  const ms = Math.max(0, timer.endsAt - now);
+  const urgent = ms <= 60_000;
+  return (
+    <div className={`flex items-center gap-2 rounded-full py-1 pl-1 pr-3 text-white transition-colors ${urgent ? 'bg-accent' : 'bg-ink'}`}>
+      <div className="h-7 w-7 rounded-full" style={{ background: `conic-gradient(${urgent ? '#FFFFFF' : '#FF5B24'} 0 ${(ms / (timer.endsAt - timer.startedAt)) * 100}%, ${urgent ? '#FF9A73' : '#3D4354'} 0 100%)` }} />
+      <span className="tabular text-lg font-extrabold">{formatClock(ms)}</span>
+    </div>
   );
 }
 

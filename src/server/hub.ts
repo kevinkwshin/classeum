@@ -6,14 +6,14 @@ import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { zoneOf } from '@/lib/field';
-import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec } from './store';
+import { db, flush, newId, save, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec, type TopicRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
 import { answerLabelOf, correctLabelOf } from './answers';
 import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
-import { dropClassTopics, dropStudentAnswers, teacherAgora } from './agora';
+import { deleteTopic, displayAgora, dropAnswer, dropClassTopics, dropStudentAnswers, putAnswer, studentAgora, teacherAgora, type AgoraTimer } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -64,6 +64,9 @@ const MAX_STREAMS_PER_DEVICE = 2;
 const BEAT_TIMEOUT_MS = 40_000;
 const SWEEP_MS = 5_000;
 const ANIMALS = ['여우', '부엉이', '사슴', '고래', '펭귄', '다람쥐', '거북', '판다', '수달', '코알라', '호랑이', '토끼'];
+/** A phone may write its 아고라 answer this often: enough to fix a typo or two, not to flood every screen. */
+const AGORA_WRITES = 5;
+const AGORA_WINDOW_MS = 10_000;
 
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -256,6 +259,17 @@ class Hub {
   private ticker: NodeJS.Timeout | null = null;
   private pushTimer: NodeJS.Timeout | null = null;
   private lastPush = 0;
+  /**
+   * The 아고라 topic on the projector and its class's phones, the projector's page, and its 입력 시간 while answers are
+   * open. In memory only, like the arena.
+   */
+  agoraScreen: { topicId: string; page: number; timer: AgoraTimer } | null = null;
+  /** Closes the topic when its 입력 시간 runs out. */
+  private agoraTimeout: NodeJS.Timeout | null = null;
+  /** Students of that class who have had it open; they keep a card, answered or not. */
+  private agoraPresent = new Set<string>();
+  /** When each student wrote lately, for AGORA_WRITES. */
+  private agoraWrites = new Map<string, number[]>();
 
   // ---------- connections ----------
 
@@ -314,12 +328,15 @@ class Hub {
     this.clients.add(c);
     const sid = c.tokenHash ? db().devices[c.tokenHash]?.studentId : undefined;
     const joinedBefore = sid ? !!this.live?.joined.has(sid) : true;
+    // A student of the on-screen topic's class gets a card, which their classmates' phones show too.
+    const topic = this.screenTopic();
+    const newInRoom = !!sid && !!topic && db().students[sid]?.classId === topic.classId && !this.agoraPresent.has(sid);
     if (sid) this.touchStudent(sid);
     this.pushOne(c);
-    // A new connection only changes the teacher's and projector's lists, unless it just joined
-    // or it opened registration for the phones still waiting to pick a name.
+    // A new connection only changes the teacher's and projector's lists, unless it just joined (the arena or the
+    // 아고라 room) or it opened registration for the phones still waiting to pick a name.
     const joinedNow = sid !== undefined && !joinedBefore && !!this.live?.joined.has(sid);
-    this.schedulePush(joinedNow || openBefore !== this.registrationOpen());
+    this.schedulePush(joinedNow || newInRoom || openBefore !== this.registrationOpen());
   }
 
   /** Ends every open stream, so a stopping server doesn't wait for phones and screens to hang up. */
@@ -410,6 +427,7 @@ class Hub {
 
   private pushAll(includeStudents: boolean) {
     this.lastPush = Date.now();
+    this.notePresent();
     const teacher = this.teacherView();
     const display = this.displayView();
     let reg: RegistrationContext | undefined;
@@ -422,6 +440,7 @@ class Hub {
   }
 
   pushOne(c: Client) {
+    this.notePresent();
     if (c.role === 'teacher') c.send(this.teacherView());
     else if (c.role === 'display') c.send(this.displayView());
     else c.send(this.studentView(c.tokenHash));
@@ -513,7 +532,10 @@ class Hub {
   displayView() {
     const live = this.live;
     const base = { role: 'display', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, session: this.sessionPublic() };
-    if (!live) return base;
+    if (!live) {
+      const topic = this.screenTopic();
+      return { ...base, agora: topic ? displayAgora(topic, this.agoraPresent, this.agoraScreen?.page ?? 0, this.agoraScreen?.timer ?? null) : null };
+    }
     const counts = live.phase === 'moving' ? this.movingCounts() : null;
     const howto = live.phase === 'lobby' && live.howtoUntil > Date.now();
     return {
@@ -647,7 +669,7 @@ class Hub {
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
     const displayOn = [...this.clients].some((c) => c.role === 'display');
     const phones = new Set([...this.clients].filter((c) => c.role === 'student' && c.tokenHash).map((c) => c.tokenHash)).size;
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora() };
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora(this.agoraScreen, this.agoraPresent) };
   }
 
   private registrationContext(): RegistrationContext {
@@ -659,7 +681,7 @@ class Hub {
       if (!prev || r.createdAt >= prev.createdAt) latest.set(r.tokenHash, r);
     }
     if (!open) return { open, latest, classes: [] };
-    const today = this.live?.classId;
+    const today = this.todayClass();
     const classes = Object.values(d.classes)
       .filter((c) => !today || c.id === today)
       .sort((a, b) => compareNames(a.name, b.name))
@@ -683,8 +705,10 @@ class Hub {
         classes: reg.classes,
       };
     }
-    // A quiz for another class is none of this phone's business: it sees no session.
-    const elsewhere = this.live && this.live.classId !== student.classId ? className(this.live.classId) : null;
+    // A quiz or an 아고라 topic for another class is none of this phone's business: it sees neither.
+    const topic = this.screenTopic();
+    const lessonOf = this.live?.classId ?? topic?.classId;
+    const elsewhere = lessonOf && lessonOf !== student.classId ? className(lessonOf) : null;
     const live = elsewhere ? null : this.live;
     const me = {
       id: student.id,
@@ -697,7 +721,7 @@ class Hub {
     };
     const last = d.lastSummary[student.id];
     const lastNotes = last && (!live || live.phase === 'lobby') ? { eventName: last.eventName, at: last.at, wrong: last.wrong, practice: last.practice } : null;
-    if (!live) return { ...base, me, session: null, lastNotes, elsewhere };
+    if (!live) return { ...base, me, session: null, lastNotes, elsewhere, agora: topic && !elsewhere ? studentAgora(topic, student.id, this.agoraPresent, this.agoraScreen?.timer ?? null) : null };
     const q = this.currentQuestion();
     const mine = live.choices.get(student.id);
     let result = null;
@@ -752,7 +776,8 @@ class Hub {
     if (d.devices[tokenHash]) throw new Error('이 기기는 이미 등록되어 있어요.');
     const cls = own(d.classes, input.classId);
     if (!cls) throw new Error('반을 골라 주세요.');
-    if (this.live && cls.id !== this.live.classId) throw new Error(`지금은 ${className(this.live.classId)} 수업이라 그 반만 등록할 수 있어요.`);
+    const today = this.todayClass();
+    if (today && cls.id !== today) throw new Error(`지금은 ${className(today)} 수업이라 그 반만 등록할 수 있어요.`);
     const number = Number(input.number);
     if (!Number.isInteger(number) || number < 1 || number > 99) throw new Error('번호는 1~99 사이로 써 주세요.');
     const name = cleanName(String(input.name ?? ''));
@@ -878,6 +903,7 @@ class Hub {
    */
   private autoApprovable(): Map<string, 'match' | 'new'> {
     const pending = Object.values(db().requests).filter((r) => r.status === 'pending');
+    const today = this.todayClass();
     const count = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
     const perSeat = new Map<string, number>();
     // Two phones asking with one name at two numbers: one of them is likely a typo, like a same name already on the roster.
@@ -891,7 +917,7 @@ class Hub {
       const { kind, note } = this.classify(r);
       if (kind !== 'match' && kind !== 'new') continue;
       if (perSeat.get(`${r.classId}:${r.number}`) !== 1 || perName.get(`${r.classId}:${nameKey(r.name)}`) !== 1) continue;
-      if (this.live && r.classId !== this.live.classId) continue;
+      if (today && r.classId !== today) continue;
       if (note) continue;
       out.set(r.id, kind);
     }
@@ -977,6 +1003,7 @@ class Hub {
     const d = db();
     if (!own(d.classes, classId)) return;
     if (this.live?.classId === classId) throw new Error('수업 중인 반은 지울 수 없어요. 아레나를 먼저 닫아 주세요.');
+    if (this.screenTopic()?.classId === classId) throw new Error('아고라 주제가 떠 있는 반은 지울 수 없어요. 화면에서 먼저 내려 주세요.');
     const students = Object.values(d.students).filter((s) => s.classId === classId);
     if (students.length && !withStudents) throw new Error('학생이 있는 반이에요. 학생도 함께 지울지 확인해 주세요.');
     this.removeStudents(students.map((s) => s.id));
@@ -1059,6 +1086,8 @@ class Hub {
     for (const id of ids) {
       for (const [hash, dev] of Object.entries(d.devices)) if (dev.studentId === id) delete d.devices[hash];
       live?.joined.delete(id);
+      this.agoraPresent.delete(id);
+      this.agoraWrites.delete(id);
       delete d.lastSummary[id];
       delete d.attendance[id];
       delete d.students[id];
@@ -1077,6 +1106,161 @@ class Hub {
     save();
     this.schedulePush(true);
     return out;
+  }
+
+  /** The topic on screen, if any. */
+  private screenTopic(): TopicRec | undefined {
+    return this.agoraScreen ? own(db().topics, this.agoraScreen.topicId) : undefined;
+  }
+
+  /** The class whose lesson is on (the arena's, or the 아고라 topic's on screen): only it registers new phones. */
+  private todayClass(): string | undefined {
+    return this.live?.classId ?? this.screenTopic()?.classId;
+  }
+
+  /** Students of the on-screen topic's class who are connected now join its room for as long as it is up. */
+  private notePresent() {
+    const t = this.screenTopic();
+    if (!t) return;
+    for (const id of this.connectedStudents()) if (db().students[id]?.classId === t.classId) this.agoraPresent.add(id);
+  }
+
+  /**
+   * [수업에 띄우기], or [다시 열기]: the topic goes on the projector and its class's phones, open for answers. One topic
+   * is up at a time, so the one before is closed (its answers stay). Not while the arena has the projector.
+   */
+  showTopic(topicId: string) {
+    const d = db();
+    const t = own(d.topics, topicId);
+    if (!t) throw new Error('그 주제가 없어졌어요. 화면을 새로 고쳐 주세요.');
+    if (this.live) throw new Error('아레나가 열려 있어요. 아레나를 닫은 뒤 띄워 주세요.');
+    const prev = this.screenTopic();
+    if (prev !== t) {
+      if (prev?.status === 'open') prev.status = 'closed';
+      this.agoraScreen = { topicId: t.id, page: 0, timer: null };
+      this.agoraPresent = new Set();
+    }
+    t.status = 'open';
+    // Each time it opens, its 입력 시간 starts over.
+    this.startTimer(t);
+    // As when a lobby opens: other classes' requests can't be approved during this class.
+    for (const r of Object.values(d.requests)) {
+      if (r.status === 'pending' && r.classId !== t.classId) {
+        r.status = 'expired';
+        r.reason = 'class';
+      }
+    }
+    save();
+    this.schedulePush(true);
+  }
+
+  /** [마감]: no more writing or changing. The topic stays on screen to be shown and talked about. */
+  closeTopic() {
+    const t = this.screenTopic();
+    if (!t || t.status !== 'open') return;
+    this.stopTimer();
+    t.status = 'closed';
+    save();
+    this.schedulePush(true);
+  }
+
+  /** [+1분] / [−1분] while answers are open. Never below ten seconds left: closing now is what [마감] is for. */
+  adjustTopicTime(minutes: number) {
+    const t = this.screenTopic();
+    const timer = this.agoraScreen?.timer;
+    if (!t || t.status !== 'open' || !timer || !Number.isFinite(minutes)) return;
+    timer.endsAt = Math.max(Date.now() + 10_000, timer.endsAt + Math.round(clamp(minutes, -10, 10)) * 60_000);
+    this.armTimer();
+    this.schedulePush(true);
+  }
+
+  /** The topic's 입력 시간, counted from now; none for a topic without a limit. */
+  private startTimer(t: TopicRec) {
+    this.stopTimer();
+    if (!this.agoraScreen || !t.minutes) return;
+    const now = Date.now();
+    this.agoraScreen.timer = { startedAt: now, endsAt: now + t.minutes * 60_000 };
+    this.armTimer();
+  }
+
+  /** At the end of the 입력 시간 the topic closes by itself, as if the teacher had pressed [마감]. */
+  private armTimer() {
+    if (this.agoraTimeout) clearTimeout(this.agoraTimeout);
+    this.agoraTimeout = null;
+    const timer = this.agoraScreen?.timer;
+    if (!timer) return;
+    this.agoraTimeout = setTimeout(() => {
+      this.agoraTimeout = null;
+      this.closeTopic();
+    }, Math.max(0, timer.endsAt - Date.now()));
+  }
+
+  private stopTimer() {
+    if (this.agoraTimeout) clearTimeout(this.agoraTimeout);
+    this.agoraTimeout = null;
+    if (this.agoraScreen) this.agoraScreen.timer = null;
+  }
+
+  /** [화면에서 내리기]: the projector goes back to its QR and the phones to their home screen. */
+  takeDownTopic() {
+    this.clearScreen();
+    save();
+    this.schedulePush(true);
+  }
+
+  private clearScreen() {
+    this.stopTimer();
+    const t = this.screenTopic();
+    if (t?.status === 'open') t.status = 'closed';
+    this.agoraScreen = null;
+    this.agoraPresent = new Set();
+  }
+
+  /** A topic goes with its answers; if it is on screen, it comes down first. */
+  removeTopic(topicId: string) {
+    if (this.agoraScreen?.topicId === topicId) this.clearScreen();
+    deleteTopic(topicId);
+    save();
+    this.schedulePush(true);
+  }
+
+  /** A student's answer to the topic on screen, new or changed. */
+  answerTopic(tokenHash: string, topicId: string, text: unknown) {
+    const { student, topic } = this.agoraWriter(tokenHash, topicId);
+    putAnswer(topic, student.id, text);
+    this.agoraPresent.add(student.id);
+    save();
+    this.schedulePush(true);
+  }
+
+  unanswerTopic(tokenHash: string, topicId: string) {
+    const { student, topic } = this.agoraWriter(tokenHash, topicId);
+    dropAnswer(topic, student.id);
+    save();
+    this.schedulePush(true);
+  }
+
+  /**
+   * Who may write, checked here and never on the phone: an approved phone, writing to the topic on screen while it is
+   * open, from that topic's class, at most AGORA_WRITES times in AGORA_WINDOW_MS. The topic's id comes along, so an
+   * answer typed while the teacher switched topics doesn't land on the new one.
+   */
+  private agoraWriter(tokenHash: string, topicId: string) {
+    const student = this.studentOf(tokenHash);
+    if (!student) throw new Error('등록된 기기가 아니에요.');
+    const topic = this.screenTopic();
+    if (!topic || topic.id !== topicId) throw new Error('주제가 바뀌었어요. 화면을 확인해 주세요.');
+    if (topic.classId !== student.classId) throw new Error('우리 반 주제가 아니에요.');
+    if (topic.status !== 'open') throw new Error('마감됐어요.');
+    const now = Date.now();
+    // An answer that lands in the last instant, before the timer has closed the topic.
+    const timer = this.agoraScreen?.timer;
+    if (timer && now > timer.endsAt) throw new Error('시간이 끝났어요.');
+    const recent = (this.agoraWrites.get(student.id) ?? []).filter((at) => now - at < AGORA_WINDOW_MS);
+    if (recent.length >= AGORA_WRITES) throw new Error('조금 있다가 다시 해 주세요.');
+    recent.push(now);
+    this.agoraWrites.set(student.id, recent);
+    return { student, topic };
   }
 
   private stampAttendance(studentId: string) {
@@ -1256,6 +1440,11 @@ class Hub {
       }
     }
     if (this.live && this.live.phase !== 'summary') throw new Error('이미 진행 중인 아레나가 있어요.');
+    // The projector is the arena's now: an 아고라 topic on it is closed and taken down (the teacher screen asked first).
+    if (this.agoraScreen) {
+      this.clearScreen();
+      save();
+    }
     this.live = {
       id: newId('ses'),
       eventId,

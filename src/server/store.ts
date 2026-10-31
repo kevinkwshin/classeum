@@ -3,7 +3,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
-import type { TopicReveal, TopicSort, TopicStatus } from '@/lib/agora';
+import { DEFAULT_MINUTES, type TopicReveal, type TopicSort, type TopicStatus } from '@/lib/agora';
 
 /** A class (반) the teacher runs; numbers are unique only within one class. */
 export interface ClassRec {
@@ -119,6 +119,8 @@ export interface TopicRec {
   /** Columns of answer cards on the projector (1-4); switched during class, it stays for next time. */
   columns: number;
   sort: TopicSort;
+  /** 입력 시간: minutes students get once it is put up, after which it closes by itself; null for no limit. */
+  minutes: number | null;
   /** Place in the class's list. */
   order: number;
   status: TopicStatus;
@@ -180,8 +182,12 @@ function migrate(d: DB): DB {
     if (look.armor === 'lorica' || look.armor === 'gold') look.tunic = look.armor;
     delete look.armor;
   }
-  // Nothing is on screen after a restart (as with the arena), so a topic left open is closed; its answers stay.
-  for (const t of Object.values(d.topics)) if (t.status === 'open') t.status = 'closed';
+  for (const t of Object.values(d.topics)) {
+    // Nothing is on screen after a restart (as with the arena), so a topic left open is closed; its answers stay.
+    if (t.status === 'open') t.status = 'closed';
+    // Topics from before 입력 시간 get the usual ten minutes.
+    if ((t as Partial<TopicRec>).minutes === undefined) t.minutes = DEFAULT_MINUTES;
+  }
   return d;
 }
 

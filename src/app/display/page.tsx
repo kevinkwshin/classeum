@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import { musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
-import type { DisplayView, SessionPublic } from '@/client/views';
+import type { DisplayAgora, DisplayView, SessionPublic } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { Field } from '@/components/Field';
 import { GrammarCard, zoneLabels } from '@/components/GrammarCard';
@@ -24,7 +24,8 @@ export default function DisplayPage() {
 function DisplayApp() {
   const { view, conn, send, serverNow } = useLive<DisplayView>('display');
   const s = view?.session ?? null;
-  useTicker(!!s && (s.phase === 'moving' || s.phase === 'intro'), 200);
+  // The arena's clock while a question runs, and the 아고라's 입력 시간 while a topic is open with a limit.
+  useTicker((!!s && (s.phase === 'moving' || s.phase === 'intro')) || !!view?.agora?.timer, 200);
 
   // Browsers allow sound only after a click or key press in this window; the first one turns it on. Until then
   // the teacher screen plays the sounds (src/client/revealSound.ts).
@@ -58,6 +59,7 @@ function DisplayApp() {
 
   if (!view) return <Shell><Center>연결 중…</Center></Shell>;
   if (view.blank) return <Shell><Center><span className="font-display text-7xl font-bold">Classeum</span></Center></Shell>;
+  if (!s && view.agora) return <Shell><AgoraBoard agora={view.agora} joinUrl={view.joinUrl} now={serverNow()} /><FullscreenHint /></Shell>;
   if (!s) return <Shell><Idle view={view} /><FullscreenHint /></Shell>;
 
   return (
@@ -92,6 +94,75 @@ function Idle({ view }: { view: DisplayView }) {
         <div className="tabular text-2xl text-ink-3">{view.joinUrl}</div>
         <div className="text-xl text-ink-3">같은 와이파이에서 접속</div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 아고라 on the projector, in the arena's frame: the class and how many have answered on top, the topic in a white box,
+ * and every student in the room as a card in the teacher's columns. A card carries an answer only once it shows;
+ * before that the server sends no text, so the card just says whether one came.
+ */
+function AgoraBoard({ agora, joinUrl, now }: { agora: DisplayAgora; joinUrl: string; now: number }) {
+  const t = agora.topic;
+  const sent = agora.cards.filter((c) => c.sent).length;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-[1.4vw]">
+      <div className="flex items-center gap-4">
+        <div className="text-3xl font-bold text-accent">{t.className}</div>
+        <div className="rounded-full bg-white px-4 py-2 text-xl font-bold text-ink-2">아고라</div>
+        {t.status === 'closed' && <div className="rounded-full bg-ink px-4 py-2 text-xl font-bold text-white">마감</div>}
+        <div className="ml-auto flex items-center gap-3">
+          {agora.timer && <AgoraClock timer={agora.timer} now={now} />}
+          <div className="flex items-center gap-4 rounded-full bg-ink py-2 pl-2 pr-7 text-white">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#3DDC97] text-2xl font-extrabold text-ink">✓</div>
+            <div className="tabular text-4xl font-extrabold">
+              {sent}
+              <span className="text-ink-3"> / {agora.cards.length}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div key={t.id} className="cls-drop-in rounded-[2vw] bg-white px-[3vw] py-[1.8vw] text-center">
+        <div className={`whitespace-pre-wrap break-keep font-extrabold leading-tight tracking-tight [overflow-wrap:anywhere] ${t.text.length > 40 ? 'text-[2.6vw]' : 'text-[3.4vw]'}`}>{t.text}</div>
+        {t.note && <div className="mt-[0.6vw] whitespace-pre-wrap text-[1.5vw] font-semibold text-ink-3">{t.note}</div>}
+      </div>
+      <div className="grid min-h-0 flex-1 content-start gap-[1vw] overflow-y-auto" style={{ gridTemplateColumns: `repeat(${t.columns}, minmax(0, 1fr))` }}>
+        {agora.cards.map((c) => (
+          <div key={c.number} className="flex min-w-0 flex-col gap-[0.6vw] rounded-[1.4vw] bg-white px-[1.2vw] py-[0.9vw]">
+            <div className="flex min-w-0 items-center gap-[0.8vw]">
+              {/* Sized by the screen, like the rest of the projector. */}
+              <div className="h-[3.4vw] w-[3.4vw] shrink-0 [&>svg]:h-full [&>svg]:w-full">
+                <PixelAvatar look={c.look} size={64} mood={c.sent ? 'happy' : 'normal'} blink={c.number} />
+              </div>
+              <span className="tabular text-[1.3vw] font-bold text-ink-3">{c.number}</span>
+              <span className="truncate text-[1.6vw] font-extrabold">{c.name}</span>
+              {c.text === undefined && (
+                <span className={`ml-auto shrink-0 rounded-full px-[0.9vw] py-[0.3vw] text-[1.2vw] font-extrabold ${c.sent ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'}`}>
+                  {c.sent ? '✓ 냈어요' : t.status === 'open' ? '생각 중…' : '미답변'}
+                </span>
+              )}
+            </div>
+            {c.text !== undefined && <div className="whitespace-pre-wrap text-[1.8vw] font-bold leading-snug [overflow-wrap:anywhere]">{c.text}</div>}
+          </div>
+        ))}
+        {agora.cards.length === 0 && <div className="col-span-full py-[4vw] text-center text-[2vw] font-semibold text-ink-3">태블릿에 주제가 떴어요 · 들어온 학생이 여기에 나와요</div>}
+      </div>
+      <div className="tabular text-right text-lg text-ink-3">{joinUrl}</div>
+    </div>
+  );
+}
+
+/** The 입력 시간 left, in the arena's clock pill; it turns orange for the last minute. */
+function AgoraClock({ timer, now }: { timer: NonNullable<DisplayAgora['timer']>; now: number }) {
+  const ms = Math.max(0, timer.endsAt - now);
+  const urgent = ms <= 60_000;
+  return (
+    <div className={`flex items-center gap-4 rounded-full py-2 pl-2 pr-7 text-white transition-colors ${urgent ? 'bg-accent' : 'bg-ink'}`}>
+      <div className="h-12 w-12 rounded-full" style={{ background: `conic-gradient(${urgent ? '#FFFFFF' : '#FF5B24'} 0 ${(ms / (timer.endsAt - timer.startedAt)) * 100}%, ${urgent ? '#FF9A73' : '#3D4354'} 0 100%)` }}>
+        <div className={`m-2 h-8 w-8 rounded-full ${urgent ? 'bg-accent' : 'bg-ink'}`} />
+      </div>
+      <div className="tabular text-4xl font-extrabold">{formatClock(ms)}</div>
     </div>
   );
 }

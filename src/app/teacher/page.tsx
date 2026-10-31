@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import type { TeacherEvent, TeacherLive, TeacherTopic, TeacherView } from '@/client/views';
+import type { TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { MUSIC_TITLE } from '@/client/sound';
@@ -13,7 +13,7 @@ import { SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
-import { COLUMN_CHOICES, NOTE_MAX, TOPIC_MAX, type TopicSort } from '@/lib/agora';
+import { COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TOPIC_MAX, type TopicSort } from '@/lib/agora';
 
 type Send = (a: Record<string, unknown>) => Promise<unknown>;
 type Tab = 'arena' | 'students' | 'agora';
@@ -96,6 +96,7 @@ function TeacherApp() {
               <span className={`h-1.5 w-1.5 rounded-full ${tab === key ? 'bg-accent' : 'bg-transparent'}`} />
               {label}
               {key === 'students' && view.requests.length > 0 && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">{view.requests.length}</span>}
+              {key === 'agora' && view.agora.screen && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">화면</span>}
             </button>
           ))}
           <div className="mt-auto flex flex-col gap-2 px-1">
@@ -137,7 +138,7 @@ function TeacherApp() {
             }}
           />
         )}
-        {tab === 'agora' && !running && <Agora view={view} act={act} notify={notify} />}
+        {tab === 'agora' && !running && <Agora view={view} act={act} notify={notify} serverNow={serverNow} />}
       </main>
       {/* During a quiz it floats over the console; otherwise it gets its own column on wide screens so it covers no buttons. */}
       {view.requests.length > 0 &&
@@ -561,7 +562,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
                 </select>
               </label>
               {/* The projector window opens first, inside the click: Safari blocks one opened after the awaits. */}
-              <Btn kind="accent" onClick={async () => { if (!view.displayOn) openProjector(); if (dirty) await saveReward(); await act({ type: 'open-lobby', eventId: event.id, classId }); }}>대기실 열기</Btn>
+              <Btn kind="accent" onClick={async () => { if (view.agora.screen && !confirm('아고라 주제가 화면에 떠 있어요. 마감하고 내린 뒤 대기실을 열까요?')) return; if (!view.displayOn) openProjector(); if (dirty) await saveReward(); await act({ type: 'open-lobby', eventId: event.id, classId }); }}>대기실 열기</Btn>
             </>
           )}
         </div>
@@ -1324,8 +1325,8 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
 
 // ---------- 아고라 ----------
 
-type TopicDraft = { text: string; note: string; columns: number; sort: TopicSort };
-const NEW_TOPIC: TopicDraft = { text: '', note: '', columns: 2, sort: 'number' };
+type TopicDraft = { text: string; note: string; columns: number; sort: TopicSort; minutes: number | null };
+const NEW_TOPIC: TopicDraft = { text: '', note: '', columns: 2, sort: 'number', minutes: DEFAULT_MINUTES };
 const TOPIC_STATUS: Record<TeacherTopic['status'], string> = { draft: '대기', open: '진행 중', closed: '마감' };
 
 /** A topic's status; on the selected (dark) row the colours turn over. */
@@ -1335,13 +1336,19 @@ function TopicChip({ status, dark = false }: { status: TeacherTopic['status']; d
 }
 
 /** The 아고라 tab: each class's topics, made before class, in the order the teacher wants them. */
-function Agora({ view, act, notify }: { view: TeacherView; act: Send; notify: (message: string) => void }) {
+function Agora({ view, act, notify, serverNow }: { view: TeacherView; act: Send; notify: (message: string) => void; serverNow: () => number }) {
   const [classId, setClassId] = useClassChoice(view.classes);
   const current = view.classes.find((c) => c.id === classId);
   const topics = view.agora.topics.filter((t) => t.classId === classId);
   const others = view.classes.filter((c) => c.id !== classId);
   const [selected, setSelected] = useState<string | null>(null);
   const topic = topics.find((t) => t.id === selected) ?? topics[0] ?? null;
+  const screen = view.agora.screen;
+  const live = !!topic && screen?.topicId === topic.id;
+  // The 입력 시간 left, while the topic on screen is open and has a limit.
+  const timer = live && topic?.status === 'open' ? (screen?.timer ?? null) : null;
+  useTicker(!!timer, 500);
+  const left = timer ? Math.max(0, timer.endsAt - serverNow()) : 0;
   // The form, for a new topic (topicId null) or the one being changed.
   const [form, setForm] = useState<{ topicId: string | null; draft: TopicDraft } | null>(null);
   // The other classes picked for [다른 반에 복사], while that box is open.
@@ -1371,7 +1378,13 @@ function Agora({ view, act, notify }: { view: TeacherView; act: Send; notify: (m
   };
   const remove = (t: TeacherTopic) => {
     const answers = t.answers.length ? `\n학생 답 ${t.answers.length}개도 함께 지워지고 되돌릴 수 없어요.` : '';
-    if (confirm(`이 주제를 지울까요?${answers}`)) act({ type: 'agora-delete', topicId: t.id }).catch(() => undefined);
+    const up = screen?.topicId === t.id ? '\n화면에 떠 있는 주제라 화면에서도 내려가요.' : '';
+    if (confirm(`이 주제를 지울까요?${answers}${up}`)) act({ type: 'agora-delete', topicId: t.id }).catch(() => undefined);
+  };
+  // [수업에 띄우기] opens the projector window too, as [대기실 열기] does (only from a click, before any await).
+  const show = (t: TeacherTopic) => {
+    if (!view.displayOn) openProjector();
+    act({ type: 'agora-show', topicId: t.id }).catch(() => undefined);
   };
   const copy = (t: TeacherTopic, to: Set<string>) =>
     act({ type: 'agora-copy', topicId: t.id, classIds: [...to] })
@@ -1416,8 +1429,9 @@ function Agora({ view, act, notify }: { view: TeacherView; act: Send; notify: (m
             <div className="flex w-96 shrink-0 flex-col gap-2">
               {topics.map((t, i) => {
                 const on = form ? form.topicId === t.id : topic?.id === t.id;
+                // The topic on screen is ringed in the accent colour, as in the plan.
                 return (
-                  <div key={t.id} className={`flex items-stretch rounded-2xl ${on ? 'bg-ink text-white' : 'bg-white'}`}>
+                  <div key={t.id} className={`flex items-stretch rounded-2xl ${on ? 'bg-ink text-white' : 'bg-white'} ${screen?.topicId === t.id ? 'ring-[3px] ring-accent' : ''}`}>
                     <button type="button" onClick={() => pick(t.id)} className="min-w-0 flex-1 p-4 text-left">
                       <div className="flex items-center gap-2">
                         <TopicChip status={t.status} dark={on} />
@@ -1455,16 +1469,52 @@ function Agora({ view, act, notify }: { view: TeacherView; act: Send; notify: (m
                     <div className="flex items-center gap-2 text-sm text-ink-3">
                       <TopicChip status={topic.status} />
                       {dayOf(topic.createdAt)} 만듦
+                      {live && <span className="font-bold text-accent">· 화면에 떠 있어요</span>}
                     </div>
                     <h2 className="mt-3 whitespace-pre-wrap break-keep text-2xl font-bold leading-snug [overflow-wrap:anywhere]">{topic.text}</h2>
                     {topic.note && <p className="mt-2 whitespace-pre-wrap text-ink-2 [overflow-wrap:anywhere]">{topic.note}</p>}
                   </div>
                   <div className="flex flex-wrap gap-2 text-sm font-semibold text-ink-2">
+                    <span className="rounded-full bg-bg px-3 py-1">{topic.minutes ? `입력 시간 ${topic.minutes}분` : '시간 제한 없음'}</span>
                     <span className="rounded-full bg-bg px-3 py-1">프로젝터 {topic.columns}열</span>
                     <span className="rounded-full bg-bg px-3 py-1">{topic.sort === 'time' ? '낸 순서' : '번호순'}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Btn kind="ghost" onClick={() => setForm({ topicId: topic.id, draft: { text: topic.text, note: topic.note, columns: topic.columns, sort: topic.sort } })}>수정</Btn>
+                    {live && topic.status === 'open' ? (
+                      <Btn onClick={() => act({ type: 'agora-close' }).catch(() => undefined)}>마감</Btn>
+                    ) : (
+                      <Btn kind="accent" disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 띄울 수 있어요' : undefined} onClick={() => show(topic)}>
+                        {topic.status === 'closed' ? '다시 열기' : '수업에 띄우기'}
+                      </Btn>
+                    )}
+                    {live && (
+                      <Btn kind="ghost" onClick={() => act({ type: 'agora-down' }).catch(() => undefined)}>
+                        화면에서 내리기
+                      </Btn>
+                    )}
+                  </div>
+                  {live && topic.status === 'open' && (
+                    <div className="flex flex-wrap items-center gap-3 rounded-xl bg-bg px-4 py-3">
+                      <span className="text-sm font-bold text-ink-2">남은 입력 시간</span>
+                      {timer ? (
+                        <>
+                          <span className={`tabular text-3xl font-extrabold ${left <= 60_000 ? 'text-accent' : ''}`}>{formatClock(left)}</span>
+                          <span className="ml-auto flex gap-2">
+                            <Btn kind="ghost" className="!h-9 !px-3 text-sm" onClick={() => act({ type: 'agora-time', minutes: -1 }).catch(() => undefined)}>
+                              −1분
+                            </Btn>
+                            <Btn kind="ghost" className="!h-9 !px-3 text-sm" onClick={() => act({ type: 'agora-time', minutes: 1 }).catch(() => undefined)}>
+                              +1분
+                            </Btn>
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-sm font-semibold text-ink-3">시간 제한 없음 · [마감]으로 닫아요</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Btn kind="ghost" onClick={() => setForm({ topicId: topic.id, draft: { text: topic.text, note: topic.note, columns: topic.columns, sort: topic.sort, minutes: topic.minutes } })}>수정</Btn>
                     <Btn kind="ghost" disabled={others.length === 0} title={others.length === 0 ? '다른 반이 없어요' : undefined} onClick={() => setCopyTo(new Set())}>다른 반에 복사</Btn>
                     <Btn kind="ghost" className="!text-bad" onClick={() => remove(topic)}>지우기</Btn>
                   </div>
@@ -1506,10 +1556,70 @@ function Agora({ view, act, notify }: { view: TeacherView; act: Send; notify: (m
                 </Card>
               )
             )}
+            {topic && !form && <TopicAnswers view={view} topic={topic} live={live} />}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Who has answered a topic and what: the teacher sees every answer, shown on the projector or not. While the topic is
+ * up, the students in its room who haven't answered yet are listed under them.
+ */
+function TopicAnswers({ view, topic, live }: { view: TeacherView; topic: TeacherTopic; live: boolean }) {
+  if (topic.status === 'draft' && topic.answers.length === 0) return null;
+  const byId = new Map(view.students.map((s) => [s.id, s]));
+  const rows = topic.answers
+    .map((a) => ({ a, s: byId.get(a.studentId) }))
+    .filter((r): r is { a: TeacherTopic['answers'][number]; s: TeacherStudent } => !!r.s)
+    .sort((x, y) => (topic.sort === 'time' ? x.a.createdAt - y.a.createdAt : 0) || x.s.number - y.s.number);
+  const answered = new Set(topic.answers.map((a) => a.studentId));
+  const waiting = live
+    ? view.agora.present
+        .map((id) => byId.get(id))
+        .filter((s): s is TeacherStudent => !!s && !answered.has(s.id))
+        .sort((a, b) => a.number - b.number)
+    : [];
+  return (
+    <Card className="flex flex-col gap-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-bold">낸 학생</h2>
+        <span className="tabular text-2xl font-extrabold">
+          {rows.length}
+          {live && <span className="text-base font-semibold text-ink-3"> / {rows.length + waiting.length}</span>}
+        </span>
+      </div>
+      {rows.length > 0 ? (
+        <div className="flex flex-col">
+          {rows.map(({ a, s }) => (
+            <div key={s.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0">
+              <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
+              <span className="w-24 shrink-0 pt-1 text-sm font-semibold">
+                <span className="tabular mr-1 text-ink-3">{s.number}</span>
+                {s.name}
+              </span>
+              <span className="min-w-0 flex-1 whitespace-pre-wrap pt-0.5 text-[15px] [overflow-wrap:anywhere]">{a.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-sm text-ink-3">아직 낸 학생이 없어요</div>
+      )}
+      {waiting.length > 0 && (
+        <div className="flex flex-col gap-2 border-t border-[#EEF0F3] pt-3">
+          <div className="text-sm font-bold text-ink-2">아직 안 냄 {waiting.length}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {waiting.map((s) => (
+              <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">
+                {s.number} {s.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -1538,6 +1648,15 @@ function TopicForm({ draft, setDraft, isNew, className, onSave, onCancel }: { dr
         </span>
         <textarea value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} rows={2} maxLength={NOTE_MAX} placeholder="예) My mom let me …" className="resize-none rounded-xl bg-bg p-3 text-[15px] outline-none" />
       </label>
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="입력 시간">
+        <span className="mr-1 text-sm font-bold">입력 시간</span>
+        {[...MINUTE_CHOICES, null].map((m) => (
+          <button key={m ?? 'none'} type="button" aria-pressed={draft.minutes === m} onClick={() => setDraft({ ...draft, minutes: m })} className={choice(draft.minutes === m)}>
+            {m === null ? '제한 없음' : `${m}분`}
+          </button>
+        ))}
+        <span className="ml-1 text-xs text-ink-3">띄우면 줄어들고, 0이 되면 저절로 마감돼요</span>
+      </div>
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
         <div className="flex items-center gap-2" role="group" aria-label="프로젝터 열 수">
           <span className="mr-1 text-sm font-bold">프로젝터</span>

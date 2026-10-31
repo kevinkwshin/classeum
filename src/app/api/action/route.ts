@@ -1,12 +1,12 @@
 import type { NextRequest } from 'next/server';
 import { hashToken, hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
-import { addTopic, copyTopic, deleteTopic, editTopic, orderTopics } from '@/server/agora';
+import { addTopic, copyTopic, editTopic, orderTopics } from '@/server/agora';
 
 const TEACHER_ACTIONS = new Set([
   'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
-  'agora-add', 'agora-edit', 'agora-delete', 'agora-order', 'agora-copy',
+  'agora-add', 'agora-edit', 'agora-delete', 'agora-order', 'agora-copy', 'agora-show', 'agora-close', 'agora-down', 'agora-time',
 ]);
 
 export async function POST(request: NextRequest) {
@@ -102,13 +102,25 @@ export async function POST(request: NextRequest) {
           h.changeAgora(() => editTopic(String(body.topicId), body));
           break;
         case 'agora-delete':
-          h.changeAgora(() => deleteTopic(String(body.topicId)));
+          h.removeTopic(String(body.topicId));
           break;
         case 'agora-order':
           h.changeAgora(() => orderTopics(String(body.classId), Array.isArray(body.topicIds) ? body.topicIds.slice(0, 500).map(String) : []));
           break;
         case 'agora-copy':
           return Response.json({ ok: true, copied: h.changeAgora(() => copyTopic(String(body.topicId), Array.isArray(body.classIds) ? body.classIds.slice(0, 100).map(String) : [])) });
+        case 'agora-show':
+          h.showTopic(String(body.topicId));
+          break;
+        case 'agora-close':
+          h.closeTopic();
+          break;
+        case 'agora-down':
+          h.takeDownTopic();
+          break;
+        case 'agora-time':
+          h.adjustTopicTime(Number(body.minutes));
+          break;
       }
       return Response.json({ ok: true });
     }
@@ -137,6 +149,12 @@ export async function POST(request: NextRequest) {
         break;
       case 'practice':
         h.recordPractice(tokenHash, String(body.questionId), Number(body.choice));
+        break;
+      case 'agora-answer':
+        h.answerTopic(tokenHash, String(body.topicId ?? ''), body.text);
+        break;
+      case 'agora-unanswer':
+        h.unanswerTopic(tokenHash, String(body.topicId ?? ''));
         break;
       default:
         return Response.json({ ok: false, error: '알 수 없는 요청이에요.' }, { status: 400 });

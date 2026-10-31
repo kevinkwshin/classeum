@@ -43,6 +43,32 @@ export interface DisplayView {
   participants?: number;
   reveal?: RevealInfo | null;
   parade?: { studentId: string; look: AvatarLook; rewarded: boolean }[] | null;
+  /** The 아고라 topic on screen (never while a session is open). */
+  agora?: DisplayAgora | null;
+}
+
+/** A student's card in the 아고라. The server sends `text` only when the answer shows. */
+export interface AgoraCard {
+  number: number;
+  name: string;
+  look: AvatarLook;
+  sent: boolean;
+  text?: string;
+}
+
+export interface DisplayAgora {
+  topic: { id: string; text: string; note: string; className: string; status: TopicStatus; reveal: TopicReveal; columns: number; sort: TopicSort };
+  cards: AgoraCard[];
+  page: number;
+  timer: AgoraTimer;
+}
+
+/** A phone's 아고라: the topic, its own answer whether it shows or not, and the class's cards. */
+export interface StudentAgora {
+  topic: { id: string; text: string; note: string; status: TopicStatus; reveal: TopicReveal };
+  mine: { text: string } | null;
+  cards: AgoraCard[];
+  timer: AgoraTimer;
 }
 
 export interface TeacherStudent {
@@ -121,9 +147,12 @@ export interface TeacherView {
   displayOn: boolean;
   /** Phones connected right now, registered or not. */
   phones: number;
-  /** Every class's 아고라 topics, in each class's order. */
-  agora: { topics: TeacherTopic[] };
+  /** Every class's 아고라 topics in each class's order, the one on screen, and the students who have been in its room. */
+  agora: { topics: TeacherTopic[]; screen: { topicId: string; page: number; timer: AgoraTimer } | null; present: string[] };
 }
+
+/** The 입력 시간 of the topic on screen, on the server's clock; null with no limit or once closed. */
+export type AgoraTimer = { startedAt: number; endsAt: number } | null;
 
 /** An 아고라 topic on the teacher screen, with every answer whether shown or not (studentId is one of `students`). */
 export interface TeacherTopic {
@@ -133,6 +162,8 @@ export interface TeacherTopic {
   note: string;
   columns: number;
   sort: TopicSort;
+  /** 입력 시간 in minutes; null for no limit. */
+  minutes: number | null;
   status: TopicStatus;
   reveal: TopicReveal;
   createdAt: number;
@@ -176,4 +207,6 @@ export interface StudentView {
   mySummary?: StudentSummary | null;
   /** The latest finished session's notes, shown from the home screen between classes. */
   lastNotes?: { eventName: string; at: number; wrong: WrongNote[]; practice: StudentSummary['practice'] } | null;
+  /** The 아고라 topic my class has on screen, if any. */
+  agora?: StudentAgora | null;
 }
