@@ -179,10 +179,7 @@ export function dropAnswer(t: TopicRec, studentId: string) {
 
 /** One class's answers to a topic. */
 function classAnswers(t: TopicRec, classId: string): TopicAnswerRec[] {
-  const d = db();
-  return Object.entries(d.topicAnswers[t.id] ?? {})
-    .filter(([studentId]) => own(d.students, studentId)?.classId === classId)
-    .map(([, a]) => a);
+  return classAnswerEntries(t, classId).map(([, a]) => a);
 }
 
 /**
@@ -438,30 +435,78 @@ export function studentNotes(studentId: string) {
     .sort((x, y) => y.at - x.at);
 }
 
+/** An answer as the teacher screen has it: all of it, whether it shows or not, with its 처음 답 and ⭐. */
+function teacherAnswer(studentId: string, x: TopicAnswerRec) {
+  return { studentId, text: x.text, first: x.first ?? null, star: !!x.star, shown: x.shown, createdAt: x.createdAt, updatedAt: x.updatedAt };
+}
+
 /**
- * The teacher screen's 아고라: every one, the newest first, with the classes that did it and every answer to its
- * topics (a few lessons' worth, so all of it), and the open session.
+ * One class's answers to each topic of an 아고라, by topic id: what the teacher screen fetches when it shows them (the
+ * 답 card), and what the open session's console gets. Null for an 아고라 that isn't there.
+ */
+export function teacherAnswers(agoraId: string, classId: string): Record<string, ReturnType<typeof teacherAnswer>[]> | null {
+  const d = db();
+  const a = own(d.agoras, agoraId);
+  if (!a) return null;
+  return Object.fromEntries(a.topics.map((t) => [t.id, classAnswerEntries(t, classId).map(([studentId, x]) => teacherAnswer(studentId, x))]));
+}
+
+function classAnswerEntries(t: TopicRec, classId: string): [string, TopicAnswerRec][] {
+  const d = db();
+  return Object.entries(d.topicAnswers[t.id] ?? {}).filter(([studentId]) => own(d.students, studentId)?.classId === classId);
+}
+
+/** A number for one answer as it stands (its writer's class, text, 처음 답, ⭐ and card setting), summed into an 아고라's answersKey. */
+function answerPrint(studentId: string, classId: string | undefined, topicId: string, x: TopicAnswerRec): number {
+  const s = `${studentId}|${classId ?? ''}|${topicId}|${x.updatedAt}|${x.text.length}|${x.first?.length ?? -1}|${x.star ? 1 : 0}|${x.shown}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return h >>> 0;
+}
+
+/**
+ * The teacher screen's 아고라: every one, the newest first, with the classes that did it and, of its answers, only
+ * numbers: how many each class wrote to each topic, how many of a class wrote at all, and the class's last lesson.
+ * The texts go out only for the open session's class and when the teacher opens an 아고라's answers (teacherAnswers),
+ * so a semester of answers doesn't travel with every change. `answersKey` changes whenever one of its answers does,
+ * which tells an open answer list to fetch again.
  */
 export function teacherAgora(live: AgoraLive | null) {
   const d = db();
-  const agoras = agoraList().map((a) => ({
-    id: a.id,
-    title: a.title,
-    createdAt: a.createdAt,
-    runs: Object.entries(a.runs)
-      .filter(([classId]) => own(d.classes, classId))
-      .map(([classId, at]) => ({ classId, at })),
-    reward: { itemId: rewardItem(a).id },
-    topics: a.topics.map((t) => ({
-      id: t.id,
-      text: t.text,
-      note: t.note,
-      columns: t.columns,
-      sort: t.sort,
-      minutes: t.minutes,
-      answers: Object.entries(d.topicAnswers[t.id] ?? {}).map(([studentId, x]) => ({ studentId, text: x.text, first: x.first ?? null, star: !!x.star, shown: x.shown, createdAt: x.createdAt, updatedAt: x.updatedAt })),
-    })),
-  }));
+  const agoras = agoraList().map((a) => {
+    const writers: Record<string, Set<string>> = {};
+    const latest: Record<string, number> = {};
+    let print = 0;
+    let total = 0;
+    const topics = a.topics.map((t) => {
+      const counts: Record<string, number> = {};
+      const entries = Object.entries(d.topicAnswers[t.id] ?? {});
+      for (const [studentId, x] of entries) {
+        const classId = own(d.students, studentId)?.classId;
+        print = (print + answerPrint(studentId, classId, t.id, x)) >>> 0;
+        if (!classId) continue;
+        counts[classId] = (counts[classId] ?? 0) + 1;
+        (writers[classId] ??= new Set()).add(studentId);
+        latest[classId] = Math.max(latest[classId] ?? 0, x.createdAt);
+      }
+      total += entries.length;
+      return { id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes, counts, total: entries.length };
+    });
+    return {
+      id: a.id,
+      title: a.title,
+      createdAt: a.createdAt,
+      runs: Object.entries(a.runs)
+        .filter(([classId]) => own(d.classes, classId))
+        .map(([classId, at]) => ({ classId, at })),
+      reward: { itemId: rewardItem(a).id },
+      topics,
+      writers: Object.fromEntries(Object.entries(writers).map(([classId, ids]) => [classId, ids.size])),
+      // As lessonOf: the class's last run, or its latest answer in an 아고라 from before runs were kept.
+      lessons: Object.fromEntries(Object.entries(latest).map(([classId, at]) => [classId, a.runs[classId] ?? at])),
+      answersKey: `${total}.${print.toString(36)}`,
+    };
+  });
   const session = live && {
     agoraId: live.agoraId,
     classId: live.classId,
@@ -480,6 +525,8 @@ export function teacherAgora(live: AgoraLive | null) {
     praisedAt: live.praisedAt,
     pageNumbers: live.pageNumbers,
     howto: live.howtoAt !== null,
+    // The console's cards, writers and stars: this class's answers to the open 아고라, the only texts that travel.
+    answers: teacherAnswers(live.agoraId, live.classId) ?? {},
   };
   return { agoras, live: session };
 }

@@ -248,6 +248,8 @@ export interface TeacherAgoraLive {
   praisedAt: number;
   /** The projector's pages, each its cards' numbers, so the preview shows the same page; [] until it has measured. */
   pageNumbers: number[][];
+  /** This class's answers to each topic of the open 아고라, by topic id: the console's cards, writers and stars. */
+  answers: Record<string, TeacherAnswer[]>;
   /** The 놀이 방법 demo is playing on the projector. */
   howto: boolean;
 }
@@ -261,11 +263,17 @@ export interface TeacherAgora {
   /** 이번 아고라 보상: the item a ⭐ gives. */
   reward: { itemId: string };
   topics: TeacherTopic[];
+  /** How many students of each class (by id) wrote to any of its topics; classes with none are left out. */
+  writers: Record<string, number>;
+  /** Each class's last lesson of it (its last [쓰기 시작], or its latest answer), for classes with answers. */
+  lessons: Record<string, number>;
+  /** Changes whenever one of its answers does: an open answer list fetches them again (/api/agora-answers). */
+  answersKey: string;
 }
 
 /**
- * A topic of an 아고라, with every answer whether shown or not, from every class (studentId is one of `students`), and
- * its 처음 답 if 다시 쓰기 changed it.
+ * A topic of an 아고라 with, of its answers, only how many: their texts travel only for the open session's class
+ * (TeacherAgoraLive.answers) and when the teacher opens them (/api/agora-answers).
  */
 export interface TeacherTopic {
   id: string;
@@ -275,7 +283,21 @@ export interface TeacherTopic {
   sort: TopicSort;
   /** 입력 시간 in minutes; null for no limit. */
   minutes: number | null;
-  answers: { studentId: string; text: string; first: string | null; star: boolean; shown: boolean | null; createdAt: number; updatedAt: number }[];
+  /** Answers by class id. */
+  counts: Record<string, number>;
+  /** Every answer to it, any class. */
+  total: number;
+}
+
+/** An answer as the teacher screen has it, whether shown or not, with its 처음 답 if 다시 쓰기 changed it. */
+export interface TeacherAnswer {
+  studentId: string;
+  text: string;
+  first: string | null;
+  star: boolean;
+  shown: boolean | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 

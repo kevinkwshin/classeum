@@ -1,6 +1,7 @@
 // Checks 아고라's safety rules against a running Classeum server the way a class uses it: the teacher screen, the
 // projector and five phones over the real streams and actions, through 대기실, 쓰기, 마감, 다음 주제 and the 끝, then
-// 다시 보기 and 다시 쓰기 in a later lesson, each phone's 내 답 노트, and the teacher's ⭐ with its reward. It makes two classes of its own (아고라점검A
+// 다시 보기 and 다시 쓰기 in a later lesson, each phone's 내 답 노트, the teacher's ⭐ with its reward, and that answer texts reach the
+// teacher screen only for the class in session or when its 답 card asks. It makes two classes of its own (아고라점검A
 // and 아고라점검B) and 아고라 titled [아고라점검], and deletes them with their students and answers at the end, so real
 // classes, 아고라 and records are never touched. It stops before doing anything if the arena or an 아고라 is open.
 // Usage (from the project folder, with the server on): npm run check:agora -- [baseUrl=http://localhost:3000]
@@ -52,6 +53,12 @@ const section = (title: string) => console.log(`\n[${title}]`);
 
 async function post(body: View, headers: Record<string, string> = TEACHER): Promise<View> {
   const res = await fetch(`${BASE}/api/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  return { status: res.status, ...((await res.json()) as View) };
+}
+
+/** One class's answers to an 아고라 as the teacher screen's 답 card fetches them, with the status. */
+async function classAnswers(agoraId: string, classId: string, headers: Record<string, string> = TEACHER): Promise<View> {
+  const res = await fetch(`${BASE}/api/agora-answers?agoraId=${encodeURIComponent(agoraId)}&classId=${encodeURIComponent(classId)}`, { headers });
   return { status: res.status, ...((await res.json()) as View) };
 }
 
@@ -159,6 +166,8 @@ async function run(teacher: Stream, display: Stream) {
   const agora = (id = agoraId): View => (teacher.view.agora.agoras as View[]).find((a) => a.id === id)!;
   const [t1, t2, t3] = (agora().topics as View[]).map((t) => t.id as string);
   const topic = (id = t1): View => (teacher.view.agora.agoras as View[]).flatMap((a) => a.topics as View[]).find((t) => t.id === id)!;
+  /** The open session's answers to a topic, as the teacher screen's console has them: its class's only. */
+  const liveAnswers = (id = t1): View[] => (teacher.view.agora.live?.answers?.[id] as View[] | undefined) ?? [];
   check('주제는 쓴 순서대로, 주제마다 입력 시간·열·순서를 따로 가진다', agora().topics.length === 3 && topic(t1).minutes === 10 && topic(t1).columns === 3 && topic(t1).sort === 'time' && topic(t2).minutes === 5 && topic(t3).minutes === null);
   const REWARD = QUIZ_REWARD_ITEMS[3];
   check('아고라는 만들 때 보상 아이템을 하나 가진다 (아레나 이벤트처럼)', QUIZ_REWARD_ITEMS.some((i) => i.id === agora().reward?.itemId));
@@ -170,8 +179,8 @@ async function run(teacher: Stream, display: Stream) {
   const card = (n: number): View | undefined => (display.view.agora?.cards as View[] | undefined)?.find((c) => c.number === n);
   const phoneCard = (p: Phone, n: number): View | undefined => (p.s.view.agora?.cards as View[] | undefined)?.find((c) => c.number === n);
   const studentId = (cls: Phone['cls'], n: number): string => (teacher.view.students as View[]).find((s) => s.classId === cls.id && s.number === n)!.id;
-  /** Class A student n's answer to a topic, as the teacher screen has it. */
-  const answerOf = (n: number, id = t1): View | undefined => (topic(id).answers as View[]).find((a) => a.studentId === studentId(A, n));
+  /** Class A student n's answer to a topic, as the teacher screen's console has it. */
+  const answerOf = (n: number, id = t1): View | undefined => liveAnswers(id).find((a) => a.studentId === studentId(A, n));
   const owns = (p: Phone) => !!(p.s.view.me?.inventory as string[] | undefined)?.includes(REWARD.id);
   const rewarded = (): string[] => teacher.view.agora.live?.rewarded ?? [];
   // When the teacher last gave a ⭐, as the projector and the teacher screen see it (the applause plays when it changes).
@@ -223,7 +232,8 @@ async function run(teacher: Stream, display: Stream) {
   check('2번 기기는 1번 답을 받지 않았다', !leaks(a2.s, SECRET1));
   check('3번 기기는 아무 답도 받지 않았다', !leaks(a3.s, SECRET1) && !leaks(a3.s, SECRET2));
   check('다른 반 기기는 아무 답도 받지 않았다', !leaks(b1.s, SECRET1) && !leaks(b1.s, SECRET2));
-  check('선생님 화면은 두 답을 다 받는다', JSON.stringify(topic().answers).includes('SECRET-ONE') && JSON.stringify(topic().answers).includes('SECRET-TWO'));
+  check('선생님 화면은 수업 중인 반의 두 답을 다 받는다', JSON.stringify(liveAnswers()).includes('SECRET-ONE') && JSON.stringify(liveAnswers()).includes('SECRET-TWO'));
+  check('선생님 화면의 아고라 목록에는 답의 글 없이 반별 답 수만 있다', !JSON.stringify(teacher.view.agora.agoras).includes('SECRET-ONE') && topic().counts[A.id] === 2 && topic().total === 2, JSON.stringify(topic().counts));
   const order = (display.view.agora.cards as View[]).map((c) => c.number).join(',');
   check('낸 순서: 낸 사람이 먼저, 나머지는 번호순', order.startsWith('1,2,') && order.indexOf('3') > order.indexOf('2'), order);
 
@@ -261,10 +271,12 @@ async function run(teacher: Stream, display: Stream) {
 
   section('고치기와 지우기');
   await sleep(200);
-  const firstAt = (topic().answers as View[]).find((a) => a.text === SECRET1)?.createdAt;
+  const firstAt = liveAnswers().find((a) => a.text === SECRET1)?.createdAt;
+  const keyBefore = agora().answersKey;
   check('1번이 답을 고친다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '고친 답' }, {})).ok);
   await sleep(200);
-  const changed = (topic().answers as View[]).find((a) => a.text === '고친 답');
+  const changed = liveAnswers().find((a) => a.text === '고친 답');
+  check('답이 바뀌면 아고라의 answersKey도 바뀐다 (열려 있는 답 카드가 다시 받아 오게)', typeof keyBefore === 'string' && agora().answersKey !== keyBefore);
   check('고친 답은 처음 낸 시각을 지킨다 (낸 순서가 바뀌지 않게)', changed && changed.createdAt === firstAt && changed.updatedAt >= changed.createdAt);
   check('수업 중에 고친 답은 처음 답을 따로 남기지 않는다 (다시 쓰기에서만)', changed && changed.first === null);
   // A phone numbers its writes; one sent earlier that arrives later (a retry, a second tab) must not win.
@@ -272,10 +284,10 @@ async function run(teacher: Stream, display: Stream) {
   check('번호가 붙은 새 답이 먼저 도착한다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '고친 답', n: writeAt + 2 }, {})).ok);
   check('번호가 더 작은 옛 답이 늦게 도착한다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '늦게 온 옛 답', n: writeAt + 1 }, {})).ok);
   await sleep(200);
-  check('…늦게 온 옛 답은 새 답을 덮지 않는다', a1.s.view.agora.mine?.text === '고친 답' && !(topic().answers as View[]).some((a) => a.text === '늦게 온 옛 답'));
+  check('…늦게 온 옛 답은 새 답을 덮지 않는다', a1.s.view.agora.mine?.text === '고친 답' && !liveAnswers().some((a) => a.text === '늦게 온 옛 답'));
   check('2번이 자기 답을 지운다', (await post({ type: 'agora-unanswer', token: a2.token, topicId: t1 }, {})).ok);
   await sleep(200);
-  check('2번 답이 사라졌다', a2.s.view.agora.mine === null && !(topic().answers as View[]).some((a) => a.text === SECRET2));
+  check('2번 답이 사라졌다', a2.s.view.agora.mine === null && !liveAnswers().some((a) => a.text === SECRET2));
 
   section('공개');
   check('2번이 다시 낸다', (await post({ type: 'agora-answer', token: a2.token, topicId: t1, text: SECRET2 }, {})).ok);
@@ -288,7 +300,7 @@ async function run(teacher: Stream, display: Stream) {
   check('전체 공개', (await post({ type: 'agora-reveal', public: true })).ok);
   await sleep(200);
   check('공개: 모든 답이 프로젝터와 그 반 기기에 간다', card(1)?.text === '고친 답' && card(2)?.text === SECRET2 && phoneCard(a3, 1)?.text === '고친 답' && a3.s.view.agora.reveal === 'public');
-  check('전체 공개하면 따로 공개했던 답은 다시 전체를 따른다', (topic().answers as View[]).every((x) => x.shown === null));
+  check('전체 공개하면 따로 공개했던 답은 다시 전체를 따른다', liveAnswers().every((x) => x.shown === null));
   check('답 하나만 숨긴다 (선생님 화면 클릭: 학생으로)', (await post({ type: 'agora-card', studentId: studentId(A, 1) })).ok);
   await sleep(200);
   check('숨긴 답은 프로젝터와 기기에서 빠지고, 카드는 낸 것으로 남는다', card(1)?.sent && card(1)?.text === undefined && phoneCard(a3, 1)?.text === undefined);
@@ -299,7 +311,7 @@ async function run(teacher: Stream, display: Stream) {
   check('숨긴 답은 전체 비공개 → 전체 공개를 거쳐도 숨겨져 있다', card(1)?.text === undefined && card(2)?.text === SECRET2);
   check('다시 누르면 보인다', (await post({ type: 'agora-card', studentId: studentId(A, 1) })).ok);
   await sleep(200);
-  check('…그리고 다시 전체를 따른다', card(1)?.text === '고친 답' && (topic().answers as View[]).every((x) => x.shown === null));
+  check('…그리고 다시 전체를 따른다', card(1)?.text === '고친 답' && liveAnswers().every((x) => x.shown === null));
   // A click says the topic it was on and what it wants, so a late one can't touch another topic, and a repeat changes nothing.
   check('다른 주제를 가리키는 숨기기 요청 (늦게 도착한 클릭)', (await post({ type: 'agora-card', studentId: studentId(A, 2), topicId: t2, shown: false })).ok);
   await sleep(200);
@@ -309,7 +321,7 @@ async function run(teacher: Stream, display: Stream) {
   check('숨기기를 두 번 보내도 숨긴 그대로다 (뒤집지 않는다)', card(2)?.sent && card(2)?.text === undefined);
   check('보이기로 되돌린다', (await post({ type: 'agora-card', number: 2, topicId: t1, shown: true })).ok);
   await sleep(200);
-  check('…보이고, 다시 전체를 따른다', card(2)?.text === SECRET2 && (topic().answers as View[]).every((x) => x.shown === null));
+  check('…보이고, 다시 전체를 따른다', card(2)?.text === SECRET2 && liveAnswers().every((x) => x.shown === null));
 
   section('화면 설정');
   check('열 4개, 번호순', (await post({ type: 'agora-settings', columns: 4, sort: 'number' })).ok);
@@ -328,9 +340,11 @@ async function run(teacher: Stream, display: Stream) {
   await post({ type: 'agora-reveal', public: false });
   await sleep(100);
   check('공개를 바꾸면 첫 쪽으로 간다', display.view.agora.page === 0);
+  const keyNow = agora().answersKey;
   check('배경음을 끈다', (await post({ type: 'agora-music' })).ok);
   await sleep(100);
   check('프로젝터가 배경음 꺼짐을 받는다', display.view.agora.music === false);
+  check('답과 상관없는 변화에는 answersKey가 그대로다 (답 카드가 괜히 다시 받아 오지 않게)', agora().answersKey === keyNow);
   await post({ type: 'agora-music' });
   check('선생님이 2번 답을 지운다', (await post({ type: 'agora-card-delete', topicId: t1, studentId: studentId(A, 2) })).ok);
   await sleep(200);
@@ -414,7 +428,7 @@ async function run(teacher: Stream, display: Stream) {
   check('쓰는 중에 건너뛰기', (await post({ type: 'agora-next' })).ok);
   await sleep(300);
   check('건너뛰면 쓰기가 끝나고 주제 3이 준비로 뜬다', display.view.agora?.phase === 'ready' && display.view.agora.index === 2 && display.view.agora.timer === null && teacher.view.agora.live?.timer === null);
-  check('건너뛴 주제 2의 답은 남는다', (topic(t2).answers as View[]).length === 2);
+  check('건너뛴 주제 2의 답은 남는다', liveAnswers(t2).length === 2 && topic(t2).counts[A.id] === 2);
   check('건너뛴 주제에는 더 쓸 수 없다', (await post({ type: 'agora-answer', token: a2.token, topicId: t2, text: 'x' }, {})).error === '주제가 바뀌었어요. 화면을 확인해 주세요.');
   check('주제 3은 쓰지 않고 건너뛴다', (await post({ type: 'agora-next' })).ok);
   await sleep(300);
@@ -435,17 +449,30 @@ async function run(teacher: Stream, display: Stream) {
   check('선생님이 아고라를 닫는다', (await post({ type: 'agora-end' })).ok);
   await sleep(200);
   check('닫음: 프로젝터와 기기는 처음 화면으로', !display.view.agora && phones.every((p) => !p.s.view.agora) && teacher.view.agora.live === null);
-  check('그때 따로 공개한 답이 있었다', (topic().answers as View[]).some((x) => x.shown === true));
+  const closedA = await classAnswers(agoraId, A.id);
+  check('그때 따로 공개한 답이 있었다', (closedA.answers?.[t1] as View[] | undefined)?.some((x) => x.shown === true));
+
+  section('선생님 화면의 답');
+  const seen = JSON.stringify(teacher.view);
+  const runAt = (agora().runs as View[]).find((r) => r.classId === A.id)?.at;
+  check('수업이 없으면 선생님 화면에 답의 글은 없고, 주제마다 반별 답 수·쓴 학생 수·수업 날만 있다', !seen.includes('고친 답') && !seen.includes('ALPHA-T2') && topic(t1).counts[A.id] === 3 && topic(t2).counts[A.id] === 2 && topic(t3).total === 0 && agora().writers[A.id] === 3 && agora().lessons[A.id] === runAt, JSON.stringify([agora().writers, agora().lessons]));
+  check('답 카드는 고른 반의 답을 주제마다 받아 온다', closedA.ok && closedA.answers[t1].length === 3 && closedA.answers[t2].length === 2 && closedA.answers[t3].length === 0 && JSON.stringify(closedA.answers).includes('고친 답'));
+  const closedB = await classAnswers(agoraId, B.id);
+  check('…다른 반을 고르면 그 반의 답만 (여기서는 하나도 없음)', closedB.ok && Object.values(closedB.answers as Record<string, View[]>).every((x) => x.length === 0) && !JSON.stringify(closedB).includes('고친 답'));
+  check('답 받아 오기는 선생님만: 선생님 쿠키가 없으면 막힌다 (학생 기기처럼)', (await classAnswers(agoraId, A.id, {})).status === 403);
+  check('…다른 사이트에서 온 요청도 막힌다', (await classAnswers(agoraId, A.id, { ...TEACHER, 'Sec-Fetch-Site': 'cross-site' })).status === 403);
+  check('없는 아고라의 답은 받아 오지 못한다', (await classAnswers('no-such-agora', A.id)).status === 404);
   await post({ type: 'agora-open', agoraId, classId: A.id });
   await sleep(300);
   check('같은 반에서 다시 열면 첫 주제부터, 그 반의 답이 이어진다', a1.s.view.agora?.topic.id === t1 && a1.s.view.agora.mine?.text === '고친 답');
-  check('다시 열면 한 장씩 공개·숨김은 풀리고 비공개로 시작한다', teacher.view.agora.live?.reveal === 'hidden' && (topic().answers as View[]).every((x) => x.shown === null));
+  check('다시 열면 한 장씩 공개·숨김은 풀리고 비공개로 시작한다', teacher.view.agora.live?.reveal === 'hidden' && liveAnswers().length === 3 && liveAnswers().every((x) => x.shown === null));
   await post({ type: 'agora-end' });
   await post({ type: 'agora-open', agoraId, classId: B.id });
   await post({ type: 'agora-start' });
   await sleep(300);
   check('다른 반으로 열면 그 반 카드만 나온다', display.view.agora?.className === B.name && (display.view.agora.cards as View[]).map((c) => c.number).join() === '7');
   check('그 반 기기에는 앞 반의 답이 가지 않는다', !JSON.stringify(b1.s.raw).includes('고친 답') && !display.view.agora.cards.some((c: View) => c.text !== undefined));
+  check('선생님 화면에도 다른 반의 답 글은 오지 않는다 (지금 수업 중인 반의 답만)', !JSON.stringify(teacher.view).includes('고친 답') && Object.values(teacher.view.agora.live?.answers ?? {}).every((x) => (x as View[]).length === 0));
   await post({ type: 'agora-end' });
   await sleep(200);
 
@@ -473,14 +500,14 @@ async function run(teacher: Stream, display: Stream) {
   check('다시 쓰기: 그 주제의 입력 시간으로 쓰기가 열린다', display.view.agora?.phase === 'writing' && tr && tr.endsAt - tr.startedAt === 600_000);
   check('1번이 고쳐 쓴다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '다시 쓴 답' }, {})).ok);
   await sleep(300);
-  const rewritten = (topic().answers as View[]).find((a) => a.studentId === studentId(A, 1));
+  const rewritten = liveAnswers().find((a) => a.studentId === studentId(A, 1));
   check('선생님 화면에 처음 답과 고친 답이 함께 남는다', rewritten?.text === '다시 쓴 답' && rewritten.first === '고친 답');
   check('1번 기기는 자기 처음 답을 받는다', a1.s.view.agora?.mine?.text === '다시 쓴 답' && a1.s.view.agora.mine.first === '고친 답');
   check('처음 답은 프로젝터와 친구 기기에 가지 않는다', !display.raw.some((r) => r.includes('"first"')) && ![a2, a3, b1].some((p) => p.s.raw.some((r) => r.includes('"first":"고친 답"'))));
   check('다시 쓰기에서는 답을 지울 수 없다', (await post({ type: 'agora-unanswer', token: a1.token, topicId: t1 }, {})).error?.includes('지울 수 없어요'));
   check('한 번 더 고친다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: '또 고친 답' }, {})).ok);
   await sleep(200);
-  check('처음 답은 맨 처음 것 그대로다', (topic().answers as View[]).find((a) => a.studentId === studentId(A, 1))?.first === '고친 답');
+  check('처음 답은 맨 처음 것 그대로다', liveAnswers().find((a) => a.studentId === studentId(A, 1))?.first === '고친 답');
   check('고쳐 써도 별은 답에 남는다', answerOf(1)?.star === true);
   await post({ type: 'agora-star', studentId: studentId(A, 1) });
   await post({ type: 'agora-star', studentId: studentId(A, 1) });
@@ -526,7 +553,7 @@ async function run(teacher: Stream, display: Stream) {
   await sleep(300);
   const after = agora();
   check('아고라를 고친다: 순서를 바꾸고, 고치고, 더하고, 뺀다', edited.ok && after.title === `${MARK} 고친 아고라` && after.topics.map((t: View) => t.text).join() === '세 번째 주제,시험 주제 (고침),새 주제,남의 주제');
-  check('고친 주제는 그 답을 지킨다', after.topics[1].id === t1 && after.topics[1].minutes === 3 && (after.topics[1].answers as View[]).length === 3);
+  check('고친 주제는 그 답을 지킨다', after.topics[1].id === t1 && after.topics[1].minutes === 3 && after.topics[1].total === 3);
   check('뺀 주제는 그 답과 함께 지워진다', !after.topics.some((t: View) => t.id === t2) && !(teacher.view.agora.agoras as View[]).some((a) => (a.topics as View[]).some((t) => t.id === t2)));
   check('다른 아고라의 주제 id를 보내도 새 주제가 된다 (남의 주제는 그대로)', after.topics[3].id !== otherTopic && agora(other).topics[0].id === otherTopic && agora(other).topics[0].text === '다른 주제');
 

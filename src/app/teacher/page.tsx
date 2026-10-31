@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import type { TeacherAgora, TeacherAgoraLive, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
+import type { TeacherAgora, TeacherAgoraLive, TeacherAnswer, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { AGORA_MUSIC_SRC, AGORA_MUSIC_TITLE, MUSIC_TITLE } from '@/client/sound';
@@ -1411,11 +1411,28 @@ function keepAgoraDraft(draft: AgoraDraft | null) {
   }
 }
 
-/** When a class did an 아고라, for 다시 보기: its run, or its latest answer from before runs were kept (the server's lessonOf). */
-function lessonDay(agora: TeacherAgora, classId: string, classOf: (studentId: string) => string | undefined): number | null {
-  const times = agora.topics.flatMap((t) => t.answers.filter((a) => classOf(a.studentId) === classId).map((a) => a.createdAt));
-  if (!times.length) return null;
-  return agora.runs.find((r) => r.classId === classId)?.at ?? Math.max(...times);
+/**
+ * One class's answers to an 아고라, by topic id, fetched when the 답 card shows them (the teacher stream carries only how
+ * many there are) and again whenever `key` (the 아고라's answersKey) says they changed. Null until the first arrive; a
+ * newer fetch keeps the last ones up meanwhile, so the list doesn't blink.
+ */
+function useClassAnswers(agoraId: string, classId: string | null, key: string): Record<string, TeacherAnswer[]> | null {
+  const [got, setGot] = useState<{ of: string; answers: Record<string, TeacherAnswer[]> } | null>(null);
+  const of = `${agoraId}/${classId ?? ''}`;
+  useEffect(() => {
+    if (!classId) return;
+    let stop = false;
+    fetch(`/api/agora-answers?agoraId=${encodeURIComponent(agoraId)}&classId=${encodeURIComponent(classId)}`)
+      .then((r) => r.json() as Promise<{ ok: boolean; answers?: Record<string, TeacherAnswer[]> }>)
+      .then((j) => {
+        if (!stop && j.ok && j.answers) setGot({ of, answers: j.answers });
+      })
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [agoraId, classId, of, key]);
+  return got?.of === of ? got.answers : null;
 }
 
 /**
@@ -1443,7 +1460,7 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
     if (!draft) return;
     // A topic taken out of the table (or emptied) takes its answers with it.
     const kept = new Set(draft.rows.filter((r) => r.text.trim() || r.note.trim()).map((r) => r.id));
-    const lost = (editing?.topics ?? []).filter((t) => !kept.has(t.id)).reduce((n, t) => n + t.answers.length, 0);
+    const lost = (editing?.topics ?? []).filter((t) => !kept.has(t.id)).reduce((n, t) => n + t.total, 0);
     if (lost && !confirm(`뺀 주제의 학생 답 ${lost}개도 함께 지워지고 되돌릴 수 없어요. 저장할까요?`)) return;
     const topics = draft.rows.map(({ id, text, note, minutes, columns, sort }) => ({ id, text, note, minutes, columns, sort }));
     setBusy(true);
@@ -1659,16 +1676,16 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
   const saveReward = () => act({ type: 'agora-reward', agoraId: agora.id, itemId: rewardId });
   const runs = new Map(agora.runs.map((r) => [r.classId, r.at]));
   const byId = new Map(view.students.map((s) => [s.id, s]));
-  const classOf = (studentId: string) => byId.get(studentId)?.classId;
-  const total = agora.topics.reduce((n, t) => n + t.answers.length, 0);
-  const classesWith = view.classes.filter((c) => agora.topics.some((t) => t.answers.some((a) => classOf(a.studentId) === c.id)));
+  const total = agora.topics.reduce((n, t) => n + t.total, 0);
+  const classesWith = view.classes.filter((c) => (agora.writers[c.id] ?? 0) > 0);
   const shownClass = classesWith.find((c) => c.id === answersOf) ?? classesWith.find((c) => c.id === classId) ?? classesWith[0];
   const topic = agora.topics[Math.min(topicAt, agora.topics.length - 1)];
-  const rows = topic.answers
+  const fetched = useClassAnswers(agora.id, shownClass?.id ?? null, agora.answersKey);
+  const rows = (fetched?.[topic.id] ?? [])
     .map((a) => ({ a, s: byId.get(a.studentId) }))
-    .filter((r): r is { a: TeacherTopic['answers'][number]; s: TeacherStudent } => !!r.s && r.s.classId === shownClass?.id)
+    .filter((r): r is { a: TeacherAnswer; s: TeacherStudent } => !!r.s && r.s.classId === shownClass?.id)
     .sort((x, y) => byNumber(x.s, y.s));
-  const lesson = shownClass ? lessonDay(agora, shownClass.id, classOf) : null;
+  const lesson = shownClass ? (agora.lessons[shownClass.id] ?? null) : null;
   const remove = () => {
     const extra = total ? `\n학생 답 ${total}개도 함께 지워지고 되돌릴 수 없어요.` : '';
     if (confirm(`이 아고라를 지울까요?${extra}`)) act({ type: 'agora-delete', agoraId: agora.id }).catch(() => undefined);
@@ -1749,7 +1766,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
               {classesWith.map((c) => (
                 <button key={c.id} type="button" aria-pressed={c.id === shownClass.id} onClick={() => setAnswersOf(c.id)} className={`h-9 rounded-xl px-3 text-sm font-bold ${c.id === shownClass.id ? 'bg-ink text-white' : 'bg-bg text-ink-2'}`}>
                   {c.name}
-                  <span className={`tabular ml-1.5 ${c.id === shownClass.id ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>{new Set(agora.topics.flatMap((t) => t.answers.filter((a) => classOf(a.studentId) === c.id).map((a) => a.studentId))).size}</span>
+                  <span className={`tabular ml-1.5 ${c.id === shownClass.id ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>{agora.writers[c.id] ?? 0}</span>
                 </button>
               ))}
             </div>
@@ -1764,7 +1781,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
             </div>
           )}
           <div className="flex flex-col">
-            {rows.length === 0 && <div className="py-2 text-sm text-ink-3">이 주제에 쓴 답이 없어요</div>}
+            {rows.length === 0 && <div className="py-2 text-sm text-ink-3">{fetched ? '이 주제에 쓴 답이 없어요' : '불러오는 중…'}</div>}
             {rows.map(({ a, s }) => (
               <div key={s.id} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5 first:border-t-0">
                 <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={30} seed={s.id} />
@@ -1875,7 +1892,7 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
                   <div className="min-w-0 flex-1">
                     <div className={`whitespace-pre-wrap break-keep leading-snug [overflow-wrap:anywhere] ${i === 0 ? 'text-lg font-bold' : 'font-semibold text-ink-2'}`}>{t.text}</div>
                     <div className="mt-0.5 text-[13px] text-ink-3">
-                      {review ? `답 ${t.answers.filter((a) => mine.some((s) => s.id === a.studentId)).length}개` : minutesLabel(t.minutes)} · {t.columns}열 · {sortLabel(t.sort)}
+                      {review ? `답 ${t.counts[live.classId] ?? 0}개` : minutesLabel(t.minutes)} · {t.columns}열 · {sortLabel(t.sort)}
                     </div>
                   </div>
                 </li>
@@ -1985,7 +2002,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   }, [step, primary, send, skip, live.page]);
 
   if (!agora || !topic) return null;
-  const answers = new Map(topic.answers.map((a) => [a.studentId, a]));
+  const answers = new Map((live.answers[topic.id] ?? []).map((a) => [a.studentId, a]));
   const inRoom = new Set(live.joined);
   const wrote = live.wrote.includes(topic.id);
   // The topic's cards, as the projector has them: the class's students with an answer and, once they have written to
@@ -1999,7 +2016,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   const pageNumbers = live.pageNumbers[live.page];
   const onPage = pageNumbers ? cards.filter((s) => pageNumbers.includes(s.number)) : cards;
   const waiting = cards.filter((s) => !answers.has(s.id));
-  const shownOf = (a: TeacherTopic['answers'][number]) => (a.shown === null ? isPublic : a.shown);
+  const shownOf = (a: TeacherAnswer) => (a.shown === null ? isPublic : a.shown);
   const next = agora.topics[live.index + 1];
   // The arena console's preview: 16:8, as wide as the column allows while what is below it stays above the bottom bar;
   // the next topic waiting below takes its room, and it is never larger than the arena's.
@@ -2228,7 +2245,7 @@ function AgoraEndPanel({ view, live, agora }: { view: TeacherView; live: Teacher
   const mine = view.students.filter((s) => s.classId === live.classId);
   const counts = agora.topics.map((t) => {
     if (!live.wrote.includes(t.id)) return null;
-    const answered = new Set(t.answers.map((a) => a.studentId));
+    const answered = new Set((live.answers[t.id] ?? []).map((a) => a.studentId));
     const cards = mine.filter((s) => inRoom.has(s.id) || answered.has(s.id));
     return { sent: cards.filter((s) => answered.has(s.id)).length, of: cards.length };
   });
