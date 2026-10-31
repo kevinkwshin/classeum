@@ -97,12 +97,31 @@ export default function PlayPage() {
 
 type Send = (a: Record<string, unknown>) => Promise<unknown>;
 
+const PRAISE_SEEN_KEY = 'classeum.praiseSeen';
+
+function seenPraise(): number {
+  try {
+    return Number(localStorage.getItem(PRAISE_SEEN_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send; serverNow: () => number; conn: ConnState }) {
   const [lockerOpen, setLockerOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [answersOpen, setAnswersOpen] = useState(false);
-  // The ⭐ reward box already seen (by when it was given), so a new topic doesn't open it again.
-  const [praiseSeen, setPraiseSeen] = useState(0);
+  // The ⭐ reward box already seen (by when it was given), kept on this phone so neither a new topic nor a reload
+  // opens it again: the reward was given once, and a second box would look like a second reward.
+  const [praiseSeen, setPraiseSeen] = useState(seenPraise);
+  const onPraiseSeen = useCallback((at: number) => {
+    setPraiseSeen(at);
+    try {
+      localStorage.setItem(PRAISE_SEEN_KEY, String(at));
+    } catch {
+      // A private window: a reload may show it once more.
+    }
+  }, []);
   // Text drafts live here so the pause screen doesn't wipe them.
   const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
@@ -130,7 +149,7 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   if (view.agora && !s) {
     if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
     if (view.agora.phase === 'end') return <AgoraDone view={view} />;
-    return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} praiseSeen={praiseSeen} onPraiseSeen={setPraiseSeen} />;
+    return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} praiseSeen={praiseSeen} onPraiseSeen={onPraiseSeen} />;
   }
   if (!s || s.phase === 'summary') {
     if (s?.phase === 'summary' && view.mySummary) return <Summary view={view} onLocker={() => setLockerOpen(true)} onNotes={() => setNotesOpen(true)} />;
