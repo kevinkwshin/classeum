@@ -2379,21 +2379,27 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
   }
   return (
     <div className="flex flex-col gap-5 p-8">
+      {/* The 이벤트 header: the title alone on the left, and its buttons' size, with the Excel ones dark. */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          {title}
-          <div className="flex gap-1 rounded-xl bg-[#E9EBEF] p-1">
-            {(['students', 'words'] as const).map((m) => (
-              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`h-9 rounded-lg px-3.5 text-sm ${mode === m ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>{m === 'students' ? '학생별' : '단어별'}</button>
-            ))}
-          </div>
-        </div>
+        {title}
         <div className="flex gap-2">
-          <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-10 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-sm font-semibold">이 반 엑셀로</a>
-          <a href="/api/stats?format=csv" className="flex h-10 items-center rounded-xl border border-[#D5D8DF] bg-white px-4 text-sm font-semibold">전체 엑셀로</a>
+          <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">이 반 엑셀로</a>
+          <a href="/api/stats?format=csv" className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">전체 엑셀로</a>
         </div>
       </div>
-      <ClassTabs classes={classes} value={classId} onChange={(id) => { setClassId(id); setPicked(null); }} />
+      <ClassTabs
+        classes={classes}
+        value={classId}
+        onChange={(id) => { setClassId(id); setPicked(null); }}
+        extra={
+          // 학생별 · 단어별 changes what is shown below, as the class does; as tall as the class tabs.
+          <div className="ml-auto flex gap-1 rounded-xl bg-[#E9EBEF] p-1">
+            {(['students', 'words'] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`h-8 rounded-lg px-3.5 text-sm ${mode === m ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>{m === 'students' ? '학생별' : '단어별'}</button>
+            ))}
+          </div>
+        }
+      />
       {mode === 'words' ? (
         <Card className="!p-2">
           <table className="w-full text-left text-[15px]">
