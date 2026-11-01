@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useClock } from '@/client/clock';
 import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import type { TeacherAgora, TeacherAgoraLive, TeacherAnswer, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
@@ -15,6 +16,7 @@ import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
 import { COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TITLE_MAX, TOPIC_MAX, TOPICS_MAX, agoraMinutes, type TopicSort } from '@/lib/agora';
 import { gradeDictation, type DictationWord } from '@/lib/dictation';
+import { josa } from '@/lib/josa';
 import { prepareSpeech, useSpeech } from '@/client/speech';
 
 type Send = (a: Record<string, unknown>) => Promise<unknown>;
@@ -114,11 +116,12 @@ function TeacherApp() {
               {key === 'students' && view.requests.length > 0 && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">{view.requests.length}</span>}
               {/* What is open, while the menu shows (the console covers it otherwise): an arena with its results up is still
                   open, and has to close before an 아고라 opens. */}
-              {key === 'arena' && view.live && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">{view.live.phase === 'lobby' ? '대기실' : '진행 중'}</span>}
+              {key === 'arena' && view.live && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">{view.live.phase === 'lobby' ? '대기실' : '결과'}</span>}
               {key === 'agora' && agoraLive && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">대기실</span>}
             </button>
           ))}
           <div className="mt-auto flex flex-col gap-2 px-1">
+            <TimeOfDay className="px-2 text-xl font-bold text-white" />
             <div className="flex items-center gap-1.5">
               <ProjectorLink className="min-w-0 flex-1 whitespace-nowrap rounded-xl border border-[#3D4354] px-2 py-2.5 text-center text-sm font-semibold text-white">프로젝터 화면 열기</ProjectorLink>
               {/* Its setup steps lead to the arena's events, not its statistics. */}
@@ -185,6 +188,12 @@ function TeacherApp() {
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <section className={`rounded-[20px] bg-white p-6 ${className}`}>{children}</section>;
+}
+
+/** The time of day: in the menu above [프로젝터 화면 열기], and on the two class bars beside their tools. */
+function TimeOfDay({ className }: { className: string }) {
+  const time = useClock();
+  return <span className={`tabular ${className}`}>{time}</span>;
 }
 
 /**
@@ -576,7 +585,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
         </div>
         <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
           <Btn kind="ghost" onClick={onExcel}>엑셀로 받기</Btn>
-          <Btn kind="ghost" onClick={() => { if (confirm(`'${event.name}' 이벤트를 지울까요? 기록은 통계에 남아요.`)) act({ type: 'delete-event', eventId: event.id }); }}>지우기</Btn>
+          <Btn kind="ghost" onClick={() => { if (confirm(event.played ? `'${event.name}' 이벤트를 지울까요?\n이벤트 목록에서만 빠지고, 통계와 학생 오답 노트에는 문제까지 그대로 남아요.` : `'${event.name}' 이벤트를 지울까요?`)) act({ type: 'delete-event', eventId: event.id }).catch(() => undefined); }}>지우기</Btn>
           {view.classes.length === 0 ? (
             <Btn onClick={onStudents}>반 만들기 →</Btn>
           ) : (
@@ -613,7 +622,7 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
             <input type="number" min={1} max={50} value={growth} onChange={(e) => setGrowth(Number(e.target.value))} className="h-9 w-14 rounded-lg bg-white text-center font-bold" />%p
           </label>
           <span className="text-sm text-ink-3">둘 중 하나만 달성하면 받아요</span>
-          <Btn kind="gold" disabled={!dirty} onClick={saveReward} className="ml-auto">저장</Btn>
+          <Btn kind="gold" disabled={!dirty} title={dirty ? undefined : '바꾼 내용이 없어요'} onClick={saveReward} className="ml-auto">저장</Btn>
         </div>
       </Card>
       <Card className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -671,7 +680,19 @@ function RewardItemPicker({ itemId, onPick }: { itemId: string; onPick: (id: str
  * [직접 작성하기]: a title and a table of word / meaning / example. Pasting several lines copied from Excel or a
  * Hangul table fills the rows from there (columns split by tabs); Enter moves down a row.
  */
+/** Esc closes a window, as it does the 도움말 (not while a Korean syllable is being typed). */
+function useEscape(onClose: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.isComposing) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+}
+
 function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { draft: TypedDraft; setDraft: (f: (d: TypedDraft) => TypedDraft) => void; busy: boolean; onClose: () => void; onPreview: () => void; onExcel: () => void }) {
+  useEscape(onClose);
   const cells = useRef<(HTMLInputElement | null)[][]>([]);
   const keys = ['spelling', 'meaning', 'example'] as const;
   const filled = draft.rows.filter((r) => r.spelling.trim() && r.meaning.trim()).length;
@@ -770,7 +791,7 @@ function WordEditor({ draft, setDraft, busy, onClose, onPreview, onExcel }: { dr
           <div className="flex gap-2">
             <Btn kind="ghost" onClick={() => setDraft((d) => ({ ...d, rows: [...d.rows, ...blankRows(10)] }))}>10줄 추가</Btn>
             <Btn kind="ghost" onClick={() => { if (confirm('쓴 내용을 모두 지울까요?')) setDraft(() => ({ title: '', rows: blankRows(10) })); }}>비우기</Btn>
-            <Btn kind="ghost" disabled={!anyRow} onClick={onExcel}>엑셀로 받기</Btn>
+            <Btn kind="ghost" disabled={!anyRow} title={anyRow ? undefined : '단어를 먼저 써 주세요'} onClick={onExcel}>엑셀로 받기</Btn>
           </div>
           <div className="flex items-center gap-3">
             {over ? (
@@ -1006,6 +1027,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
       <div className="flex h-[76px] items-center justify-between gap-5 whitespace-nowrap bg-ink px-7 text-white">
         <div className="flex items-center gap-6">
           <div className="text-sm font-bold text-[#A3A8B4]">{live.className}</div>
+          <div className="text-[22px] font-extrabold">아레나</div>
           <div className="tabular text-[22px] font-extrabold">{live.index + 1 > 0 ? live.index + 1 : '-'}<span className="text-ink-3"> / {total}</span></div>
           {live.round === 'retry' && <span className="rounded-full bg-gold px-3 py-1 text-sm font-bold text-ink">다시 도전</span>}
           <div className="flex gap-1.5">
@@ -1014,9 +1036,14 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           {live.phase === 'moving' && <div className="tabular text-[26px] font-extrabold text-[#FF8A5C]">{formatClock(ms)}</div>}
           {live.paused && <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-ink">멈춤</span>}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <TimeOfDay className="mr-2 text-[15px] font-semibold text-[#A3A8B4]" />
           <MusicSwitch dark on={live.music} onToggle={() => control('music')} />
-          <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>잠시 멈춤 B</button>
+          {/* B: the projector goes blank and the quiz holds, to call the class's eyes to the teacher; pressed again it comes back. */}
+          <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>
+            {live.blank ? '화면 보이기' : '화면 가리기'} <span className="text-xs text-ink-3">B</span>
+          </button>
+          <HelpButton view={view} first="arena" />
           <button
             type="button"
             onClick={() => {
@@ -1030,7 +1057,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
             }}
             className="h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold"
           >
-            종료
+            끝내기
           </button>
         </div>
       </div>
@@ -1113,8 +1140,8 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
 
       <div className="sticky bottom-0 z-10 flex h-[88px] items-center justify-between border-t border-line bg-white px-7">
         <div className="flex gap-2">
-          <Btn kind="ghost" onClick={() => control(live.paused ? 'resume' : 'pause')}>{live.paused ? '다시 시작' : '멈춤'} <span className="text-xs text-ink-3">Space</span></Btn>
-          <Btn kind="ghost" disabled={live.phase !== 'moving'} onClick={() => control('add-time')}>+5초 <span className="text-xs text-ink-3">↑</span></Btn>
+          <Btn kind="ghost" onClick={() => control(live.paused ? 'resume' : 'pause')}>{live.paused ? '계속' : '멈춤'} <span className="text-xs text-ink-3">Space</span></Btn>
+          <Btn kind="ghost" disabled={live.phase !== 'moving'} title={live.phase !== 'moving' ? '학생이 답하는 동안만 늘릴 수 있어요' : undefined} onClick={() => control('add-time')}>+5초 <span className="text-xs text-ink-3">↑</span></Btn>
           <Btn kind="ghost" onClick={() => control('skip')}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
           {/* The rest of this type at once: words → 문법 고르기 → 쓰기 → 고치기 → 배열. */}
           {live.round === 'main' && live.section && live.section.left > 0 && (
@@ -1131,7 +1158,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
         {live.phase === 'moving' ? (
           <Btn key="close-now" onClick={() => control('close-now')} className="h-14 px-8 text-lg">지금 정답 공개 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">Enter</span></Btn>
         ) : (
-          <Btn key="next" onClick={() => control('next')} disabled={live.phase !== 'reveal' && live.phase !== 'checkpoint'} className="h-14 px-8 text-lg">다음 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">→</span></Btn>
+          <Btn key="next" onClick={() => control('next')} disabled={live.phase !== 'reveal' && live.phase !== 'checkpoint'} title={live.phase !== 'reveal' && live.phase !== 'checkpoint' ? '정답이 나오면 눌러요' : undefined} className="h-14 px-8 text-lg">다음 <span className="ml-2 rounded bg-[#3D4354] px-2 py-0.5 text-xs">→</span></Btn>
         )}
       </div>
     </div>
@@ -1166,7 +1193,8 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
             놀이 방법
           </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'close-session', id: live.id })}>대기실 닫기</Btn>
-          <Btn kind="accent" onClick={() => control('start')} className="px-6">퀴즈 시작</Btn>
+          {/* With nobody in, it asks first: starting is still allowed (to try the quiz alone), just not by a slip. */}
+          <Btn kind="accent" onClick={() => { if (joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) control('start'); }} className="px-6">퀴즈 시작</Btn>
         </div>
       </div>
       <div className="flex gap-5">
@@ -1228,6 +1256,9 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
 
 // ---------- students ----------
 
+/** What goes with a student taken off the roster (hub.removeStudents), said by every way of doing it. */
+const REMOVE_WHAT = '캐릭터와 보관함, 폰 연결, 오답 노트, 출석 발자국, 아고라 답도 함께 지워지고 되돌릴 수 없어요.';
+
 function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrite: () => void }) {
   const [classId, setClassId] = useClassChoice(view.classes);
   const [text, setText] = useState('');
@@ -1245,8 +1276,19 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
       else next.add(id);
       return next;
     });
+  // What saving a roster did, said under its box: added, renamed, and the lines it couldn't read (left in the box).
+  const [rosterNote, setRosterNote] = useState<{ classId: string; done: string; skipped: number } | null>(null);
+  const saveRoster = () =>
+    act({ type: 'roster', classId, text })
+      .then((res) => {
+        const { added = 0, renamed = 0, skipped = [] } = res as { added?: number; renamed?: number; skipped?: string[] };
+        const done = [added && `${added}명 추가`, renamed && `${renamed}명 이름 바꿈`].filter(Boolean).join(' · ');
+        setText(skipped.join('\n'));
+        setRosterNote({ classId, done: done || '명단과 같아서 바뀐 게 없어요', skipped: skipped.length });
+      })
+      .catch(() => undefined);
   const removePicked = () => {
-    if (!confirm(`${current?.name} 학생 ${picked.length}명을 명단에서 지울까요?\n폰 연결, 캐릭터, 오답 노트, 출석 발자국도 함께 지워지고 되돌릴 수 없어요.`)) return;
+    if (!confirm(`${current?.name} 학생 ${picked.length}명을 명단에서 지울까요?\n${REMOVE_WHAT}`)) return;
     act({ type: 'remove-students', studentIds: picked.map((s) => s.id) })
       .then(() => setChecked(new Set()))
       .catch(() => undefined);
@@ -1280,14 +1322,16 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
             }}
           >
             <input value={newClass} onChange={(e) => setNewClass(e.target.value)} placeholder="새 반 이름 (예: 2-3반)" aria-label="새 반 이름" className="h-10 w-44 rounded-xl bg-white px-3 text-sm outline-none" />
-            <Btn kind="ghost" disabled={!newClass.trim()} className="!h-10 text-sm" onClick={() => { if (newClass.trim()) addClass(); }}>반 추가</Btn>
+            <Btn kind="ghost" disabled={!newClass.trim()} title={newClass.trim() ? undefined : '반 이름을 써 주세요'} className="!h-10 text-sm" onClick={() => { if (newClass.trim()) addClass(); }}>반 추가</Btn>
           </form>
         }
       />
       {!current ? (
         <Card className="text-ink-3">반을 먼저 만들어 주세요. 반마다 명단을 따로 넣고, 대기실을 열 때 오늘 수업할 반을 골라요.</Card>
       ) : (
-        <div className="flex gap-5">
+        // Side by side on a wide screen; on a small laptop (a 1366px one at 125% is 1093px) the roster keeps the width
+        // and the two cards go under it.
+        <div className="flex flex-col gap-5 xl:flex-row">
           <Card className="min-w-0 flex-1 !p-2">
             {picked.length > 0 && (
               <div className="mb-1 flex items-center justify-between rounded-xl bg-bad-soft px-4 py-2.5">
@@ -1331,13 +1375,13 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
                       <input type="checkbox" aria-label={`${s.number} ${s.name} 선택`} checked={checked.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4 accent-ink" />
                     </td>
                     <td className="tabular px-2 py-2.5 text-ink-3">{s.number}</td>
-                    <td className="font-semibold">{s.name}</td>
+                    <td className="truncate pr-2 font-semibold" title={s.name}>{s.name}</td>
                     <td>{s.look ? <IdleAvatar look={normalizeLook(s.look)} size={28} seed={s.id} /> : <span className="text-xs text-ink-3">-</span>}</td>
                     <td className="text-sm">{s.hasDevice ? <span className={s.connected ? 'font-semibold text-good' : 'text-ink-2'}>{s.connected ? '접속 중' : '등록됨'}</span> : <span className="text-ink-3">미등록</span>}</td>
                     <td className="tabular text-sm">{s.stamps}</td>
                     <td className="pr-3 text-right">
                       {s.hasDevice && <button type="button" className="text-sm font-semibold text-ink-2 underline" onClick={() => { if (confirm(`${s.name}의 기기 연결을 해제할까요? 다시 등록하면 기록은 그대로예요.`)) act({ type: 'revoke', studentId: s.id }); }}>연결 해제</button>}
-                      <button type="button" className="ml-3 text-sm font-semibold text-bad underline" onClick={() => { if (confirm(`${s.name}을 명단에서 지울까요?`)) act({ type: 'remove-student', studentId: s.id }); }}>삭제</button>
+                      <button type="button" className="ml-3 text-sm font-semibold text-bad underline" onClick={() => { if (confirm(`${josa(s.name, '을/를')} 명단에서 지울까요?\n${REMOVE_WHAT}`)) act({ type: 'remove-student', studentId: s.id }).catch(() => undefined); }}>삭제</button>
                     </td>
                   </tr>
                 ))}
@@ -1345,12 +1389,18 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
               </tbody>
             </table>
           </Card>
-          <div className="flex w-80 shrink-0 flex-col gap-4">
+          <div className="grid items-start gap-4 md:grid-cols-2 xl:flex xl:w-80 xl:shrink-0 xl:flex-col">
             <Card className="flex flex-col gap-3">
               <h2 className="text-lg font-bold">{current.name} 명단 추가</h2>
               <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} placeholder={'1 강하람\n2 김도윤'} className="rounded-xl bg-bg p-3 text-sm outline-none" />
               <p className="text-xs text-ink-3">넣지 않아도 돼요. 학생이 처음 접속해 반·번호·이름을 쓰면 승인할 때 명단에 들어가요. 미리 넣어 두면 학생이 쓴 이름과 맞춰 보여 줘서 승인이 쉬워요. 한 줄에 ‘번호 이름’, 같은 번호는 이름을 바꿔요.</p>
-              <Btn disabled={!text.trim()} onClick={() => act({ type: 'roster', classId, text }).then(() => setText('')).catch(() => undefined)}>저장</Btn>
+              <Btn disabled={!text.trim()} title={text.trim() ? undefined : '한 줄에 ‘번호 이름’을 써 주세요'} onClick={saveRoster}>저장</Btn>
+              {rosterNote?.classId === classId && (
+                <p className="text-sm font-semibold text-good">
+                  {rosterNote.done}
+                  {rosterNote.skipped > 0 && <span className="mt-0.5 block font-semibold text-bad">못 읽은 줄 {rosterNote.skipped}개는 위에 남겨 뒀어요. ‘번호 이름’으로 고쳐 주세요.</span>}
+                </p>
+              )}
             </Card>
             <Card className="flex flex-col gap-2">
               <h2 className="font-bold">반 관리</h2>
@@ -1359,6 +1409,7 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
                 kind="ghost"
                 className="text-sm"
                 disabled={current.devices === 0}
+                title={current.devices === 0 ? '연결된 기기가 없어요' : undefined}
                 onClick={() => { if (confirm(`${current.name} 학생 ${current.devices}명의 기기 연결을 모두 해제할까요? 다음에 다시 등록해야 하고, 기록과 캐릭터는 그대로예요.`)) act({ type: 'revoke-class', classId }).catch(() => undefined); }}
               >
                 이 반 기기 모두 해제
@@ -1368,8 +1419,8 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
                 className="text-sm !text-bad"
                 onClick={() => {
                   const message = current.students
-                    ? `${current.name}과 학생 ${current.students}명을 모두 지울까요?\n폰 연결, 캐릭터, 오답 노트, 출석 발자국도 함께 지워지고 되돌릴 수 없어요.`
-                    : `${current.name}을 지울까요?`;
+                    ? `${josa(current.name, '과/와')} 학생 ${current.students}명을 모두 지울까요?\n${REMOVE_WHAT}`
+                    : `${josa(current.name, '을/를')} 지울까요?`;
                   if (confirm(message)) act({ type: 'delete-class', classId, withStudents: current.students > 0 }).catch(() => undefined);
                 }}
               >
@@ -1451,10 +1502,13 @@ function keepAgoraDraft(draft: AgoraDraft | null) {
 /**
  * One class's answers to an 아고라, by topic id, fetched when the 답 card shows them (the teacher stream carries only how
  * many there are) and again whenever `key` (the 아고라's answersKey) says they changed. Null until the first arrive; a
- * newer fetch keeps the last ones up meanwhile, so the list doesn't blink.
+ * newer fetch keeps the last ones up meanwhile, so the list doesn't blink. `failed` says the last fetch didn't come
+ * back (the list then shows [다시 시도], which is `retry`).
  */
-function useClassAnswers(agoraId: string, classId: string | null, key: string): Record<string, TeacherAnswer[]> | null {
+function useClassAnswers(agoraId: string, classId: string | null, key: string) {
   const [got, setGot] = useState<{ of: string; answers: Record<string, TeacherAnswer[]> } | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const of = `${agoraId}/${classId ?? ''}`;
   useEffect(() => {
     if (!classId) return;
@@ -1462,14 +1516,21 @@ function useClassAnswers(agoraId: string, classId: string | null, key: string): 
     fetch(`/api/agora-answers?agoraId=${encodeURIComponent(agoraId)}&classId=${encodeURIComponent(classId)}`)
       .then((r) => r.json() as Promise<{ ok: boolean; answers?: Record<string, TeacherAnswer[]> }>)
       .then((j) => {
-        if (!stop && j.ok && j.answers) setGot({ of, answers: j.answers });
+        if (stop) return;
+        if (!j.ok || !j.answers) throw new Error('no answers');
+        setGot({ of, answers: j.answers });
+        setFailed(null);
       })
-      .catch(() => undefined);
+      .catch(() => !stop && setFailed(of));
     return () => {
       stop = true;
     };
-  }, [agoraId, classId, of, key]);
-  return got?.of === of ? got.answers : null;
+  }, [agoraId, classId, of, key, attempt]);
+  const retry = useCallback(() => {
+    setFailed(null);
+    setAttempt((n) => n + 1);
+  }, []);
+  return { answers: got?.of === of ? got.answers : null, failed: failed === of, retry };
 }
 
 /**
@@ -1479,6 +1540,8 @@ function useClassAnswers(agoraId: string, classId: string | null, key: string): 
 function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStudents: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<AgoraDraft | null>(null);
+  // [수정]'s table as it opened: closing it with changes asks first. A new 아고라's draft is kept instead (keepAgoraDraft).
+  const [opened, setOpened] = useState('');
   const [busy, setBusy] = useState(false);
   const change = (next: (d: AgoraDraft) => AgoraDraft) =>
     setDraft((d) => {
@@ -1493,6 +1556,15 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
   const agora = agoras.find((a) => a.id === selected) ?? agoras[0] ?? null;
   const editing = draft?.agoraId ? agoras.find((a) => a.id === draft.agoraId) : undefined;
   const startNew = () => setDraft(loadAgoraDraft());
+  const startEdit = (a: TeacherAgora) => {
+    const next = { agoraId: a.id, title: a.title, rows: [...a.topics.map(rowOf), blankRow()] };
+    setDraft(next);
+    setOpened(JSON.stringify(next));
+  };
+  const close = () => {
+    if (draft?.agoraId && JSON.stringify(draft) !== opened && !confirm('고친 내용을 저장하지 않고 닫을까요?')) return;
+    setDraft(null);
+  };
   const save = () => {
     if (!draft) return;
     // A topic taken out of the table (or emptied) takes its answers with it.
@@ -1555,11 +1627,11 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
             })}
           </div>
           {agora && (
-            <AgoraDetail key={agora.id} view={view} agora={agora} act={act} onStudents={onStudents} onEdit={() => setDraft({ agoraId: agora.id, title: agora.title, rows: [...agora.topics.map(rowOf), blankRow()] })} />
+            <AgoraDetail key={agora.id} view={view} agora={agora} act={act} onStudents={onStudents} onEdit={() => startEdit(agora)} />
           )}
         </div>
       )}
-      {draft && <AgoraEditor draft={draft} change={change} busy={busy} onClose={() => setDraft(null)} onSave={save} />}
+      {draft && <AgoraEditor draft={draft} change={change} busy={busy} onClose={close} onSave={save} />}
     </div>
   );
 }
@@ -1574,6 +1646,7 @@ const PICK = 'h-10 w-full rounded-lg border border-[#D5D8DF] bg-white px-2 text-
  * left empty are left out.
  */
 function AgoraEditor({ draft, change, busy, onClose, onSave }: { draft: AgoraDraft; change: (next: (d: AgoraDraft) => AgoraDraft) => void; busy: boolean; onClose: () => void; onSave: () => void }) {
+  useEscape(onClose);
   const filled = draft.rows.filter((r) => r.text.trim()).length;
   const setRow = (i: number, patch: Partial<TopicRow>) => change((d) => ({ ...d, rows: d.rows.map((r, k) => (k === i ? { ...r, ...patch } : r)) }));
   // A new 받아쓰기 has no time limit (the teacher closes it); one that had the 작문 default loses it.
@@ -1779,7 +1852,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
   const classesWith = view.classes.filter((c) => (agora.writers[c.id] ?? 0) > 0);
   const shownClass = classesWith.find((c) => c.id === answersOf) ?? classesWith.find((c) => c.id === classId) ?? classesWith[0];
   const topic = agora.topics[Math.min(topicAt, agora.topics.length - 1)];
-  const fetched = useClassAnswers(agora.id, showAnswers ? (shownClass?.id ?? null) : null, agora.answersKey);
+  const { answers: fetched, failed: answersFailed, retry: fetchAnswers } = useClassAnswers(agora.id, showAnswers ? (shownClass?.id ?? null) : null, agora.answersKey);
   const secrets = secretSentences(agora, classId);
   const rows = (fetched?.[topic.id] ?? [])
     .map((a) => ({ a, s: byId.get(a.studentId) }))
@@ -1797,7 +1870,14 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
     const arena = view.live;
     if (arena && !confirm(arena.phase === 'summary' ? '아레나 결과가 열려 있어요. 아레나를 닫고 아고라 대기실을 열까요?\n학생 폰의 결과와 오답 노트는 그대로 볼 수 있어요.' : '아레나 대기실이 열려 있어요. 아레나를 닫고 아고라 대기실을 열까요?')) return;
     if (!view.displayOn) openProjector();
-    if (rewardDirty) await saveReward().catch(() => undefined);
+    // The reward picked here is the one this lesson gives, so a save that fails stops here (its message shows), as in the arena.
+    if (rewardDirty) {
+      try {
+        await saveReward();
+      } catch {
+        return;
+      }
+    }
     if (arena) {
       try {
         await act({ type: 'close-session', id: arena.id });
@@ -1864,7 +1944,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
         <div className="flex flex-wrap items-center gap-3">
           <span className="rounded-xl bg-bg px-4 py-2 text-[15px] font-semibold">칭찬 · 함께 볼 때 선생님이 ⭐를 준 학생이 받아요</span>
           <span className="text-sm text-ink-3">한 수업에 한 사람 한 번</span>
-          <Btn kind="gold" disabled={!rewardDirty} onClick={() => saveReward().catch(() => undefined)} className="ml-auto">저장</Btn>
+          <Btn kind="gold" disabled={!rewardDirty} title={rewardDirty ? undefined : '바꾼 내용이 없어요'} onClick={() => saveReward().catch(() => undefined)} className="ml-auto">저장</Btn>
         </div>
       </Card>
       {shownClass && (
@@ -1902,7 +1982,11 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
           {!showAnswers ? (
             <div className="py-2 text-sm text-ink-3">학생 답은 접혀 있어요 · 프로젝터에 비치지 않을 때 펼쳐 보세요</div>
           ) : rows.length === 0 ? (
-            <div className="py-2 text-sm text-ink-3">{fetched ? '이 주제에 쓴 답이 없어요' : '불러오는 중…'}</div>
+            !fetched && answersFailed ? (
+              <div className="py-2"><LoadFailed onRetry={fetchAnswers} /></div>
+            ) : (
+              <div className="py-2 text-sm text-ink-3">{fetched ? '이 주제에 쓴 답이 없어요' : '불러오는 중…'}</div>
+            )
           ) : topic.dictation !== null ? (
             <DictationAnswers agoraId={agora.id} topic={topic} classId={shownClass.id} rows={rows} act={act} />
           ) : (
@@ -1957,7 +2041,7 @@ function Marked({ words }: { words: DictationWord[] }) {
 /**
  * A 받아쓰기's answers in the 답 card, after class: the sentence, how the class did at the first 마감 (what the
  * statistics count), and each student's answer then, marked against the sentence, with [정답 인정] for one the teacher
- * counts as right; an answer changed since (다시 쓰기) shows below it. [CSV로 받기] takes the class's 받아쓰기 to Excel.
+ * counts as right; an answer changed since (다시 쓰기) shows below it. [엑셀로 받기] takes the class's 받아쓰기 to Excel.
  */
 function DictationAnswers({ agoraId, topic, classId, rows, act }: { agoraId: string; topic: TeacherTopic; classId: string; rows: { a: TeacherAnswer; s: TeacherStudent }[]; act: Send }) {
   const target = topic.dictation ?? '';
@@ -1976,8 +2060,8 @@ function DictationAnswers({ agoraId, topic, classId, rows, act }: { agoraId: str
         <span>처음에 정답 {right}/{closed.length}</span>
         {accuracy !== null && <span>단어 정확도 {Math.round(accuracy * 100)}%</span>}
         {rows.length > closed.length && <span className="text-ink-3">마감 전에 넘어감 {rows.length - closed.length}</span>}
-        <a href={`/api/agora-answers?agoraId=${encodeURIComponent(agoraId)}&classId=${encodeURIComponent(classId)}&format=csv`} className="ml-auto flex h-9 items-center rounded-xl border border-[#D5D8DF] bg-white px-3 text-sm font-bold">
-          CSV로 받기
+        <a href={`/api/agora-answers?agoraId=${encodeURIComponent(agoraId)}&classId=${encodeURIComponent(classId)}&format=csv`} className="ml-auto flex h-9 items-center whitespace-nowrap rounded-xl border border-[#D5D8DF] bg-white px-3 text-sm font-bold">
+          엑셀로 받기
         </a>
       </div>
       {graded.map(({ a, s, first, now }) => {
@@ -2083,7 +2167,8 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
             놀이 방법
           </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'agora-end' }).catch(() => undefined)}>대기실 닫기</Btn>
-          <Btn kind="accent" onClick={() => act({ type: 'agora-start' }).catch(() => undefined)} className="px-6">
+          {/* With nobody in, a lesson asks first, as the arena does; 다시 보기 shows last time's answers, so it doesn't. */}
+          <Btn kind="accent" onClick={() => { if (review || joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) act({ type: 'agora-start' }).catch(() => undefined); }} className="px-6">
             {review ? '함께 보기' : '쓰기 시작'}
           </Btn>
         </div>
@@ -2138,6 +2223,9 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
 }
 
 type AgoraStep = 'start' | 'close' | 'reveal' | 'page' | 'next' | 'finish' | 'end';
+
+/** Why ±1분 is off: there is a 입력 시간 to change only while a topic with one is being written. */
+const TIME_ONLY = '입력 시간이 있는 주제를 쓰는 동안만 바꿀 수 있어요';
 
 /**
  * The open 아고라 from [쓰기 시작] on, laid out as the arena's console: a dark bar with the class, the topic up out of
@@ -2303,8 +2391,10 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
             </span>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <TimeOfDay className="mr-2 text-[15px] font-semibold text-[#A3A8B4]" />
           <MusicSwitch dark on={live.music} onToggle={() => send({ type: 'agora-music' })} title={AGORA_MUSIC_TITLE} />
+          <HelpButton view={view} first="agora" />
           <button type="button" onClick={end} className="h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold">
             아고라 닫기
           </button>
@@ -2455,7 +2545,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                       type="button"
                       aria-pressed={a.star}
                       disabled={live.phase === 'ready' || (dictation && live.phase !== 'closed')}
-                      title={a.star ? '칭찬 별 빼기 (받은 보상은 그대로)' : '칭찬 별: 이 학생이 오늘의 보상을 받아요'}
+                      title={dictation && live.phase !== 'closed' ? '받아쓰기는 마감한 뒤에 칭찬해요' : a.star ? '칭찬 별 빼기 (받은 보상은 그대로)' : '칭찬 별: 이 학생이 오늘의 보상을 받아요'}
                       onClick={() => send({ type: 'agora-star', studentId: s.id, topicId: topic.id, star: !a.star })}
                       className={`mt-1.5 h-8 shrink-0 rounded-full border px-2.5 text-xs font-extrabold disabled:opacity-40 ${a.star ? 'border-gold bg-gold text-ink' : 'border-[#D5D8DF] bg-white text-ink-3 hover:text-ink'}`}
                     >
@@ -2511,14 +2601,14 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
               {/* A topic without a time limit has no clock to change. */}
               {topic.minutes !== null && (
                 <>
-                  <Btn kind="ghost" disabled={!writing || !live.timer} onClick={() => send({ type: 'agora-time', minutes: -1 })}>−1분 <span className="text-xs text-ink-3">↓</span></Btn>
-                  <Btn kind="ghost" disabled={!writing || !live.timer} onClick={() => send({ type: 'agora-time', minutes: 1 })}>+1분 <span className="text-xs text-ink-3">↑</span></Btn>
+                  <Btn kind="ghost" disabled={!writing || !live.timer} title={writing && live.timer ? undefined : TIME_ONLY} onClick={() => send({ type: 'agora-time', minutes: -1 })}>−1분 <span className="text-xs text-ink-3">↓</span></Btn>
+                  <Btn kind="ghost" disabled={!writing || !live.timer} title={writing && live.timer ? undefined : TIME_ONLY} onClick={() => send({ type: 'agora-time', minutes: 1 })}>+1분 <span className="text-xs text-ink-3">↑</span></Btn>
                 </>
               )}
               {!dictation && (writing || live.phase === 'closed') && step !== 'reveal' && <Btn kind="ghost" onClick={() => send({ type: 'agora-reveal', public: !isPublic, index: live.index })}>{isPublic ? '전체 비공개' : '전체 공개'}</Btn>}
               {/* 다시 보기: this topic's writing opens again, each phone starting from its own answer. */}
               {review && live.phase === 'closed' && <Btn kind="ghost" onClick={() => send({ type: 'agora-rewrite' })}>다시 쓰기</Btn>}
-              <Btn kind="ghost" disabled={!canSkip} onClick={skip}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
+              <Btn kind="ghost" disabled={!canSkip} title={canSkip ? undefined : '넘어갈 다음 주제가 없어요'} onClick={skip}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
             </>
           )}
         </div>
@@ -2629,39 +2719,65 @@ interface QuizMistakes {
   gone: boolean;
 }
 
+/** A list that couldn't be fetched (the server was restarting, say): said where it would be, with [다시 시도]. */
+function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-sm text-ink-3">
+      불러오지 못했어요.
+      <button type="button" onClick={onRetry} className="h-8 rounded-lg border border-[#D5D8DF] bg-white px-3 font-bold text-ink">다시 시도</button>
+    </div>
+  );
+}
+
 /** One student's quizzes, the latest first: what they got wrong in the one picked, what they answered, and the answer. */
 function StudentMistakes({ studentId }: { studentId: string }) {
   const [data, setData] = useState<{ studentId: string; quizzes: QuizMistakes[] } | null>(null);
+  // The student whose quizzes couldn't be fetched, and a count that [다시 시도] raises to fetch again.
+  const [failed, setFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
     let stop = false;
     fetch(`/api/stats?student=${encodeURIComponent(studentId)}`)
-      .then((r) => r.json())
-      .then((d: { quizzes: QuizMistakes[] }) => !stop && setData({ studentId, quizzes: d.quizzes }))
-      .catch(() => undefined);
+      .then((r) => (r.ok ? (r.json() as Promise<{ quizzes: QuizMistakes[] }>) : Promise.reject(new Error(String(r.status)))))
+      .then((d) => {
+        if (stop) return;
+        setData({ studentId, quizzes: d.quizzes });
+        setFailed(null);
+      })
+      .catch(() => !stop && setFailed(studentId));
     return () => {
       stop = true;
     };
-  }, [studentId]);
+  }, [studentId, attempt]);
   const quizzes = data && data.studentId === studentId ? data.quizzes : null;
   const quiz = quizzes?.find((x) => x.sessionId === picked) ?? quizzes?.[0];
   return (
     <Card>
-      <div className="mb-3 flex items-center justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-bold">퀴즈별 틀린 문제</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {quiz && !quiz.gone && <span className="tabular mr-1 text-sm text-ink-3">{quiz.total}문제 중 {quiz.correct}개 맞힘</span>}
           {/* Every quiz's wrong questions at once: a file for Excel, or an A4 오답 노트 to print or keep as a PDF. */}
           {quizzes && quizzes.length > 0 && (
             <>
-              <a href={`/api/stats?student=${encodeURIComponent(studentId)}&format=csv`} className="flex h-8 items-center rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold">엑셀로</a>
-              <a href={`/teacher/print?student=${encodeURIComponent(studentId)}`} target="_blank" rel="noopener" className="flex h-8 items-center rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold">인쇄·PDF</a>
+              <a href={`/api/stats?student=${encodeURIComponent(studentId)}&format=csv`} className="flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold">엑셀로 받기</a>
+              <a href={`/teacher/print?student=${encodeURIComponent(studentId)}`} target="_blank" rel="noopener" className="flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold">인쇄·PDF</a>
             </>
           )}
         </div>
       </div>
       {!quizzes ? (
-        <div className="text-sm text-ink-3">불러오는 중…</div>
+        failed === studentId ? (
+          <LoadFailed
+            onRetry={() => {
+              setFailed(null);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        ) : (
+          <div className="text-sm text-ink-3">불러오는 중…</div>
+        )
       ) : quizzes.length === 0 ? (
         <div className="text-sm text-ink-3">아직 푼 퀴즈가 없어요.</div>
       ) : (
@@ -2704,16 +2820,29 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
   const [picked, setPicked] = useState<string | null>(null);
   // 학생별: by number, or the lowest average first (no quiz yet goes last).
   const [order, setOrder] = useState<'number' | 'missed'>('number');
+  // The class whose statistics couldn't be fetched, and a count that [다시 시도] raises to fetch again.
+  const [failed, setFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let stop = false;
     fetch(`/api/stats?class=${encodeURIComponent(classId)}`)
-      .then((r) => r.json())
-      .then((stats: StatsData) => !stop && setData({ classId, stats }))
-      .catch(() => undefined);
+      .then((r) => (r.ok ? (r.json() as Promise<StatsData>) : Promise.reject(new Error(String(r.status)))))
+      .then((stats) => {
+        if (stop) return;
+        setData({ classId, stats });
+        setFailed(null);
+      })
+      .catch(() => !stop && setFailed(classId));
     return () => {
       stop = true;
     };
-  }, [classId]);
+  }, [classId, attempt]);
+  // Under the list on a small laptop: picking a student brings their card into view.
+  const detail = useRef<HTMLDivElement>(null);
+  const pick = (id: string) => {
+    setPicked(id);
+    if (window.matchMedia('(max-width: 1359px)').matches) requestAnimationFrame(() => detail.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
   const stats = data && data.classId === classId ? data.stats : null;
   const students = useMemo(
     () => (!stats ? [] : order === 'number' ? stats.students : [...stats.students].sort((a, b) => (a.average ?? 2) - (b.average ?? 2) || b.missed.length - a.missed.length)),
@@ -2726,7 +2855,18 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
     return (
       <div className="flex flex-col gap-5 p-8">
         <div className="flex min-h-11 items-center">{title}</div>
-        <div className="text-ink-3">{classes.length === 0 ? '반 관리에서 반을 먼저 만들어 주세요.' : '불러오는 중…'}</div>
+        {classes.length === 0 ? (
+          <div className="text-ink-3">반 관리에서 반을 먼저 만들어 주세요.</div>
+        ) : failed === classId ? (
+          <LoadFailed
+            onRetry={() => {
+              setFailed(null);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        ) : (
+          <div className="text-ink-3">불러오는 중…</div>
+        )}
       </div>
     );
   }
@@ -2736,7 +2876,7 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
           questions, most missed first, with who missed each and what they answered. */}
       <div className="flex items-center justify-between">
         {title}
-        <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-11 items-center justify-center rounded-xl bg-ink px-5 text-[15px] font-bold text-white">문제별 엑셀로</a>
+        <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-11 items-center justify-center whitespace-nowrap rounded-xl bg-ink px-5 text-[15px] font-bold text-white">문제별 엑셀로 받기</a>
       </div>
       <ClassTabs
         classes={classes}
@@ -2755,13 +2895,14 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
         <Card className="!p-2">
           {/* Fixed widths, as in 반 관리, so the columns stay put from class to class; 문제 takes the rest, and long ones wrap. */}
           <table className="w-full table-fixed text-left text-[15px]">
+            {/* Narrower answer columns on a small laptop, so 문제 keeps room to read. */}
             <colgroup>
-              <col className="w-28" />
+              <col className="w-24 xl:w-28" />
               <col />
-              <col className="w-56" />
+              <col className="w-40 xl:w-56" />
               <col className="w-20" />
               <col className="w-20" />
-              <col className="w-52" />
+              <col className="w-40 xl:w-52" />
             </colgroup>
             <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">유형</th><th>문제</th><th>정답</th><th>정답률</th><th>푼 횟수</th><th>많이 고른·쓴 오답</th></tr></thead>
             <tbody>
@@ -2780,8 +2921,9 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
           </table>
         </Card>
       ) : (
-        <div className="flex gap-5">
-          <Card className="w-[560px] shrink-0 !p-2">
+        // Side by side from 1360px; on a smaller laptop the student's card goes under the list.
+        <div className="flex flex-col gap-5 min-[1360px]:flex-row">
+          <Card className="!p-2 min-[1360px]:w-[560px] min-[1360px]:shrink-0">
             <div className="flex justify-end px-2 pt-1">
               <div className="flex gap-1 rounded-lg bg-[#E9EBEF] p-0.5">
                 {(['number', 'missed'] as const).map((o) => (
@@ -2807,8 +2949,8 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
                   const recent = s.sessions.slice(-5);
                   const last = [...s.sessions].reverse().find((x) => x.accuracy !== null)?.accuracy ?? null;
                   return (
-                    <tr key={s.id} onClick={() => setPicked(s.id)} className={`cursor-pointer border-t border-[#EEF0F3] ${student?.id === s.id ? 'bg-bg' : ''}`}>
-                      <td className="px-4 py-2.5 font-semibold"><span className="tabular mr-1.5 text-[#A3A8B4]">{s.number}</span>{s.name}</td>
+                    <tr key={s.id} onClick={() => pick(s.id)} className={`cursor-pointer border-t border-[#EEF0F3] ${student?.id === s.id ? 'bg-bg' : ''}`}>
+                      <td className="truncate px-4 py-2.5 font-semibold" title={s.name}><span className="tabular mr-1.5 text-[#A3A8B4]">{s.number}</span>{s.name}</td>
                       <td className="tabular text-sm text-ink-2">{s.attendance}</td>
                       <td className={`tabular text-right font-extrabold ${s.average !== null && s.average < 0.6 ? 'text-bad' : ''}`}>{pct(s.average)}</td>
                       <td className="tabular text-right font-semibold text-ink-2">{pct(last)}</td>
@@ -2821,12 +2963,14 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
             </table>
           </Card>
           {student && (
-            <div className="flex min-w-0 flex-1 flex-col gap-4">
-              <Card className="flex items-center gap-6">
-                <div className="flex-1"><div className="text-2xl font-bold">{student.number} {student.name}</div></div>
-                <div className="rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">평균 정답률</div><div className="tabular text-2xl font-extrabold">{pct(student.average)}</div></div>
-                <div className="rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">출석</div><div className="tabular text-2xl font-extrabold">{student.attendance}</div></div>
-                <div className="rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">받은 보상</div><div className="tabular text-2xl font-extrabold">{student.rewards}</div></div>
+            <div ref={detail} className="flex min-w-0 flex-1 scroll-mt-4 flex-col gap-4">
+              <Card className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                <div className="min-w-0 flex-1 truncate whitespace-nowrap text-2xl font-bold" title={student.name}>{student.number} {student.name}</div>
+                <div className="flex shrink-0 gap-3">
+                  <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">평균 정답률</div><div className="tabular text-2xl font-extrabold">{pct(student.average)}</div></div>
+                  <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">출석</div><div className="tabular text-2xl font-extrabold">{student.attendance}</div></div>
+                  <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">받은 보상</div><div className="tabular text-2xl font-extrabold">{student.rewards}</div></div>
+                </div>
               </Card>
               <Card>
                 <h2 className="mb-3 font-bold">이벤트별 정답률</h2>

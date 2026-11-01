@@ -1,5 +1,6 @@
 // Turns a word list into quiz questions with wrong options, without any AI.
 import type { CustomQuestion, GrammarItem, Option, Question, QuestionMode, Word } from '@/lib/types';
+import { josa } from '@/lib/josa';
 import { displayMeaning, editDistance, meaningKeys, meaningStem, mulberry32, normalizeAnswer, shuffle, wordKey } from '@/lib/text';
 import { GRAMMAR_TABS } from './grammar';
 
@@ -176,7 +177,7 @@ function buildWordQuestion(
   const correct: Option = { label: mode === 'MEAN' ? displayMeaning(target.meaning) : target.spelling, sourceKey: target.key };
   const wrong: Option[] = distractors.map((d) => {
     const label = mode === 'MEAN' ? displayMeaning(d.meaning!) : d.spelling;
-    const feedback = mode === 'MEAN' ? `${d.spelling} = ${label}` : d.meaning ? `${d.spelling} = ${d.meaning}` : `${d.spelling}은 다른 단어예요`;
+    const feedback = mode === 'MEAN' ? `${d.spelling} = ${label}` : d.meaning ? `${d.spelling} = ${d.meaning}` : `${josa(d.spelling, '은/는')} 다른 단어예요`;
     return { label, sourceKey: d.key, feedback };
   });
   return {

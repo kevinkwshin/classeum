@@ -137,7 +137,12 @@ async function run(teacher: Stream, display: Stream) {
   const B = { name: `${PREFIX}B`, id: '' };
   A.id = (await post({ type: 'add-class', name: A.name })).classId;
   B.id = (await post({ type: 'add-class', name: B.name })).classId;
-  await post({ type: 'roster', classId: A.id, text: '1 김하람\n2 이도윤\n3 박지후\n4 최아린' });
+  const roster = await post({ type: 'roster', classId: A.id, text: '1 김하람\n2 이도윤\n3 박지후\n4 최아린' });
+  check('명단 추가는 몇 명을 넣었는지 말한다', roster.added === 4 && roster.renamed === 0 && roster.skipped?.length === 0, JSON.stringify(roster));
+  // A renamed seat and two lines it can't read (no number, a number students can't type): said, and given back for the box.
+  const again = await post({ type: 'roster', classId: A.id, text: '4 최아인\n가나다\n150 홍길동\n1 김하람' });
+  check('같은 번호의 새 이름은 이름 바꿈으로, 못 읽은 줄은 그대로 돌려준다', again.added === 0 && again.renamed === 1 && JSON.stringify(again.skipped) === JSON.stringify(['가나다', '150 홍길동']), JSON.stringify(again));
+  await post({ type: 'roster', classId: A.id, text: '4 최아린' });
   await post({ type: 'roster', classId: B.id, text: '7 정서윤' });
   const phone = (cls: Phone['cls'], number: number, name: string): Phone => {
     const token = randomBytes(24).toString('hex');
@@ -762,7 +767,12 @@ async function run(teacher: Stream, display: Stream) {
   check('결과 화면은 [아레나 닫기]로 닫힌다', summaryUp && closed && !teacher.view.live);
   check('아레나를 닫으면 아고라를 연다', (await post({ type: 'agora-open', agoraId, classId: A.id })).ok);
   await post({ type: 'agora-end' });
+  // Nobody answered a question, so no class has a record of it: [지우기] takes it out of the file too (one a class
+  // played would only leave the list, for its records).
   if (quizId) await post({ type: 'delete-event', eventId: quizId });
+  await sleep(700);
+  const afterDelete = JSON.parse(readFileSync(join(DATA, 'classeum.json'), 'utf8')) as View;
+  check('아무도 안 푼 이벤트를 지우면 목록과 저장 파일에서 모두 사라진다', !!quizId && !(teacher.view.events as View[]).some((e) => e.id === quizId) && !afterDelete.events?.[quizId]);
 
   section('코드');
   const sinks = htmlSinks(join(process.cwd(), 'src'));

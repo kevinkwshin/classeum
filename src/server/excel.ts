@@ -1,6 +1,7 @@
 // Reads the Classeum Excel template (단어장 / 문법 고르기·쓰기·고치기·배열 / 문항 / 명단 sheets) and validates it.
 import readExcelFile from 'read-excel-file/node';
 import type { Confusable, CustomQuestion, GrammarItem, GrammarTab, Pos, Word, WordStatus } from '@/lib/types';
+import { josa } from '@/lib/josa';
 import { MAX_TEXT_ANSWER, hashString, normalizeAnswer, wordKey } from '@/lib/text';
 import { clozeOf } from './generate';
 import { GRAMMAR_TABS, TEMPLATE_EXAMPLE_ROWS, grammarItem, isTemplateExample } from './grammar';
@@ -321,7 +322,7 @@ function parseQuestions(data: Cell[][], issues: ImportIssue[]): CustomQuestion[]
       }
       const colIdx = parseAnswerIndex(answerRaw);
       if (colIdx < 0 || colIdx > 3 || !cols[colIdx].label) {
-        issues.push({ level: 'error', sheet, row: r, column: '정답', message: colIdx >= 0 && colIdx <= 3 ? `정답이 가리키는 보기${colIdx + 1}이 비어 있어요.` : `정답 '${answerRaw}'는 1~4 중 하나여야 해요.` });
+        issues.push({ level: 'error', sheet, row: r, column: '정답', message: colIdx >= 0 && colIdx <= 3 ? `정답이 가리키는 ${josa(`보기${colIdx + 1}`, '이/가')} 비어 있어요.` : `정답 ${josa(`'${answerRaw}'`, '은/는')} 1~4 중 하나여야 해요.` });
         return;
       }
       options = kept.map((c) => c.label);

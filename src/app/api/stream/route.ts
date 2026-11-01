@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token') ?? '';
   if (role !== 'teacher' && role !== 'display' && role !== 'student') return new Response('bad role', { status: 400 });
   if (role !== 'student' && !isTeacher(request)) {
-    return new Response('선생님 화면과 큰 화면은 노트북에서 선생님 링크로 열어 주세요.', { status: 403 });
+    return new Response('선생님 화면과 프로젝터 화면은 노트북에서 선생님 링크로 열어 주세요.', { status: 403 });
   }
   if (role === 'student' && token.length < 32) return new Response('missing token', { status: 400 });
 

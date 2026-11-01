@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
           h.revokeDevice(String(body.studentId));
           break;
         case 'roster':
-          return Response.json({ ok: true, added: h.setRoster(String(body.classId), String(body.text ?? '')) });
+          return Response.json({ ok: true, ...h.setRoster(String(body.classId), String(body.text ?? '')) });
         case 'add-class':
           return Response.json({ ok: true, classId: h.addClass(String(body.name ?? '')) });
         case 'rename-class':

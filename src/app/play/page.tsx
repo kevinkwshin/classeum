@@ -100,6 +100,27 @@ type Send = (a: Record<string, unknown>) => Promise<unknown>;
 
 const PRAISE_SEEN_KEY = 'classeum.praiseSeen';
 
+// The 아고라 answer typed on this phone and not sent yet: a reload (or the phone dropping the page) brings it back while
+// that topic is open for writing. Kept a few hours, one topic at a time; never sent or counted until 제출.
+const ANSWER_DRAFT_KEY = 'classeum.answerDraft';
+const ANSWER_DRAFT_MS = 3 * 60 * 60_000;
+function readAnswerDraft(topicId: string): string | null {
+  try {
+    const d = JSON.parse(localStorage.getItem(ANSWER_DRAFT_KEY) ?? 'null') as { topicId?: string; text?: string; at?: number } | null;
+    return d && d.topicId === topicId && typeof d.text === 'string' && Date.now() - (d.at ?? 0) < ANSWER_DRAFT_MS ? d.text : null;
+  } catch {
+    return null;
+  }
+}
+function keepAnswerDraft(topicId: string, text: string | null) {
+  try {
+    if (text === null) localStorage.removeItem(ANSWER_DRAFT_KEY);
+    else localStorage.setItem(ANSWER_DRAFT_KEY, JSON.stringify({ topicId, text, at: Date.now() }));
+  } catch {
+    // A private window: the draft just isn't kept.
+  }
+}
+
 function seenPraise(): number {
   try {
     return Number(localStorage.getItem(PRAISE_SEEN_KEY)) || 0;
@@ -287,12 +308,13 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
   const graded = answer !== undefined && a.mine ? gradeDictation(answer, a.mine.text) : null;
   useTicker(!!a.timer, 500);
   const saved = a.mine?.text ?? null;
-  const [value, setValue] = useState(saved ?? '');
-  // Writing opening again (다시 쓰기) starts the box from my answer as it is now.
+  // An unsent draft on this phone comes back first (after a reload), else my answer as it is now.
+  const [value, setValue] = useState(() => (open ? readAnswerDraft(a.topic.id) : null) ?? saved ?? '');
+  // Writing opening again (다시 쓰기) starts the box the same way.
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) setValue(saved ?? '');
+    if (open) setValue(readAnswerDraft(a.topic.id) ?? saved ?? '');
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -357,14 +379,16 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
               className="flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value });
+                if (typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value }, () => keepAnswerDraft(a.topic.id, null));
               }}
             >
               <textarea
                 value={value}
                 onChange={(e) => {
-                  setValue(e.target.value);
+                  const next = e.target.value;
+                  setValue(next);
                   setError('');
+                  keepAnswerDraft(a.topic.id, next.trim() && next !== saved ? next : null);
                 }}
                 maxLength={ANSWER_MAX}
                 rows={dictation ? 3 : 4}
@@ -380,7 +404,10 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
                 </span>
                 {/* 다시 쓰기 changes last lesson's answer; it can't be taken back. */}
                 {saved !== null && !review && (
-                  <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => setValue(''))} className="font-bold text-ink-3 underline underline-offset-4">
+                  <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => {
+                    setValue('');
+                    keepAnswerDraft(a.topic.id, null);
+                  })} className="font-bold text-ink-3 underline underline-offset-4">
                     내 답 지우기
                   </button>
                 )}
@@ -740,6 +767,7 @@ const PICK_TABS: [PickTab, string][] = [['style', '머리 모양'], ['hair', '�
 function CharacterPick({ send, name, current, onClose }: { send: Send; name: string; current?: AvatarLook; onClose?: () => void }) {
   const [look, setLook] = useState<AvatarLook>(current ?? { ...DEFAULT_LOOK });
   const [tab, setTab] = useState<PickTab>('style');
+  const [error, setError] = useState('');
   const editing = current !== undefined;
   const options: Record<PickTab, { key: keyof AvatarLook; list: { id: string; name: string }[] }> = {
     style: { key: 'hairStyle', list: HAIR_STYLES },
@@ -752,9 +780,10 @@ function CharacterPick({ send, name, current, onClose }: { send: Send; name: str
   const shown: AvatarLook = editing ? { ...look, helmet: 'none', face: 'none' } : look;
   const save = () => {
     const { skin, hair, hairStyle, eyes } = look;
+    setError('');
     send({ type: 'look', look: editing ? { skin, hair, hairStyle, eyes } : look })
       .then(() => onClose?.())
-      .catch(() => undefined);
+      .catch(() => setError('저장하지 못했어요. 다시 눌러 주세요.'));
   };
   return (
     <div className="flex h-[100dvh] flex-col gap-4 bg-ink px-5 pb-5 pt-10 text-white">
@@ -795,6 +824,7 @@ function CharacterPick({ send, name, current, onClose }: { send: Send; name: str
           </button>
         ))}
       </div>
+      {error && <div role="alert" className="shrink-0 text-center text-sm font-bold text-[#FF8A7A]">{error}</div>}
       <Button onClick={save} className="shrink-0">{editing ? '저장' : '이걸로 할래요'}</Button>
     </div>
   );
@@ -1717,6 +1747,11 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
   const [editing, setEditing] = useState(false);
   const items = ITEMS.filter((i) => i.slot === slot && (!theme || i.theme === theme));
   const ownedCount = ITEMS.filter((i) => owned.has(i.id)).length;
+  const [error, setError] = useState('');
+  const wear = (change: Record<string, unknown>) => {
+    setError('');
+    send({ type: 'look', look: change }).catch(() => setError('바꾸지 못했어요. 다시 눌러 주세요.'));
+  };
   if (editing) return <CharacterPick send={send} name={me.name} current={look} onClose={() => setEditing(false)} />;
   return (
     <div className="flex flex-1 flex-col bg-bg">
@@ -1747,8 +1782,9 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
           </button>
         ))}
       </div>
+      {error && <div role="alert" className="px-4 pt-3 text-sm font-bold text-bad">{error}</div>}
       <div className="grid grid-cols-3 gap-2 overflow-y-auto px-4 py-4">
-        <button type="button" onClick={() => send({ type: 'look', look: { [slot]: DEFAULT_LOOK[slot] } })} className={`flex h-28 items-center justify-center rounded-2xl text-sm font-bold ${look[slot] === DEFAULT_LOOK[slot] ? 'bg-white ring-2 ring-accent' : 'bg-white'}`}>
+        <button type="button" onClick={() => wear({ [slot]: DEFAULT_LOOK[slot] })} className={`flex h-28 items-center justify-center rounded-2xl text-sm font-bold ${look[slot] === DEFAULT_LOOK[slot] ? 'bg-white ring-2 ring-accent' : 'bg-white'}`}>
           {slot === 'tunic' ? '기본 옷' : '없음'}
         </button>
         {items.map((item) => {
@@ -1760,7 +1796,7 @@ function Locker({ me, send, onClose }: { me: NonNullable<StudentView['me']>; sen
               key={item.id}
               type="button"
               disabled={!has}
-              onClick={() => send({ type: 'look', look: { [slot]: item.value } })}
+              onClick={() => wear({ [slot]: item.value })}
               className={`flex h-28 flex-col items-center justify-center gap-0.5 rounded-2xl ${on ? 'bg-white ring-2 ring-accent' : has ? 'bg-white' : 'border-2 border-dashed border-[#D5D8DF] bg-[#ECEEF1]'}`}
             >
               {/* Items the student has stir now and then; locked ones stand still. */}

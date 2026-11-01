@@ -642,7 +642,9 @@ class Hub {
       });
     const sessionsOf = new Map<string, SessionSummaryRec[]>();
     for (const s of d.sessions) sessionsOf.set(s.eventId, [...(sessionsOf.get(s.eventId) ?? []), s]);
+    // A deleted event that a class played stays for its records only.
     const events = Object.values(d.events)
+      .filter((e) => !e.deletedAt)
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((e) => ({
         id: e.id,
@@ -1088,27 +1090,35 @@ class Hub {
     return n;
   }
 
-  /** Adds or renames students of one class from lines like "3 김하윤"; other classes are untouched. */
   /**
-   * Adds roster lines to a class. The paste box renames a seat whose name differs ('같은 번호는 이름을 바꿔요');
-   * an Excel 명단 sheet passes rename: false, so a weekly file can't quietly hand a registered student's
-   * phone, character and stamps to another name (rosterConflicts warns about those rows instead).
+   * Adds roster lines like "3 김하윤" to a class; other classes are untouched. The paste box renames a seat whose name
+   * differs ('같은 번호는 이름을 바꿔요'); an Excel 명단 sheet passes rename: false, so a weekly file can't quietly hand a
+   * registered student's phone, character and stamps to another name (rosterConflicts warns about those rows instead).
+   * Says what it did, and gives back the lines it couldn't read, for the box to keep.
    */
-  setRoster(classId: string, lines: string, { rename = true }: { rename?: boolean } = {}) {
+  setRoster(classId: string, lines: string, { rename = true }: { rename?: boolean } = {}): { added: number; renamed: number; skipped: string[] } {
     const d = db();
     if (!own(d.classes, classId)) throw new Error('반을 먼저 골라 주세요.');
     const byNumber = new Map(Object.values(d.students).filter((s) => s.classId === classId).map((s) => [s.number, s]));
     let added = 0;
+    let renamed = 0;
+    const skipped: string[] = [];
     for (const line of lines.split(/\r?\n/)) {
+      if (!line.trim()) continue;
       const m = line.trim().match(/^(\d+)[\s.,)\t]+(.+)$/);
-      if (!m) continue;
+      // Students can only type 1-99 when they register, so other numbers could never be matched.
+      if (!m || Number(m[1]) < 1 || Number(m[1]) > 99) {
+        skipped.push(line.trim());
+        continue;
+      }
       const number = Number(m[1]);
       const name = m[2].trim();
-      // Students can only type 1-99 when they register, so other numbers could never be matched.
-      if (number < 1 || number > 99) continue;
       const existing = byNumber.get(number);
       if (existing) {
-        if (rename) existing.name = name;
+        if (rename && existing.name !== name) {
+          existing.name = name;
+          renamed++;
+        }
       } else {
         const id = newId('stu');
         d.students[id] = { id, classId, number, name, look: null, inventory: [], createdAt: Date.now() };
@@ -1118,7 +1128,7 @@ class Hub {
     }
     save();
     this.schedulePush(true);
-    return added;
+    return { added, renamed, skipped };
   }
 
   removeStudent(studentId: string) {
@@ -1746,7 +1756,7 @@ class Hub {
       const id = newId('evt');
       const gen = this.generateFor(draft, g);
       if (gen.questions.length === 0) continue;
-      const existing = new Set(Object.values(d.events).map((e) => e.name));
+      const existing = new Set(Object.values(d.events).filter((e) => !e.deletedAt).map((e) => e.name));
       let name = g.name;
       for (let k = 2; existing.has(name); k++) name = `${g.name} (${k})`;
       // Rotate through the catalog so the teacher only has to change the reward, not pick one.
@@ -1777,16 +1787,24 @@ class Hub {
     return ids;
   }
 
+  /**
+   * [지우기] on an event. One a class has played only leaves the list (deletedAt): its questions stay, so the
+   * statistics, the 문제별 file and each student's 오답 노트 still show them. One never played goes for good.
+   */
   deleteEvent(eventId: string) {
+    const d = db();
+    const e = own(d.events, eventId);
+    if (!e) return;
     if (this.live?.eventId === eventId) throw new Error('진행 중인 이벤트는 지울 수 없어요.');
-    delete db().events[eventId];
+    if (d.sessions.some((s) => s.eventId === eventId)) e.deletedAt ??= Date.now();
+    else delete d.events[eventId];
     save();
     this.schedulePush(true);
   }
 
   setRetryRound(eventId: string, on: boolean) {
     const e = db().events[eventId];
-    if (!e) throw new Error('이벤트를 찾을 수 없어요.');
+    if (!e || e.deletedAt) throw new Error('이벤트를 찾을 수 없어요.');
     e.retryRound = on;
     save();
     this.schedulePush(true);
@@ -1794,7 +1812,7 @@ class Hub {
 
   setReward(eventId: string, itemId: string, challengePct: number, growthPp: number) {
     const e = db().events[eventId];
-    if (!e || !itemById(itemId)) throw new Error('이벤트나 아이템을 찾을 수 없어요.');
+    if (!e || e.deletedAt || !itemById(itemId)) throw new Error('이벤트나 아이템을 찾을 수 없어요.');
     e.reward = { itemId, challengePct: clamp(challengePct, 30, 100), growthPp: clamp(growthPp, 1, 50) };
     save();
     this.schedulePush(true);
@@ -1804,7 +1822,7 @@ class Hub {
 
   openLobby(eventId: string, classId: string) {
     const event = own(db().events, eventId);
-    if (!event) throw new Error('이벤트를 찾을 수 없어요.');
+    if (!event || event.deletedAt) throw new Error('이벤트를 찾을 수 없어요.');
     if (!own(db().classes, classId)) throw new Error('오늘 수업할 반을 골라 주세요.');
     // Requests for other classes can't be approved during this class.
     for (const r of Object.values(db().requests)) {
@@ -1875,14 +1893,14 @@ class Hub {
   }
 
   /**
-   * [대기실 닫기] or [아레나 닫기]: only a 대기실 or the results close this way (a running quiz ends with [종료], which
+   * [대기실 닫기] or [아레나 닫기]: only a 대기실 or the results close this way (a running quiz ends with [끝내기], which
    * keeps its results), and only the arena the teacher's screen showed (`from`, its id), so a click that arrives
    * late from an older screen closes nothing.
    */
   closeSession(from?: string) {
     const live = this.live;
     if (!live || (from !== undefined && from !== live.id)) return;
-    if (live.phase !== 'lobby' && live.phase !== 'summary') throw new Error('퀴즈가 진행 중이에요. [종료]로 끝낸 뒤 닫아 주세요.');
+    if (live.phase !== 'lobby' && live.phase !== 'summary') throw new Error('퀴즈가 진행 중이에요. [끝내기]로 끝낸 뒤 닫아 주세요.');
     this.live = null;
     this.stopTicker();
     this.schedulePush(true);

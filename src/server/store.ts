@@ -66,6 +66,8 @@ export interface EventRec {
   fileName?: string;
   /** Typed in the teacher screen instead of uploaded. */
   typed?: boolean;
+  /** [지우기] on an event a class has played: gone from the list, kept for the records that point to its questions. */
+  deletedAt?: number;
 }
 
 /** Packed on disk (PackedResponses): a new field needs adding there too, or answers that have it are saved unpacked. */

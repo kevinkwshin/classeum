@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useClock } from '@/client/clock';
 import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
 import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, usePraiseSound, useProjectorAudioBeacon, useRevealSound, useSoundPreview } from '@/client/revealSound';
 import { AGORA_MUSIC_SRC, MUSIC_SRC } from '@/client/sound';
@@ -111,7 +112,23 @@ function DisplayApp() {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <main className="relative flex h-screen w-screen flex-col overflow-hidden bg-bg p-[2.2vw] text-ink">{children}</main>;
+  // A taller bottom edge than the others: the clock's strip, so it sits under every screen's cards and field.
+  return (
+    <main className="relative flex h-screen w-screen flex-col overflow-hidden bg-bg p-[2.2vw] pb-[3.4vw] text-ink">
+      {children}
+      <Clock />
+    </main>
+  );
+}
+
+/**
+ * The time of day, in the same place on every screen: the middle of the bottom edge, in the strip the shell keeps
+ * there, clear of the corners' hints (the join address and 전체 화면 on the left, the sound and the page on the right).
+ */
+function Clock() {
+  const time = useClock();
+  if (!time) return null;
+  return <div className="tabular pointer-events-none absolute bottom-[0.5vw] left-1/2 z-30 -translate-x-1/2 rounded-full bg-white/90 px-[1vw] py-[0.1vw] text-[length:max(14px,1.5vw)] font-bold text-ink-2">{time}</div>;
 }
 
 function Center({ children }: { children: React.ReactNode }) {

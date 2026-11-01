@@ -21,7 +21,7 @@ export function setupSteps(view: TeacherView): SetupStep[] {
   const phones = view.students.some((s) => s.hasDevice);
   return [
     { key: 'class', label: '반 만들기', hint: '예: 2-3반', done: view.classes.length > 0 },
-    { key: 'words', label: '단어 넣기', hint: '직접 쓰거나 엑셀로', done: view.events.length > 0 },
+    { key: 'words', label: '문제 넣기', hint: '단어는 직접 쓰거나 엑셀로, 문법은 엑셀로', done: view.events.length > 0 },
     // After a first quiz the projector counts as set up even on a day its window isn't open yet.
     { key: 'projector', label: '프로젝터', hint: '확장 모드 → 창 옮기고 F', done: view.displayOn || played },
     { key: 'phones', label: '폰 접속', hint: !phones && view.requests.length > 0 ? '요청 왔어요 → 승인' : !phones && view.phones > 0 ? '폰 연결됨 · 요청을 기다려요' : 'QR 찍고 등록 → 승인', done: phones },
@@ -193,7 +193,7 @@ export function AgoraGuide({ view, onNew }: { view: TeacherView; onNew: () => vo
   const steps: GuideStep[] = [
     { key: 'topic', label: '아고라 만들기', hint: '제목을 쓰고 주제를 한 줄씩', done: view.agora.agoras.length > 0 },
     { key: 'lobby', label: '대기실 열기', hint: '아고라 고르고 오늘 반 → 대기실 열기 · 놀이 방법으로 시범', done: ran },
-    { key: 'run', label: '쓰고 함께 보기', hint: '쓰기 시작 → 지금 마감 → 전체 공개 → 다음 주제', done: ran && !view.agora.live },
+    { key: 'run', label: '쓰고 함께 보기', hint: '쓰기 시작 → 지금 마감 → 공개 → 다음 주제', done: ran && !view.agora.live },
   ];
   const action = (s: GuideStep) => (s.key === 'topic' ? <button type="button" onClick={onNew} className={ACTION}>새 아고라</button> : null);
   return <GuideCard title="아고라 준비" storageKey="classeum.agoraGuide" bubble="아고라도 같이 해요" steps={steps} action={action} />;

@@ -7,6 +7,7 @@
 // What students see first (facts to check, the 우리말 뜻) goes on lines above the sentence in the same 문장 cell; the
 // 우리말 column of older files still works, and stays on 배열.
 import type { GrammarItem, GrammarPart, GrammarShow, GrammarTab, Question, WordStatus } from '@/lib/types';
+import { josa } from '@/lib/josa';
 import { MAX_TEXT_ANSWER, hashString, mulberry32, normalizeAnswer, shuffle } from '@/lib/text';
 
 export const GRAMMAR_TABS: GrammarTab[] = ['고르기', '쓰기', '고치기', '배열'];
@@ -190,8 +191,8 @@ function choose(id: string, r: GrammarRow): Built {
     if (kept.length < 2) return error('보기1', '보기를 2개 이상 써 주세요.');
     if (!r.answer.trim()) return error('정답', '정답이 비어 있어요.');
     const col = numberAnswer(r.answer);
-    if (col < 0) return error('정답', `정답 '${r.answer}'은 보기 번호(1~4)로 써 주세요.`);
-    if (!given[col]) return error('정답', `정답이 가리키는 보기${col + 1}이 비어 있어요.`);
+    if (col < 0) return error('정답', `정답 ${josa(`'${r.answer}'`, '은/는')} 보기 번호(1~4)로 써 주세요.`);
+    if (!given[col]) return error('정답', `정답이 가리키는 ${josa(`보기${col + 1}`, '이/가')} 비어 있어요.`);
     const sentences = kept.map((o) => o.label);
     const lead = r.lead || '바른 문장을 고르세요.';
     const show: GrammarShow = { tab: '고르기', lead, ko: r.ko || undefined, parts: sentence ? [{ text: sentence }] : [], sentences, short: differing(sentences) ?? undefined };
@@ -963,7 +964,7 @@ function fixForm(r: GrammarRow): { row: GrammarRow; problems: GrammarProblem[] }
       const fa = fixAnswer(r.answer);
       const [before, ...rest] = inline[0].slice(1, -1).split(ARROWS);
       if (fa && !('error' in fa) && (canon(fa.wrong) !== canon(before) || canon(fa.fixes.join('|')) !== canon(alternatives(rest.join(' ')).join('|')))) {
-        return { error: ['정답', `문장의 ${inline[0]}와 정답 '${tidy(r.answer)}'이 달라요. 한쪽만 써 주세요.`] };
+        return { error: ['정답', `문장의 ${josa(inline[0], '과/와')} 정답 ${josa(`'${tidy(r.answer)}'`, '이/가')} 달라요. 한쪽만 써 주세요.`] };
       }
     }
     return ok({ ...r, answer: '' });

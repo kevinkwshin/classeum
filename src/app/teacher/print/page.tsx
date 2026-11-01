@@ -28,26 +28,45 @@ export default function PrintPage() {
 }
 
 function MistakesSheet() {
-  const [data, setData] = useState<Mistakes | 'missing' | null>(null);
+  // 'missing': no such student (taken off the roster); 'failed': the server didn't answer, so [다시 시도] asks again.
+  const [data, setData] = useState<Mistakes | 'missing' | 'failed' | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let stop = false;
     const studentId = new URLSearchParams(window.location.search).get('student') ?? '';
     fetch(`/api/stats?student=${encodeURIComponent(studentId)}`)
       .then((r) => (r.ok ? (r.json() as Promise<Mistakes>) : Promise.reject(new Error(String(r.status)))))
       .then((d) => !stop && setData(d.student ? d : 'missing'))
-      .catch(() => !stop && setData('missing'));
+      .catch(() => !stop && setData('failed'));
     return () => {
       stop = true;
     };
-  }, []);
+  }, [attempt]);
   useEffect(() => {
-    if (!data || data === 'missing' || !data.student) return;
+    if (!data || data === 'missing' || data === 'failed' || !data.student) return;
     const s = data.student;
     document.title = `오답 노트 ${s.className} ${s.number} ${s.name}`;
     const t = setTimeout(() => window.print(), 400);
     return () => clearTimeout(t);
   }, [data]);
   if (!data) return <main className="p-10 text-ink-3">불러오는 중…</main>;
+  if (data === 'failed') {
+    return (
+      <main className="flex items-center gap-3 p-10 text-ink-3">
+        불러오지 못했어요.
+        <button
+          type="button"
+          onClick={() => {
+            setData(null);
+            setAttempt((n) => n + 1);
+          }}
+          className="h-9 rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold text-ink"
+        >
+          다시 시도
+        </button>
+      </main>
+    );
+  }
   if (data === 'missing' || !data.student) return <main className="p-10 text-ink-3">그 학생이 없어요. 통계에서 다시 열어 주세요.</main>;
   const { student, quizzes } = data;
   return (

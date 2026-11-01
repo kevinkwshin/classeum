@@ -23,15 +23,15 @@ export default function Home() {
       <div className="grid gap-4 sm:grid-cols-3">
         <Link href="/teacher" className="rounded-2xl bg-ink p-6 text-white hover:opacity-90">
           <div className="text-sm font-semibold text-white/60">노트북</div>
-          <div className="mt-2 text-2xl font-bold">선생님</div>
+          <div className="mt-2 text-2xl font-bold">선생님 화면</div>
         </Link>
         <a href="/display" target="classeum-display" className="rounded-2xl bg-surface p-6 hover:bg-white/70">
           <div className="text-sm font-semibold text-ink-3">프로젝터</div>
-          <div className="mt-2 text-2xl font-bold">큰 화면</div>
+          <div className="mt-2 text-2xl font-bold">프로젝터 화면</div>
         </a>
         <a href="/play?slot=1" target="_blank" className="rounded-2xl bg-surface p-6 hover:bg-white/70">
           <div className="text-sm font-semibold text-ink-3">시험용</div>
-          <div className="mt-2 text-2xl font-bold">학생 폰</div>
+          <div className="mt-2 text-2xl font-bold">학생 화면</div>
         </a>
       </div>
     </main>
