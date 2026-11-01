@@ -207,6 +207,9 @@ export async function POST(request: NextRequest) {
       case 'practice':
         h.recordPractice(tokenHash, String(body.questionId), Number(body.choice));
         break;
+      case 'notes':
+        h.setReviewing(tokenHash, body.open === true);
+        break;
       case 'agora-answer':
         h.answerTopic(tokenHash, String(body.topicId ?? ''), body.text, Number(body.n ?? NaN));
         break;

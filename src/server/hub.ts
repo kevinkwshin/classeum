@@ -252,6 +252,11 @@ class Hub {
   clients = new Set<Client>();
   /** Last heartbeat per student stream. Pages from before heartbeats never send one, so they are never swept. */
   private beats = new WeakMap<Client, number>();
+  /**
+   * Phones showing their 오답 노트, by device: a student going over the quiz's mistakes when an 아고라 starts keeps
+   * them up, and the teacher's 아고라 screens show who is still at it. A phone that goes takes its mark with it.
+   */
+  private reviewing = new Set<string>();
   private sweeper: NodeJS.Timeout | null = null;
   /** When each pending request's phone was last seen waiting, for expireRequests. */
   private requestSeen = new Map<string, number>();
@@ -359,6 +364,7 @@ class Hub {
   removeClient(c: Client) {
     const openBefore = this.registrationOpen();
     if (!this.clients.delete(c)) return;
+    if (c.tokenHash && this.reviewing.has(c.tokenHash) && ![...this.clients].some((x) => x.tokenHash === c.tokenHash)) this.reviewing.delete(c.tokenHash);
     this.schedulePush(openBefore !== this.registrationOpen());
   }
 
@@ -368,6 +374,24 @@ class Hub {
     const now = Date.now();
     for (const c of this.clients) if (c.streamId === streamId && c.tokenHash === tokenHash) this.beats.set(c, now);
     this.sweeper ??= setInterval(() => this.sweep(), SWEEP_MS).unref();
+  }
+
+  /** A phone's 오답 노트 opened or closed, for the teacher's 아고라 screens. */
+  setReviewing(tokenHash: string, open: boolean) {
+    if (open === this.reviewing.has(tokenHash) || (open && !this.studentOf(tokenHash))) return;
+    if (open) this.reviewing.add(tokenHash);
+    else this.reviewing.delete(tokenHash);
+    if (this.agoraLive) this.schedulePush(false);
+  }
+
+  /** The students of a class whose phone shows their 오답 노트. */
+  private reviewingIn(classId: string | undefined): string[] {
+    const ids = new Set<string>();
+    for (const t of this.reviewing) {
+      const s = this.studentOf(t);
+      if (s && s.classId === classId) ids.add(s.id);
+    }
+    return [...ids];
   }
 
   /**
@@ -681,7 +705,7 @@ class Hub {
     // For the setup guide: whether a projector screen is open, and how many phones (registered or not) are connected.
     const displayOn = [...this.clients].some((c) => c.role === 'display');
     const phones = new Set([...this.clients].filter((c) => c.role === 'student' && c.tokenHash).map((c) => c.tokenHash)).size;
-    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora(this.agoraLive), saveTrouble: saveTrouble() };
+    return { role: 'teacher', serverNow: Date.now(), joinUrl: this.joinUrl, qr: this.qr, classes, students, requests, events, live: liveDetail, displayOn, phones, agora: teacherAgora(this.agoraLive, this.reviewingIn(this.agoraLive?.classId)), saveTrouble: saveTrouble() };
   }
 
   private registrationContext(): RegistrationContext {

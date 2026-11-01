@@ -126,20 +126,42 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   // Text drafts live here so the pause screen doesn't wipe them.
   const [drafts] = useState(() => new Map<string, string>());
   const s = view.session;
-  // The locker and notes only show between questions and in a 대기실; a starting quiz or 아고라 always wins.
-  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && (!view.agora || view.agora.phase === 'lobby' || view.agora.phase === 'ready');
+  // An 아고라 past its 대기실 and 준비: being written, closed, shown or at its 끝.
+  const agoraOn = !!view.agora && view.agora.phase !== 'lobby' && view.agora.phase !== 'ready';
+  // The locker and notes only show between questions and in a 대기실; a starting quiz or 아고라 always wins…
+  const between = (!s || s.phase === 'lobby' || s.phase === 'summary') && !agoraOn;
+  // …but a 오답 노트 being gone over stays when an 아고라 starts: the student finishes it, then comes along by the bar
+  // over it. A starting quiz still takes it away, since a question doesn't wait.
+  const keepNotes = notesOpen && !s && agoraOn;
   // A starting quiz closes the locker and notes for good, so they don't cover the results later.
-  if (!between && (lockerOpen || notesOpen || answersOpen)) {
+  if (!between && (lockerOpen || (notesOpen && !keepNotes) || answersOpen)) {
     setLockerOpen(false);
-    setNotesOpen(false);
+    if (!keepNotes) setNotesOpen(false);
     setAnswersOpen(false);
   }
+  const notes = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes;
+  const showNotes = notesOpen && (between || keepNotes) && !!notes && !!view.me?.look && !(lockerOpen && between);
+  // The teacher's 아고라 screens show who is going over their 오답 노트, so the phone says when it opens and closes,
+  // and again after a reconnect (the server forgets a phone that went).
+  const saidNotes = useRef(false);
+  useEffect(() => {
+    if (conn !== 'open' || (!showNotes && !saidNotes.current)) return;
+    saidNotes.current = showNotes;
+    send({ type: 'notes', open: showNotes }).catch(() => undefined);
+  }, [showNotes, conn, send]);
   if (view.refused) return <Message title="잠시만 기다려 주세요" body={view.refused} />;
   if (!view.me) return <Register view={view} send={send} />;
   if (!view.me.look) return <CharacterPick send={send} name={view.me.name} />;
   if (lockerOpen && between) return <Locker me={view.me} send={send} onClose={() => setLockerOpen(false)} />;
-  const notes = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes;
-  if (notesOpen && between && notes) return <Notes key="notes" eventName={notes.eventName} wrong={notes.wrong} practice={notes.practice} send={send} onBack={() => setNotesOpen(false)} />;
+  if (showNotes && notes) {
+    return (
+      // In the 아고라's wide screen (a tablet) the notes stay phone-sized.
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col">
+        {keepNotes && <AgoraBar writing={view.agora?.phase === 'writing'} onGo={() => setNotesOpen(false)} />}
+        <Notes key="notes" eventName={notes.eventName} wrong={notes.wrong} practice={notes.practice} send={send} onBack={() => setNotesOpen(false)} />
+      </div>
+    );
+  }
   const openNotes = notes ? () => setNotesOpen(true) : undefined;
   // 내 답 노트 comes with the home screen between lessons; an 아고라 opening takes it away.
   const answerNotes = view.agoraNotes?.length ? view.agoraNotes : null;
@@ -1405,6 +1427,16 @@ function CorrectFriends({ friends, me }: { friends: NonNullable<StudentView['res
 }
 
 // ---------- summary & wrong-answer notes ----------
+
+/** Over a 오답 노트 kept up while the 아고라 goes on: the way to it, once the mistakes are gone over ([돌아가기] too). */
+function AgoraBar({ writing, onGo }: { writing: boolean; onGo: () => void }) {
+  return (
+    <button type="button" onClick={onGo} className="flex shrink-0 items-center justify-between gap-3 bg-good-soft px-5 py-3 text-left">
+      <span className="text-[15px] font-bold text-good">{writing ? '✏️ 아고라 쓰기가 시작됐어요' : '✏️ 아고라를 하고 있어요'}</span>
+      <span className="shrink-0 rounded-full bg-good px-3.5 py-1.5 text-sm font-extrabold text-white">{writing ? '쓰러 가기 →' : '아고라로 가기 →'}</span>
+    </button>
+  );
+}
 
 function Notes({ eventName, wrong, practice, send, onBack }: { eventName: string; wrong: WrongNote[]; practice: Question[]; send: Send; onBack: () => void }) {
   const [practicing, setPracticing] = useState(false);

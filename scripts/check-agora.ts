@@ -200,6 +200,23 @@ async function run(teacher: Stream, display: Stream) {
   check('다른 반 기기에는 주제가 가지 않고, 지금 수업 중인 반 이름만 간다', !b1.s.view.agora && b1.s.view.elsewhere === A.name, b1.s.view.elsewhere);
   check('그 반 기기에 내 답 노트는 수업 동안 가지 않는다', [a1, a2, a3].every((p) => p.s.view.agoraNotes === null));
   check('선생님 화면에 대기실과 들어온 학생이 보인다', teacher.view.agora.live?.phase === 'lobby' && [1, 2, 3].every((n) => teacher.view.agora.live.joined.includes(studentId(A, n))));
+  // A phone showing its 오답 노트 says so, and the teacher's 아고라 screens mark that student: this class only, until the
+  // notes close or the phone goes.
+  const reviewing = (): string[] => teacher.view.agora.live?.reviewing ?? [];
+  for (const token of [a2.token, b1.token, randomBytes(24).toString('hex')]) await post({ type: 'notes', token, open: true }, {});
+  await sleep(200);
+  check('오답 노트를 연 폰은 선생님 화면에 오답 노트 보는 중으로 뜬다 (수업 중인 반만)', reviewing().length === 1 && reviewing()[0] === studentId(A, 2), JSON.stringify(reviewing()));
+  await post({ type: 'notes', token: a2.token, open: false }, {});
+  await post({ type: 'notes', token: b1.token, open: false }, {});
+  await post({ type: 'notes', token: a3.token, open: true }, {});
+  await sleep(200);
+  const a3Marked = reviewing().length === 1 && reviewing()[0] === studentId(A, 3);
+  a3.s.controller.abort();
+  await sleep(300);
+  check('…오답 노트를 닫거나 폰이 나가면 사라진다', a3Marked && reviewing().length === 0, JSON.stringify(reviewing()));
+  a3.s = stream(`${BASE}/api/stream?role=student&token=${a3.token}`);
+  await sleep(300);
+  check('…나갔던 폰이 다시 들어와도 대기실에 그대로 있다', teacher.view.agora.live.joined.includes(studentId(A, 3)) && a3.s.view.agora?.phase === 'lobby');
   check('놀이 방법을 누른다', (await post({ type: 'agora-howto' })).ok);
   await sleep(200);
   check('프로젝터에 놀이 방법 시범이 나오고, 선생님 화면도 안다', typeof display.view.agora?.howtoAt === 'number' && teacher.view.agora.live?.howto === true);

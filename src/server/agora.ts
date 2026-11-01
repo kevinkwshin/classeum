@@ -556,7 +556,7 @@ function answerPrint(studentId: string, classId: string | undefined, topicId: st
  * so a semester of answers doesn't travel with every change. `answersKey` changes whenever one of its answers does,
  * which tells an open answer list to fetch again.
  */
-export function teacherAgora(live: AgoraLive | null) {
+export function teacherAgora(live: AgoraLive | null, reviewing: string[] = []) {
   const d = db();
   const agoras = agoraList().map((a) => {
     const writers: Record<string, Set<string>> = {};
@@ -606,6 +606,7 @@ export function teacherAgora(live: AgoraLive | null) {
     music: live.music,
     timer: live.timer && { ...live.timer },
     joined: [...live.joined],
+    reviewing,
     wrote: [...live.wrote],
     rewarded: [...live.rewarded.keys()],
     praisedAt: live.praisedAt,

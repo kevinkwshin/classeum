@@ -112,6 +112,9 @@ function TeacherApp() {
               <span className={`h-1.5 w-1.5 rounded-full ${tab === key ? 'bg-accent' : 'bg-transparent'}`} />
               {label}
               {key === 'students' && view.requests.length > 0 && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">{view.requests.length}</span>}
+              {/* What is open, while the menu shows (the console covers it otherwise): an arena with its results up is still
+                  open, and has to close before an 아고라 opens. */}
+              {key === 'arena' && view.live && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">{view.live.phase === 'lobby' ? '대기실' : '진행 중'}</span>}
               {key === 'agora' && agoraLive && <span className="ml-auto rounded-full bg-accent px-2 text-xs font-extrabold text-ink">대기실</span>}
             </button>
           ))}
@@ -2044,6 +2047,7 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
   const review = live.review !== null;
   const secrets = secretSentences(agora, live.classId);
   const inRoom = new Set(live.joined);
+  const reviewing = new Set(live.reviewing);
   const mine = view.students.filter((s) => s.classId === live.classId);
   const joined = mine.filter((s) => inRoom.has(s.id)).sort(byNumber);
   const notJoined = mine.filter((s) => !inRoom.has(s.id)).sort(byNumber);
@@ -2106,6 +2110,7 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
                 <div key={s.id} className="flex items-center gap-2 rounded-xl bg-bg py-1.5 pl-1.5 pr-3">
                   <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
                   <span className="text-sm font-semibold">{s.number} {s.name}</span>
+                  {reviewing.has(s.id) && <span className="rounded-full bg-[#FFF6DE] px-2 py-0.5 text-xs font-bold text-ink-2">📒 오답 노트</span>}
                 </div>
               ))}
             </div>
@@ -2221,6 +2226,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   const cards = view.students
     .filter((s) => s.classId === live.classId && ((wrote && inRoom.has(s.id)) || answers.has(s.id)))
     .sort((a, b) => (topic.sort === 'time' ? firstAt(a.id) - firstAt(b.id) : 0) || a.number - b.number);
+  const reviewing = new Set(live.reviewing);
   const sent = cards.filter((s) => answers.has(s.id));
   // The preview shows the page the projector shows (its own measure of which cards fit); all of them until it says.
   const pageNumbers = live.pageNumbers[live.page];
@@ -2382,7 +2388,8 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
               {sent.length === 0 && live.phase !== 'ready' && <div className="text-sm text-ink-3">아직 낸 학생이 없어요</div>}
               {sent.map((s) => {
                 const a = answers.get(s.id)!;
-                // Only what the projector shows: this screen may be on it too.
+                // Whether the projector shows it. The teacher reads every 작문 answer here either way, to choose whom
+                // to praise; a 받아쓰기 answer is the sentence itself, so it stays a ✓ until the 답 card after class.
                 const shown = !dictation && shownOf(a);
                 return (
                   <div key={s.id} className={`flex items-start gap-1 rounded-xl ${a.star ? 'bg-[#FFF6DE]' : 'bg-bg'}`}>
@@ -2409,8 +2416,8 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                           </span>
                         )}
                       </span>
-                      {shown && a.first !== null && <span className="whitespace-pre-wrap pl-8 text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 답 · <s>{a.first}</s></span>}
-                      {shown && <span className="whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere]">{a.text}</span>}
+                      {!dictation && a.first !== null && <span className="whitespace-pre-wrap pl-8 text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 답 · <s>{a.first}</s></span>}
+                      {!dictation && <span className="whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere]">{a.text}</span>}
                     </button>
                     {/* 칭찬: the first ⭐ in a lesson gives this student the 아고라's reward; taking it back keeps the reward. */}
                     <button
@@ -2442,9 +2449,11 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
             {waiting.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="mr-1 text-[13px] font-semibold text-ink-3">{writing ? '아직 안 낸 학생' : '미답변'}</span>
+                {/* Still going over the quiz's 오답 노트 (an 아고라 right after the arena). */}
                 {waiting.map((s) => (
-                  <span key={s.id} className="rounded-full bg-bg px-2.5 py-1 text-sm font-semibold">
+                  <span key={s.id} className={`rounded-full px-2.5 py-1 text-sm font-semibold ${reviewing.has(s.id) ? 'bg-[#FFF6DE]' : 'bg-bg'}`}>
                     {s.number} {s.name}
+                    {reviewing.has(s.id) && <span className="ml-1 text-xs font-bold text-ink-2">· 📒 오답 노트 보는 중</span>}
                   </span>
                 ))}
               </div>

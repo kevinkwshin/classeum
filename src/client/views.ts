@@ -262,6 +262,8 @@ export interface TeacherAgoraLive {
   music: boolean;
   timer: AgoraTimer;
   joined: string[];
+  /** Students whose phone shows their 오답 노트: going over the quiz's mistakes while the 아고라 goes on. */
+  reviewing: string[];
   /** Topics students have written to in this session, by id. */
   wrote: string[];
   /** Students this session has rewarded for a ⭐. */
