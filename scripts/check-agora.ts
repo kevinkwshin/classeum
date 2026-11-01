@@ -688,6 +688,15 @@ async function run(teacher: Stream, display: Stream) {
   check('채점: 15와 fifteen은 같다', g('I have 15 apples.', 'I have fifteen apples').perfect);
   check('채점: 줄임말은 들린 대로(don’t ≠ do not)', !g("I don't like it.", 'I do not like it').perfect && g("I don’t like it.", "I don't like it").perfect);
   check('채점: 한 단어가 빠져도 뒤는 맞게 줄을 맞춘다(5/6)', Math.round(g('I go to school every day.', 'I go school every day').accuracy * 6) === 5);
+  // [▶ 읽어 주기]'s sound file: on a Mac the laptop's own voice as a WAV, slow and loud; elsewhere 501 (the browser reads).
+  const speech = (text: string, headers: Record<string, string> = TEACHER) =>
+    fetch(`${BASE}/api/speech`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+  const wav = await speech(SENTENCE);
+  const wavBytes = Buffer.from(await wav.arrayBuffer());
+  check('읽어 주기 소리 파일: 맥이면 문장을 천천히 읽은 WAV(6단어에 2초 넘게), 아니면 501', wav.status === 501 || (wav.status === 200 && wav.headers.get('content-type') === 'audio/wav' && wavBytes.toString('ascii', 0, 4) === 'RIFF' && wavBytes.length > 44 + 22050 * 2 * 2));
+  check('…선생님 쿠키 없이는 막힌다', (await speech(SENTENCE, {})).status === 403);
+  check('…다른 사이트에서 온 요청도 막힌다', (await speech(SENTENCE, { ...TEACHER, 'Sec-Fetch-Site': 'cross-site' })).status === 403);
+  check('…빈 문장과 너무 긴 문장은 받지 않는다', (await speech('  ')).status === 400 && (await speech('a'.repeat(301))).status === 400);
 
   section('코드');
   const sinks = htmlSinks(join(process.cwd(), 'src'));

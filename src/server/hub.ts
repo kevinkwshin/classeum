@@ -1419,17 +1419,17 @@ class Hub {
 
   /**
    * [▶ 읽어 주기] of a 받아쓰기, which the teacher screen reads aloud itself (`on`), or its end: the projector and the
-   * phones show that it is reading, for about as long as the sentence takes. After [쓰기 시작], and again after
-   * [정답 공개]; `from` is the topic the teacher's screen showed, by its place.
+   * phones show that it is reading until it ends. After [쓰기 시작], and again after [정답 공개]; `from` is the topic
+   * the teacher's screen showed, by its place.
    */
   speakAgora(from: number, on: boolean) {
     const live = this.agoraLive;
     const topic = this.agoraNow()?.topic;
     if (!live || !topic || live.index !== from || topic.dictation === undefined) return;
     if (live.phase !== 'writing' && live.phase !== 'closed') return;
-    const listening = on ? { at: Date.now(), ms: Math.min(20_000, 1000 + topic.dictation.split(/\s+/).length * 500) } : null;
+    const listening = on ? { at: Date.now(), ms: Math.min(30_000, 2000 + topic.dictation.split(/\s+/).length * 800) } : null;
     live.listening = listening;
-    // Over by then even if the teacher's screen never says so (closed mid-sentence).
+    // Over by then even if the teacher's screen never says so (closed mid-sentence): longer than a slow reading takes.
     if (listening) {
       setTimeout(() => {
         if (live.listening !== listening) return;
