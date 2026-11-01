@@ -733,6 +733,9 @@ async function run(teacher: Stream, display: Stream) {
   check('…선생님 쿠키 없이는 막힌다', (await speech(SENTENCE, {})).status === 403);
   check('…다른 사이트에서 온 요청도 막힌다', (await speech(SENTENCE, { ...TEACHER, 'Sec-Fetch-Site': 'cross-site' })).status === 403);
   check('…빈 문장과 너무 긴 문장은 받지 않는다', (await speech('  ')).status === 400 && (await speech('a'.repeat(301))).status === 400);
+  // Whether the laptop makes them, which keeps [▶ 읽어 주기] on whatever voices the browser lists: teacher only.
+  const can = await fetch(`${BASE}/api/speech`, { headers: TEACHER });
+  check('…만들 수 있는지는 선생님만 묻고, 맥이면 된다고(아니면 501) 답한다', (await fetch(`${BASE}/api/speech`)).status === 403 && (can.status === 200 || can.status === 501) && can.status === wav.status);
 
   section('아레나 뒤 아고라');
   // The arena's results stay up until the teacher closes it, and only then does an 아고라 open. [대기실 닫기] and

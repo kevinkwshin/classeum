@@ -1,12 +1,18 @@
 import type { NextRequest } from 'next/server';
 import { isTeacher } from '@/server/auth';
-import { SPEECH_MAX, speechFile } from '@/server/speech';
+import { SPEECH_MAX, speechAvailable, speechFile } from '@/server/speech';
 
 /**
  * 받아쓰기: a sentence as the laptop's own voice reads it, slow and loud, for the teacher screen's [▶ 읽어 주기] (in
  * class and in the [새 아고라] window). Teacher only, like the sentence itself. 501 where the laptop can't make one
  * (not a Mac): the screen's browser reads it then.
  */
+/** Whether this laptop makes them, so [▶ 읽어 주기] stays on whatever voices the browser lists. Teacher only. */
+export async function GET(request: NextRequest) {
+  if (!isTeacher(request)) return Response.json({ ok: false, error: '노트북의 선생님 화면에서만 할 수 있어요.' }, { status: 403 });
+  return (await speechAvailable()) ? Response.json({ ok: true }) : Response.json({ ok: false }, { status: 501 });
+}
+
 export async function POST(request: NextRequest) {
   if (!isTeacher(request)) return Response.json({ ok: false, error: '노트북의 선생님 화면에서만 할 수 있어요.' }, { status: 403 });
   const body = (await request.json().catch(() => null)) as { text?: unknown } | null;

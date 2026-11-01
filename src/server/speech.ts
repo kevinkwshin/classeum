@@ -34,6 +34,11 @@ function sayVoice(): Promise<string | null> {
   return g.__classeumSayVoice;
 }
 
+/** Whether this laptop makes the sound files: a Mac with an English voice of its own. */
+export async function speechAvailable(): Promise<boolean> {
+  return process.platform === 'darwin' && !!(await sayVoice());
+}
+
 /** The sentence as a WAV file (mono, 16-bit), or null where it can't be made. Kept for the lesson's next readings. */
 export function speechFile(text: string): Promise<Buffer | null> {
   if (process.platform !== 'darwin') return Promise.resolve(null);

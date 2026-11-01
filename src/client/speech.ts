@@ -17,18 +17,35 @@ function pickVoice(): SpeechSynthesisVoice | null {
   return englishVoice(window.speechSynthesis.getVoices().filter((v) => v.localService));
 }
 
-/** Whether the laptop has an English voice of its own; null while the browser is still listing its voices. */
-function voiceSnapshot(): boolean | null {
+/** Whether the browser has an English voice of the laptop's own; null while it is still listing its voices. */
+function browserVoice(): boolean | null {
   if (!('speechSynthesis' in window)) return false;
   if (pickVoice()) return true;
   return window.speechSynthesis.getVoices().length === 0 ? null : false;
 }
 
-/** Chrome lists its voices a moment after the page loads, and says so. */
-function subscribeVoices(onChange: () => void): () => void {
-  if (!('speechSynthesis' in window)) return () => undefined;
-  window.speechSynthesis.addEventListener('voiceschanged', onChange);
-  return () => window.speechSynthesis.removeEventListener('voiceschanged', onChange);
+/**
+ * Whether [▶ 읽어 주기] can read: the laptop makes the sound files (a Mac), whatever voices the browser lists (Brave's
+ * fingerprint guard and others may hide or change them), or else the browser has a voice of the laptop's own. Null
+ * while either is still unknown, so the button stays on until it is known not to work.
+ */
+function canRead(): boolean | null {
+  if (filesMade === true) return true;
+  const voice = browserVoice();
+  if (voice === true) return true;
+  return filesMade === null || voice === null ? null : false;
+}
+
+/** Hears the browser listing its voices (Chrome does so a moment after the page loads) and the server's answer. */
+const readListeners = new Set<() => void>();
+function subscribeRead(onChange: () => void): () => void {
+  askServer();
+  readListeners.add(onChange);
+  if ('speechSynthesis' in window) window.speechSynthesis.addEventListener('voiceschanged', onChange);
+  return () => {
+    readListeners.delete(onChange);
+    if ('speechSynthesis' in window) window.speechSynthesis.removeEventListener('voiceschanged', onChange);
+  };
 }
 
 let ctx: AudioContext | null = null;
@@ -40,17 +57,34 @@ function audio(): AudioContext | null {
   return ctx;
 }
 
-/** False once the server has said it can't make sound files (not a Mac): the browser reads from then on. */
-let filesMade = true;
+/** Whether the server makes sound files (a Mac); null until it has said. When it can't, the browser reads. */
+let filesMade: boolean | null = null;
+function setFilesMade(made: boolean) {
+  if (filesMade === made) return;
+  filesMade = made;
+  readListeners.forEach((f) => f());
+}
+let asked = false;
+/** Asks the server once whether it makes the sound files, for the button. */
+function askServer() {
+  if (asked) return;
+  asked = true;
+  fetch('/api/speech')
+    .then((res) => setFilesMade(res.ok))
+    .catch(() => {
+      asked = false; // asked again by the next screen that reads
+    });
+}
 /** The sound files fetched so far, by sentence: a lesson's few, so a second reading starts at once. */
 const files = new Map<string, Promise<ArrayBuffer | null>>();
 function soundFile(text: string): Promise<ArrayBuffer | null> {
-  if (!filesMade) return Promise.resolve(null);
+  if (filesMade === false) return Promise.resolve(null);
   let file = files.get(text);
   if (!file) {
     file = fetch('/api/speech', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
       .then((res) => {
-        if (res.status === 501) filesMade = false;
+        if (res.status === 501) setFilesMade(false);
+        if (res.ok) setFilesMade(true);
         return res.ok ? res.arrayBuffer() : null;
       })
       .catch(() => null);
@@ -77,7 +111,7 @@ type Reading = { stop: () => void };
  */
 export function useSpeech(onSpeaking?: (speaking: boolean) => void) {
   const [speaking, setSpeaking] = useState(false);
-  const canSpeak = useSyncExternalStore(subscribeVoices, voiceSnapshot, () => null);
+  const canSpeak = useSyncExternalStore(subscribeRead, canRead, () => null);
   const notify = useRef(onSpeaking);
   useEffect(() => {
     notify.current = onSpeaking;
