@@ -1,20 +1,26 @@
 import type { NextRequest } from 'next/server';
 import { isTeacher } from '@/server/auth';
-import { computeStats, statsCsv, studentMistakes } from '@/server/stats';
+import { csvFile } from '@/server/csv';
+import { computeStats, questionsCsv, studentLabel, studentMistakes, studentMistakesCsv } from '@/server/stats';
 
 export async function GET(request: NextRequest) {
   if (!isTeacher(request)) return new Response('forbidden', { status: 403 });
-  // One student's quizzes with what they got wrong, asked for when the teacher opens that student.
-  const studentId = request.nextUrl.searchParams.get('student');
-  if (studentId) return Response.json({ quizzes: studentMistakes(studentId) });
-  const classId = request.nextUrl.searchParams.get('class') || undefined;
-  if (request.nextUrl.searchParams.get('format') === 'csv') {
-    return new Response(statsCsv(classId), {
-      headers: {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('classeum-통계.csv')}`,
-      },
-    });
+  const params = request.nextUrl.searchParams;
+  // One student's quizzes with what they got wrong, asked for when the teacher opens that student: as a file for
+  // Excel with format=csv, else for the screen and the printable 오답 노트 (with who they are).
+  const studentId = params.get('student');
+  if (studentId) {
+    if (params.get('format') === 'csv') {
+      const file = studentMistakesCsv(studentId);
+      return file ? csvFile(file.csv, file.name) : new Response('not found', { status: 404 });
+    }
+    return Response.json({ student: studentLabel(studentId), quizzes: studentMistakes(studentId) });
+  }
+  // A class (every class when empty): its students and questions, or with format=csv its questions as a file.
+  const classId = params.get('class') || undefined;
+  if (params.get('format') === 'csv') {
+    const file = questionsCsv(classId);
+    return csvFile(file.csv, file.name);
   }
   return Response.json(computeStats(classId));
 }

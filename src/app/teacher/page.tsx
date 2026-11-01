@@ -2584,7 +2584,8 @@ function Choices<T extends string | number>({ label, value, options, onPick }: {
 
 interface StatsData {
   students: { id: string; classId: string; className: string; number: number; name: string; attendance: number; sessions: { sessionId: string; eventName: string; date: number; accuracy: number | null }[]; average: number | null; missed: { word: string; count: number }[]; fixed: string[]; rewards: number }[];
-  words: { key: string; word: string; meaning: string; attempts: number; accuracy: number; topWrong: string | null }[];
+  /** 문제별: a word (all the ways it was asked) or a grammar question, most missed first. */
+  questions: { key: string; kind: string; text: string; answer: string; attempts: number; accuracy: number; topWrong: string | null }[];
 }
 
 interface QuizMistakes {
@@ -2615,9 +2616,18 @@ function StudentMistakes({ studentId }: { studentId: string }) {
   const quiz = quizzes?.find((x) => x.sessionId === picked) ?? quizzes?.[0];
   return (
     <Card>
-      <div className="mb-3 flex items-baseline justify-between">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="font-bold">퀴즈별 틀린 문제</h2>
-        {quiz && !quiz.gone && <span className="tabular text-sm text-ink-3">{quiz.total}문제 중 {quiz.correct}개 맞힘</span>}
+        <div className="flex items-center gap-2">
+          {quiz && !quiz.gone && <span className="tabular mr-1 text-sm text-ink-3">{quiz.total}문제 중 {quiz.correct}개 맞힘</span>}
+          {/* Every quiz's wrong questions at once: a file for Excel, or an A4 오답 노트 to print or keep as a PDF. */}
+          {quizzes && quizzes.length > 0 && (
+            <>
+              <a href={`/api/stats?student=${encodeURIComponent(studentId)}&format=csv`} className="flex h-8 items-center rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold">엑셀로</a>
+              <a href={`/teacher/print?student=${encodeURIComponent(studentId)}`} target="_blank" rel="noopener" className="flex h-8 items-center rounded-lg border border-[#D5D8DF] bg-white px-3 text-sm font-bold">인쇄·PDF</a>
+            </>
+          )}
+        </div>
       </div>
       {!quizzes ? (
         <div className="text-sm text-ink-3">불러오는 중…</div>
@@ -2659,7 +2669,7 @@ function StudentMistakes({ studentId }: { studentId: string }) {
 function Stats({ classes, title }: { classes: TeacherView['classes']; title: React.ReactNode }) {
   const [classId, setClassId] = useClassChoice(classes);
   const [data, setData] = useState<{ classId: string; stats: StatsData } | null>(null);
-  const [mode, setMode] = useState<'students' | 'words'>('students');
+  const [mode, setMode] = useState<'students' | 'questions'>('students');
   const [picked, setPicked] = useState<string | null>(null);
   // 학생별: by number, or the lowest average first (no quiz yet goes last).
   const [order, setOrder] = useState<'number' | 'missed'>('number');
@@ -2691,47 +2701,50 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
   }
   return (
     <div className="flex flex-col gap-5 p-8">
-      {/* The 이벤트 header: the title alone on the left, and its buttons' size, with the Excel ones dark. */}
+      {/* The 이벤트 header: the title alone on the left, and its buttons' size, with the Excel one dark: this class's
+          questions, most missed first, with who missed each and what they answered. */}
       <div className="flex items-center justify-between">
         {title}
-        <div className="flex gap-2">
-          <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">이 반 엑셀로</a>
-          <a href="/api/stats?format=csv" className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">전체 엑셀로</a>
-        </div>
+        <a href={`/api/stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-11 items-center justify-center rounded-xl bg-ink px-5 text-[15px] font-bold text-white">문제별 엑셀로</a>
       </div>
       <ClassTabs
         classes={classes}
         value={classId}
         onChange={(id) => { setClassId(id); setPicked(null); }}
         extra={
-          // 학생별 · 단어별 changes what is shown below, as the class does; as tall as the class tabs.
+          // 학생별 · 문제별 changes what is shown below, as the class does; as tall as the class tabs.
           <div className="ml-auto flex gap-1 rounded-xl bg-[#E9EBEF] p-1">
-            {(['students', 'words'] as const).map((m) => (
-              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`h-8 rounded-lg px-3.5 text-sm ${mode === m ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>{m === 'students' ? '학생별' : '단어별'}</button>
+            {(['students', 'questions'] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`h-8 rounded-lg px-3.5 text-sm ${mode === m ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>{m === 'students' ? '학생별' : '문제별'}</button>
             ))}
           </div>
         }
       />
-      {mode === 'words' ? (
+      {mode === 'questions' ? (
         <Card className="!p-2">
-          {/* Fixed widths, as in 반 관리, so the columns stay put from class to class; 뜻 takes the rest, and long ones wrap. */}
+          {/* Fixed widths, as in 반 관리, so the columns stay put from class to class; 문제 takes the rest, and long ones wrap. */}
           <table className="w-full table-fixed text-left text-[15px]">
             <colgroup>
-              <col className="w-48" />
+              <col className="w-28" />
               <col />
+              <col className="w-56" />
               <col className="w-20" />
               <col className="w-20" />
-              <col className="w-60" />
+              <col className="w-52" />
             </colgroup>
-            <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">단어</th><th>뜻</th><th>정답률</th><th>푼 횟수</th><th>많이 고른 오답</th></tr></thead>
+            <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">유형</th><th>문제</th><th>정답</th><th>정답률</th><th>푼 횟수</th><th>많이 고른·쓴 오답</th></tr></thead>
             <tbody>
-              {stats.words.map((w) => (
-                <tr key={w.key} className="border-t border-[#EEF0F3]">
-                  <td className="px-4 py-2.5 font-bold [overflow-wrap:anywhere]">{w.word}</td><td className="pr-4 text-ink-2">{w.meaning}</td>
-                  <td className={`tabular font-extrabold ${w.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(w.accuracy)}</td><td className="tabular">{w.attempts}</td><td className="pr-4 text-ink-2">{w.topWrong ?? '-'}</td>
+              {stats.questions.map((q) => (
+                <tr key={q.key} className="border-t border-[#EEF0F3] align-top">
+                  <td className="px-4 py-2.5 text-sm font-semibold text-ink-2">{q.kind}</td>
+                  <td className={`break-keep py-2.5 pr-4 [overflow-wrap:anywhere] ${q.kind === '단어' ? 'font-bold' : ''}`}>{q.text}</td>
+                  <td className="py-2.5 pr-4 text-ink-2 [overflow-wrap:anywhere]">{q.answer}</td>
+                  <td className={`tabular py-2.5 font-extrabold ${q.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(q.accuracy)}</td>
+                  <td className="tabular py-2.5">{q.attempts}</td>
+                  <td className="py-2.5 pr-4 text-ink-2 [overflow-wrap:anywhere]">{q.topWrong ?? '-'}</td>
                 </tr>
               ))}
-              {stats.words.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-ink-3">아직 기록이 없어요.</td></tr>}
+              {stats.questions.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-ink-3">아직 기록이 없어요.</td></tr>}
             </tbody>
           </table>
         </Card>

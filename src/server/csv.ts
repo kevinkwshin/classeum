@@ -11,3 +11,9 @@ export function csvText(rows: unknown[][]): string {
   };
   return '﻿' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
 }
+
+/** A CSV file to download, its Korean name intact (RFC 5987; the plain one for clients that read only that). */
+export function csvFile(csv: string, name: string): Response {
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="classeum.csv"; filename*=UTF-8''${encoded}` } });
+}
