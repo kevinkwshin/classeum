@@ -172,13 +172,16 @@ export function useCountdownTick(endsAt: number | null, serverNow: () => number,
   }, [endsAt, serverNow, on, canPlay]);
 }
 
-/** Ticking [효과음] back on plays one cheer, so the teacher hears how loud it is. */
-export function useSoundPreview(on: boolean, canPlay: () => boolean = always) {
-  const was = useRef(on);
+/**
+ * Ticking [효과음] back on plays one cheer, so the teacher hears how loud it is: within one arena (`key`, its id) only,
+ * so an arena closing (its setting gone, which reads as on) or another opening plays nothing.
+ */
+export function useSoundPreview(on: boolean, canPlay: () => boolean = always, key: string | null = null) {
+  const was = useRef({ on, key });
   useEffect(() => {
     // A moment later, so a click on the checkbox itself has turned audio on first.
-    const t = on && !was.current && canPlay() ? setTimeout(() => playCheer(1), 150) : undefined;
-    was.current = on;
+    const t = on && !was.current.on && key === was.current.key && canPlay() ? setTimeout(() => playCheer(1), 150) : undefined;
+    was.current = { on, key };
     return () => clearTimeout(t);
-  }, [on, canPlay]);
+  }, [on, canPlay, key]);
 }

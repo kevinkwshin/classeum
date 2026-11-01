@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatClock, formatDay, remainingMs, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
+import { formatClock, formatDay, remainingMs, reportReviewing, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
 import type { AgoraNote, MyAnswer, StudentAgora, StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { GrammarCard, filledSentence, zoneLabels } from '@/components/GrammarCard';
@@ -15,7 +15,7 @@ import { ANSWER_MAX } from '@/lib/agora';
 import { gradeDictation, type DictationWord } from '@/lib/dictation';
 import { zoneCenter, zoneOf } from '@/lib/field';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
-import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question } from '@/lib/types';
+import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question, StudentSummary } from '@/lib/types';
 
 function buzz(pattern: number | number[]) {
   // Android only; iPhone Safari has no vibration API.
@@ -108,10 +108,24 @@ function seenPraise(): number {
   }
 }
 
+/** A quiz's 오답 노트, as the phone shows it. */
+type NotesData = { eventName: string; wrong: WrongNote[]; practice: Question[] };
+/** A quiz's results, as the phone shows them. */
+type ResultData = { sum: StudentSummary; eventName: string };
+
 function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send; serverNow: () => number; conn: ConnState }) {
   const [lockerOpen, setLockerOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [answersOpen, setAnswersOpen] = useState(false);
+  // The 오답 노트 as it was when opened: the arena closing (its results giving way to the last notes) doesn't swap
+  // what the student is going over.
+  const [pinnedNotes, setPinnedNotes] = useState<NotesData | null>(null);
+  // Quiz results outside the arena's results: kept up when the arena closes on a phone showing them, or opened
+  // again from home's 지난 퀴즈 결과.
+  const [result, setResult] = useState<ResultData | null>(null);
+  // The arena's results this phone got, and that arena's id while it shows them, to keep them when it closes.
+  const [summaryOf, setSummaryOf] = useState<string | null>(null);
+  const [gotSummary, setGotSummary] = useState<ResultData | null>(null);
   // The ⭐ reward box already seen (by when it was given), kept on this phone so neither a new topic nor a reload
   // opens it again: the reward was given once, and a second box would look like a second reward.
   const [praiseSeen, setPraiseSeen] = useState(seenPraise);
@@ -133,36 +147,77 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   // …but a 오답 노트 being gone over stays when an 아고라 starts: the student finishes it, then comes along by the bar
   // over it. A starting quiz still takes it away, since a question doesn't wait.
   const keepNotes = notesOpen && !s && agoraOn;
+  // So do quiz results kept up or opened again, with the same bar.
+  const keepResult = !!result && !s && agoraOn;
   // A starting quiz closes the locker and notes for good, so they don't cover the results later.
-  if (!between && (lockerOpen || (notesOpen && !keepNotes) || answersOpen)) {
+  if (!between && (lockerOpen || (notesOpen && !keepNotes) || answersOpen || (result && !keepResult))) {
     setLockerOpen(false);
     if (!keepNotes) setNotesOpen(false);
     setAnswersOpen(false);
+    if (!keepResult) setResult(null);
   }
-  const notes = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes;
-  const showNotes = notesOpen && (between || keepNotes) && !!notes && !!view.me?.look && !(lockerOpen && between);
-  // The teacher's 아고라 screens show who is going over their 오답 노트, so the phone says when it opens and closes,
-  // and again after a reconnect (the server forgets a phone that went).
-  const saidNotes = useRef(false);
-  useEffect(() => {
-    if (conn !== 'open' || (!showNotes && !saidNotes.current)) return;
-    saidNotes.current = showNotes;
-    send({ type: 'notes', open: showNotes }).catch(() => undefined);
-  }, [showNotes, conn, send]);
+  // The arena's results, while it shows them; when it closes on a phone showing them (not its notes or locker), they
+  // stay up instead of the phone going home, until the student moves on.
+  const summaryNow = s?.phase === 'summary' && view.mySummary ? s.id : null;
+  if (summaryNow !== summaryOf) {
+    setSummaryOf(summaryNow);
+    if (summaryNow && s && view.mySummary) setGotSummary({ sum: view.mySummary, eventName: s.eventName });
+    else if (!s && gotSummary && !notesOpen && !lockerOpen) setResult(gotSummary);
+  }
+  const notes: NotesData | null = s?.phase === 'summary' && view.mySummary ? { eventName: s.eventName, wrong: view.mySummary.wrong, practice: view.mySummary.practice } : view.lastNotes ?? null;
+  const shownNotes = pinnedNotes ?? notes;
+  const showNotes = notesOpen && (between || keepNotes) && !!shownNotes && !!view.me?.look && !(lockerOpen && between);
+  const showResult = !showNotes && !!result && (between || keepResult) && !!view.me?.look && !(lockerOpen && between);
+  // The teacher's 아고라 screens show who is still going over the quiz (its notes or results); the phone says so with
+  // its heartbeats.
+  useEffect(() => reportReviewing(showNotes || showResult), [showNotes, showResult]);
+  const openNotes = (n: NotesData) => {
+    setPinnedNotes(n);
+    setNotesOpen(true);
+  };
+  const closeNotes = () => {
+    setNotesOpen(false);
+    setPinnedNotes(null);
+  };
   if (view.refused) return <Message title="잠시만 기다려 주세요" body={view.refused} />;
   if (!view.me) return <Register view={view} send={send} />;
   if (!view.me.look) return <CharacterPick send={send} name={view.me.name} />;
   if (lockerOpen && between) return <Locker me={view.me} send={send} onClose={() => setLockerOpen(false)} />;
-  if (showNotes && notes) {
+  if (showNotes && shownNotes) {
     return (
       // In the 아고라's wide screen (a tablet) the notes stay phone-sized.
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col">
-        {keepNotes && <AgoraBar writing={view.agora?.phase === 'writing'} onGo={() => setNotesOpen(false)} />}
-        <Notes key="notes" eventName={notes.eventName} wrong={notes.wrong} practice={notes.practice} send={send} onBack={() => setNotesOpen(false)} />
+        {keepNotes && view.agora && (
+          <AgoraBar
+            agora={view.agora}
+            serverNow={serverNow}
+            onGo={() => {
+              closeNotes();
+              setResult(null);
+            }}
+          />
+        )}
+        <Notes key="notes" eventName={shownNotes.eventName} wrong={shownNotes.wrong} practice={shownNotes.practice} send={send} onBack={closeNotes} />
       </div>
     );
   }
-  const openNotes = notes ? () => setNotesOpen(true) : undefined;
+  if (showResult && result) {
+    return (
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col">
+        {keepResult && view.agora && <AgoraBar agora={view.agora} serverNow={serverNow} onGo={() => setResult(null)} />}
+        <Summary
+          view={view}
+          sum={result.sum}
+          eventName={result.eventName}
+          onNotes={() => openNotes({ eventName: result.eventName, wrong: result.sum.wrong, practice: result.sum.practice })}
+          onLocker={between ? () => setLockerOpen(true) : undefined}
+          onClose={() => setResult(null)}
+        />
+      </div>
+    );
+  }
+  const last = view.lastNotes;
+  const openResult = last ? () => setResult({ sum: { ...last.result, wrong: last.wrong, practice: last.practice }, eventName: last.eventName }) : undefined;
   // 내 답 노트 comes with the home screen between lessons; an 아고라 opening takes it away.
   const answerNotes = view.agoraNotes?.length ? view.agoraNotes : null;
   if (answersOpen && between && answerNotes) return <AnswerNotes notes={answerNotes} onBack={() => setAnswersOpen(false)} />;
@@ -170,16 +225,19 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   // The server never opens an 아고라 while a quiz is open, so the two don't meet here. Its 대기실 is the arena's, and
   // so is the wait while the teacher reads out the next topic (준비).
   if (view.agora && !s) {
-    if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
+    if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} onLocker={() => setLockerOpen(true)} onResult={openResult} waiting />;
     if (view.agora.phase === 'end') return <AgoraDone view={view} />;
     return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} praiseSeen={praiseSeen} onPraiseSeen={onPraiseSeen} />;
   }
   if (!s || s.phase === 'summary') {
-    if (s?.phase === 'summary' && view.mySummary) return <Summary view={view} onLocker={() => setLockerOpen(true)} onNotes={() => setNotesOpen(true)} />;
-    return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} onAnswers={openAnswers} waiting={false} />;
+    if (s?.phase === 'summary' && view.mySummary) {
+      const mine = view.mySummary;
+      return <Summary view={view} sum={mine} eventName={s.eventName} onLocker={() => setLockerOpen(true)} onNotes={() => openNotes({ eventName: s.eventName, wrong: mine.wrong, practice: mine.practice })} />;
+    }
+    return <Home view={view} onLocker={() => setLockerOpen(true)} onResult={openResult} onAnswers={openAnswers} waiting={false} />;
   }
   if (s.paused) return <Message title="잠깐!" body="선생님을 봐 주세요" dark />;
-  if (s.phase === 'lobby') return <Home view={view} onLocker={() => setLockerOpen(true)} onNotes={openNotes} waiting />;
+  if (s.phase === 'lobby') return <Home view={view} onLocker={() => setLockerOpen(true)} onResult={openResult} waiting />;
   if (s.phase === 'checkpoint') {
     return s.checkpoint?.kind === 'retry' ? <Message title="다시 도전" body={`많이 틀린 단어 ${s.checkpoint.total}개를 한 번 더!`} dark /> : <Message title="잠깐 쉬어요" body="앞 화면을 봐 주세요" />;
   }
@@ -790,7 +848,7 @@ function PokeAvatar({ look, size }: { look: AvatarLook; size: number }) {
   );
 }
 
-function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentView; onLocker: () => void; onNotes?: () => void; onAnswers?: () => void; waiting: boolean }) {
+function Home({ view, onLocker, onResult, onAnswers, waiting }: { view: StudentView; onLocker: () => void; onResult?: () => void; onAnswers?: () => void; waiting: boolean }) {
   const me = view.me!;
   const look = normalizeLook(me.look ?? undefined);
   const s = view.session;
@@ -799,6 +857,8 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
   const nextGift = itemById(ATTENDANCE_UNLOCKS[Math.floor(me.stamps / STAMPS_PER_UNLOCK)] ?? '');
   // An 아고라's reward shows while it waits in the 대기실 or 준비.
   const agoraReward = view.agora && (view.agora.phase === 'lobby' || view.agora.phase === 'ready') ? itemById(view.agora.reward.itemId) : undefined;
+  // What the 대기실 is for: the arena's quiz or an 아고라, named on the dark card, each with its gold card below.
+  const coming = !waiting ? null : view.agora ? '아고라' : s ? '아레나' : null;
   return (
     <div className="flex flex-1 flex-col gap-4 bg-bg px-5 pb-6 pt-10">
       <div className="flex items-center justify-between">
@@ -808,6 +868,11 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
       <div className={`flex flex-col items-center gap-4 rounded-3xl p-6 transition-colors duration-500 ${waiting ? 'bg-ink text-white' : 'bg-white'}`}>
         <PokeAvatar look={look} size={128} />
         <div className="text-center">
+          {coming && (
+            <div className="mb-2">
+              <span className={`rounded-full px-3 py-1 text-sm font-extrabold text-ink ${coming === '아레나' ? 'bg-accent' : 'bg-gold'}`}>{coming}</span>
+            </div>
+          )}
           <div className="text-xl font-bold">{waiting ? '곧 시작해요' : view.elsewhere ? `지금은 ${view.elsewhere} 수업 중` : '퀴즈를 기다리는 중'}</div>
           <div className={`mt-1 text-sm ${waiting ? 'text-[#A3A8B4]' : 'text-ink-3'}`}>
             {waiting ? '앞 화면을 봐 주세요' : view.elsewhere ? `${me.className} 수업 때 다시 만나요` : '퀴즈가 열리면 자동으로 넘어가요'}
@@ -826,6 +891,13 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
               {view.agora.topic.note && <div className="mt-1 whitespace-pre-wrap text-xs font-semibold text-[#4A3A10] [overflow-wrap:anywhere]">{view.agora.topic.note}</div>}
             </>
           )}
+        </div>
+      )}
+      {/* The arena's 대기실: today's quiz, as an 아고라's shows its topic. */}
+      {waiting && !view.agora && s?.phase === 'lobby' && (
+        <div key={s.id} className="cls-slide-up rounded-3xl bg-gold p-4">
+          <div className="text-xs font-extrabold">오늘의 퀴즈 · {s.mainCount}문제</div>
+          <div className="mt-0.5 break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{s.eventName}</div>
         </div>
       )}
       {waiting && agoraReward && (
@@ -871,11 +943,14 @@ function Home({ view, onLocker, onNotes, onAnswers, waiting }: { view: StudentVi
         </div>
         {nextGift && <div className="mt-2 text-right text-xs text-ink-3">발자국 {STAMPS_PER_UNLOCK - stamps}개 더 모으면 {nextGift.name}</div>}
       </div>
-      {onNotes && view.lastNotes && (
-        <button type="button" onClick={onNotes} className="flex items-center justify-between rounded-3xl bg-white p-4 text-left">
+      {/* The last quiz's results again (score, reward), and its 오답 노트 from there. */}
+      {onResult && view.lastNotes && (
+        <button type="button" onClick={onResult} className="flex items-center justify-between rounded-3xl bg-white p-4 text-left">
           <div>
-            <div className="text-sm font-bold">지난 오답 노트</div>
-            <div className="text-xs text-ink-3">{view.lastNotes.eventName} · {view.lastNotes.wrong.length}개</div>
+            <div className="text-sm font-bold">지난 퀴즈 결과</div>
+            <div className="text-xs text-ink-3">
+              {view.lastNotes.eventName} · {view.lastNotes.result.mainCorrect}/{view.lastNotes.result.mainTotal} · 틀린 문제 {view.lastNotes.wrong.length}개
+            </div>
           </div>
           <span className="text-xl text-ink-3" aria-hidden>›</span>
         </button>
@@ -1428,11 +1503,25 @@ function CorrectFriends({ friends, me }: { friends: NonNullable<StudentView['res
 
 // ---------- summary & wrong-answer notes ----------
 
-/** Over a 오답 노트 kept up while the 아고라 goes on: the way to it, once the mistakes are gone over ([돌아가기] too). */
-function AgoraBar({ writing, onGo }: { writing: boolean; onGo: () => void }) {
+/**
+ * Over a 오답 노트 or quiz results kept up while the 아고라 goes on: what it is doing now (the 입력 시간 left, a
+ * 받아쓰기 being read out, a topic closed) and the way to it, once the mistakes are gone over.
+ */
+function AgoraBar({ agora, serverNow, onGo }: { agora: StudentAgora; serverNow: () => number; onGo: () => void }) {
+  const writing = agora.phase === 'writing';
+  const timer = writing ? agora.timer : null;
+  useTicker(!!timer, 1000);
+  const left = timer ? Math.max(0, timer.endsAt - serverNow()) : null;
+  const say = !writing
+    ? agora.phase === 'end' ? '✏️ 아고라가 끝났어요' : '✏️ 이 주제는 마감됐어요'
+    : agora.topic.kind !== 'dictation' ? '✏️ 아고라 쓰기가 시작됐어요'
+    : agora.listening ? '🔊 받아쓰기 문장을 읽고 있어요' : '🎧 받아쓰기가 시작됐어요';
   return (
     <button type="button" onClick={onGo} className="flex shrink-0 items-center justify-between gap-3 bg-good-soft px-5 py-3 text-left">
-      <span className="text-[15px] font-bold text-good">{writing ? '✏️ 아고라 쓰기가 시작됐어요' : '✏️ 아고라를 하고 있어요'}</span>
+      <span className="min-w-0">
+        <span className="block text-[15px] font-bold text-good">{say}</span>
+        {left !== null && <span className="tabular block text-xs font-semibold text-good">{formatClock(left)} 남았어요</span>}
+      </span>
       <span className="shrink-0 rounded-full bg-good px-3.5 py-1.5 text-sm font-extrabold text-white">{writing ? '쓰러 가기 →' : '아고라로 가기 →'}</span>
     </button>
   );
@@ -1440,7 +1529,8 @@ function AgoraBar({ writing, onGo }: { writing: boolean; onGo: () => void }) {
 
 function Notes({ eventName, wrong, practice, send, onBack }: { eventName: string; wrong: WrongNote[]; practice: Question[]; send: Send; onBack: () => void }) {
   const [practicing, setPracticing] = useState(false);
-  if (practicing) return <Practice questions={practice} send={send} onDone={() => setPracticing(false)} />;
+  // Only questions with boxes are practised; a written one (빈칸 쓰기, 배열 …) stays in the notes to read again.
+  if (practicing) return <Practice questions={practice} send={send} writtenLeft={wrong.length > practice.length} onDone={() => setPracticing(false)} />;
   return (
     <div className="flex flex-1 flex-col bg-bg">
       <div className="flex items-end justify-between px-5 pb-3 pt-10">
@@ -1477,8 +1567,11 @@ function Notes({ eventName, wrong, practice, send, onBack }: { eventName: string
   );
 }
 
-function Summary({ view, onLocker, onNotes }: { view: StudentView; onLocker: () => void; onNotes: () => void }) {
-  const sum = view.mySummary!;
+/**
+ * A quiz's results: the arena's own while it shows them, or kept up after it has closed, or opened again from home
+ * (then with [닫기]). [보관함] only where the locker can open.
+ */
+function Summary({ view, sum, eventName, onLocker, onNotes, onClose }: { view: StudentView; sum: StudentSummary; eventName: string; onLocker?: () => void; onNotes: () => void; onClose?: () => void }) {
   const me = view.me!;
   const look = normalizeLook(me.look ?? undefined);
   const item = sum.reward ? itemById(sum.reward.itemId) : undefined;
@@ -1487,7 +1580,7 @@ function Summary({ view, onLocker, onNotes }: { view: StudentView; onLocker: () 
     <div className="flex flex-1 flex-col gap-4 bg-ink px-5 pb-6 pt-10 text-white">
       <div className="flex items-end justify-between">
         <div>
-          <div className="text-sm font-semibold text-[#A3A8B4]">{view.session?.eventName}</div>
+          <div className="text-sm font-semibold text-[#A3A8B4]">{eventName}</div>
           <div className="tabular text-6xl font-extrabold tracking-tight">
             <CountUp value={sum.mainCorrect} ms={900} delay={200} />
             <span className="text-3xl text-ink-3">/{sum.mainTotal}</span>
@@ -1531,7 +1624,8 @@ function Summary({ view, onLocker, onNotes }: { view: StudentView; onLocker: () 
       )}
       <div className="flex-1" />
       <Button onClick={onNotes}>오답 노트 보기</Button>
-      <Button kind="ghost" onClick={onLocker} className="!bg-transparent !text-white !border-[#3D4354]">보관함</Button>
+      {onLocker && <Button kind="ghost" onClick={onLocker} className="!bg-transparent !text-white !border-[#3D4354]">보관함</Button>}
+      {onClose && <Button kind="ghost" onClick={onClose} className="!bg-transparent !text-white !border-[#3D4354]">닫기</Button>}
     </div>
   );
 }
@@ -1545,14 +1639,15 @@ function speak(text: string) {
   window.speechSynthesis.speak(u);
 }
 
-function Practice({ questions, send, onDone }: { questions: Question[]; send: Send; onDone: () => void }) {
+function Practice({ questions, send, writtenLeft, onDone }: { questions: Question[]; send: Send; writtenLeft: boolean; onDone: () => void }) {
   const [queue, setQueue] = useState<Question[]>(questions);
   const [picked, setPicked] = useState<number | null>(null);
   const q = queue[0];
   if (!q) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
-        <div className="text-3xl font-bold">모두 맞혔어요!</div>
+        <div className="text-3xl font-bold">{writtenLeft ? '고르는 문제는 다 맞혔어요!' : '모두 맞혔어요!'}</div>
+        {writtenLeft && <div className="-mt-3 text-ink-3">쓰는 문제는 오답 노트에서 다시 봐요</div>}
         <Button kind="dark" className="w-full" onClick={onDone}>오답 노트로</Button>
       </div>
     );

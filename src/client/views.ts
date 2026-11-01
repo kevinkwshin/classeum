@@ -371,7 +371,15 @@ export interface StudentView {
   } | null;
   mySummary?: StudentSummary | null;
   /** The latest finished session's notes, shown from the home screen between classes. */
-  lastNotes?: { eventName: string; at: number; wrong: WrongNote[]; practice: StudentSummary['practice'] } | null;
+  /** The last quiz's 오답 노트 and results, between quizzes (also after the arena has closed). */
+  lastNotes?: {
+    sessionId: string;
+    eventName: string;
+    at: number;
+    wrong: WrongNote[];
+    practice: StudentSummary['practice'];
+    result: Omit<StudentSummary, 'wrong' | 'practice'>;
+  } | null;
   /** The 아고라 my class has open, if any. */
   agora?: StudentAgora | null;
   /** 내 답 노트, on the home screen between lessons. */

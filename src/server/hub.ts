@@ -25,6 +25,13 @@ export interface Client {
    * a stream a Wi-Fi roam left half-open. Pages from before heartbeats send none.
    */
   streamId?: string;
+  /**
+   * This tab shows its 오답 노트, as its heartbeats say: a student going over the quiz's mistakes when an 아고라
+   * starts keeps them up, and the teacher's 아고라 screens show who is still at it. With the stream it goes.
+   */
+  reviewing?: boolean;
+  /** The number of the last heartbeat that set `reviewing`, so one that arrives late changes nothing. */
+  beatN?: number;
   send: (payload: unknown) => void;
   /**
    * Ends the stream from the server side: an older duplicate of the same phone, or a phone that stopped
@@ -252,11 +259,6 @@ class Hub {
   clients = new Set<Client>();
   /** Last heartbeat per student stream. Pages from before heartbeats never send one, so they are never swept. */
   private beats = new WeakMap<Client, number>();
-  /**
-   * Phones showing their 오답 노트, by device: a student going over the quiz's mistakes when an 아고라 starts keeps
-   * them up, and the teacher's 아고라 screens show who is still at it. A phone that goes takes its mark with it.
-   */
-  private reviewing = new Set<string>();
   private sweeper: NodeJS.Timeout | null = null;
   /** When each pending request's phone was last seen waiting, for expireRequests. */
   private requestSeen = new Map<string, number>();
@@ -364,31 +366,34 @@ class Hub {
   removeClient(c: Client) {
     const openBefore = this.registrationOpen();
     if (!this.clients.delete(c)) return;
-    if (c.tokenHash && this.reviewing.has(c.tokenHash) && ![...this.clients].some((x) => x.tokenHash === c.tokenHash)) this.reviewing.delete(c.tokenHash);
     this.schedulePush(openBefore !== this.registrationOpen());
   }
 
-  /** A phone's page is open and looked at. Sent every 15 s by every phone, so it saves and pushes nothing. */
-  beat(tokenHash: string, streamId: string) {
+  /**
+   * A phone's page is open and looked at. Sent every 15 s by every phone, so it saves and pushes nothing, unless it
+   * says the tab's 오답 노트 opened or closed (`reviewing`, sent at once then and with every beat after, numbered by
+   * `n` so a late one changes nothing): the teacher's 아고라 screens show it.
+   */
+  beat(tokenHash: string, streamId: string, reviewing?: boolean, n?: number) {
     if (!streamId) return;
     const now = Date.now();
-    for (const c of this.clients) if (c.streamId === streamId && c.tokenHash === tokenHash) this.beats.set(c, now);
+    for (const c of this.clients) {
+      if (c.streamId !== streamId || c.tokenHash !== tokenHash) continue;
+      this.beats.set(c, now);
+      if (reviewing === undefined || n === undefined || n <= (c.beatN ?? -1)) continue;
+      c.beatN = n;
+      if (c.reviewing === reviewing) continue;
+      c.reviewing = reviewing;
+      if (this.agoraLive) this.schedulePush(false);
+    }
     this.sweeper ??= setInterval(() => this.sweep(), SWEEP_MS).unref();
   }
 
-  /** A phone's 오답 노트 opened or closed, for the teacher's 아고라 screens. */
-  setReviewing(tokenHash: string, open: boolean) {
-    if (open === this.reviewing.has(tokenHash) || (open && !this.studentOf(tokenHash))) return;
-    if (open) this.reviewing.add(tokenHash);
-    else this.reviewing.delete(tokenHash);
-    if (this.agoraLive) this.schedulePush(false);
-  }
-
-  /** The students of a class whose phone shows their 오답 노트. */
+  /** The students of a class with a tab on their 오답 노트 now. */
   private reviewingIn(classId: string | undefined): string[] {
     const ids = new Set<string>();
-    for (const t of this.reviewing) {
-      const s = this.studentOf(t);
+    for (const c of this.clients) {
+      const s = c.reviewing ? this.studentOf(c.tokenHash) : undefined;
       if (s && s.classId === classId) ids.add(s.id);
     }
     return [...ids];
@@ -756,7 +761,18 @@ class Hub {
       stamps: d.attendance[student.id]?.length ?? 0,
     };
     const last = d.lastSummary[student.id];
-    const lastNotes = last && (!live || live.phase === 'lobby') ? { eventName: last.eventName, at: last.at, wrong: last.wrong, practice: last.practice } : null;
+    // With the last results too (score, reward, 발자국), so a phone can show them again after the arena has closed.
+    const lastNotes =
+      last && (!live || live.phase === 'lobby')
+        ? {
+            sessionId: last.sessionId,
+            eventName: last.eventName,
+            at: last.at,
+            wrong: last.wrong,
+            practice: last.practice,
+            result: { mainCorrect: last.mainCorrect, mainTotal: last.mainTotal, judged: last.judged, reward: last.reward, stampAdded: last.stampAdded, shortQuiz: last.shortQuiz, bestStreak: last.bestStreak, unlocked: last.unlocked },
+          }
+        : null;
     if (!live) {
       const agora = now && this.agoraLive && !elsewhere ? studentAgora(now.agora, now.topic, this.agoraLive, student.id) : null;
       // 내 답 노트 goes with the home screen only, so the class's answers coming in don't resend it to every phone.
@@ -1858,7 +1874,15 @@ class Hub {
     this.schedulePush(true);
   }
 
-  closeSession() {
+  /**
+   * [대기실 닫기] or [아레나 닫기]: only a 대기실 or the results close this way (a running quiz ends with [종료], which
+   * keeps its results), and only the arena the teacher's screen showed (`from`, its id), so a click that arrives
+   * late from an older screen closes nothing.
+   */
+  closeSession(from?: string) {
+    const live = this.live;
+    if (!live || (from !== undefined && from !== live.id)) return;
+    if (live.phase !== 'lobby' && live.phase !== 'summary') throw new Error('퀴즈가 진행 중이에요. [종료]로 끝낸 뒤 닫아 주세요.');
     this.live = null;
     this.stopTicker();
     this.schedulePush(true);

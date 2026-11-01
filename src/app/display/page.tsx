@@ -39,7 +39,7 @@ function DisplayApp() {
   const reveal = s?.phase === 'reveal' ? view?.reveal ?? null : null;
   useRevealSound(s?.question?.seq ?? -1, reveal, soundOn && audioOn);
   useCountdownTick(s?.phase === 'moving' ? s.phaseEndsAt : null, serverNow, soundOn && audioOn);
-  useSoundPreview(soundOn && audioOn);
+  useSoundPreview(soundOn && audioOn, undefined, s?.id ?? null);
   // An 아고라 topic is never up while a session is open; while one is, its own song plays instead.
   const agora = s ? null : (view?.agora ?? null);
   useBackgroundMusic(

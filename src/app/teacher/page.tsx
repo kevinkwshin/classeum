@@ -856,7 +856,7 @@ function UploadPreview({ result, typed = false, onClose, onCreate }: { result: U
 function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: { now: () => boolean; on: boolean }; serverNow: () => number }) {
   useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, plays.now);
   useCountdownTick(live.phase === 'moving' ? live.phaseEndsAt : null, serverNow, live.sound, plays.now);
-  useSoundPreview(live.sound, plays.now);
+  useSoundPreview(live.sound, plays.now, live.id);
   useBackgroundMusic(live.music && plays.on ? musicLevel(live.phase, live.blank, live.paused) : 0);
   return null;
 }
@@ -935,7 +935,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           <Card className="min-w-56"><div className="text-ink-3">보상 받은 학생</div><div className="tabular text-6xl font-extrabold">{live.summary?.rewarded ?? 0}<span className="text-2xl text-ink-3"> / {live.summary?.judged ?? 0}</span></div></Card>
         </div>
         <p className="text-ink-3">학생들은 각자 폰에서 결과와 오답 노트를 보고 있어요. 학생별 기록은 통계에 쌓였어요.</p>
-        <Btn onClick={() => act({ type: 'close-session' })}>아레나 닫기</Btn>
+        <Btn onClick={() => act({ type: 'close-session', id: live.id })}>아레나 닫기</Btn>
         {live.hardest && live.hardest.length > 0 && (
           // What the class missed most this time, to go over together before closing.
           <Card className="w-full max-w-5xl !p-2">
@@ -1165,7 +1165,7 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
             {live.howto && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-accent align-middle" />}
             놀이 방법
           </Btn>
-          <Btn kind="ghost" onClick={() => act({ type: 'close-session' })}>대기실 닫기</Btn>
+          <Btn kind="ghost" onClick={() => act({ type: 'close-session', id: live.id })}>대기실 닫기</Btn>
           <Btn kind="accent" onClick={() => control('start')} className="px-6">퀴즈 시작</Btn>
         </div>
       </div>
@@ -1790,10 +1790,21 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
     const extra = total ? `\n학생 답 ${total}개도 함께 지워지고 되돌릴 수 없어요.` : '';
     if (confirm(`이 아고라를 지울까요?${extra}`)) act({ type: 'agora-delete', agoraId: agora.id }).catch(() => undefined);
   };
-  // The projector window opens first, inside the click: Safari blocks one opened after the await.
+  // The projector window opens first, inside the click: Safari blocks one opened after the await. An arena still open
+  // (its 대기실, or its results after a quiz) closes first once the teacher says so; the phones keep their results and
+  // 오답 노트 up, and come to the 아고라 from there.
   const open = async (type: 'agora-open' | 'agora-review', forClass: string) => {
+    const arena = view.live;
+    if (arena && !confirm(arena.phase === 'summary' ? '아레나 결과가 열려 있어요. 아레나를 닫고 아고라 대기실을 열까요?\n학생 폰의 결과와 오답 노트는 그대로 볼 수 있어요.' : '아레나 대기실이 열려 있어요. 아레나를 닫고 아고라 대기실을 열까요?')) return;
     if (!view.displayOn) openProjector();
     if (rewardDirty) await saveReward().catch(() => undefined);
+    if (arena) {
+      try {
+        await act({ type: 'close-session', id: arena.id });
+      } catch {
+        return;
+      }
+    }
     act({ type, agoraId: agora.id, classId: forClass }).catch(() => undefined);
   };
   return (
@@ -1820,7 +1831,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
                   ))}
                 </select>
               </label>
-              <Btn kind="accent" disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : undefined} onClick={() => open('agora-open', classId)}>
+              <Btn kind="accent" onClick={() => open('agora-open', classId)}>
                 대기실 열기
               </Btn>
             </>
@@ -1863,7 +1874,7 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
               <h2 className="text-lg font-bold">답</h2>
               {lesson !== null && <span className="text-sm font-semibold text-ink-3">{formatDay(lesson)} 수업</span>}
               {/* The class's answers on the projector again, in a later lesson: the 다시 보기 대기실. */}
-              <Btn disabled={!!view.live} title={view.live ? '아레나를 닫은 뒤 열 수 있어요' : `${shownClass.name}의 답을 프로젝터에 다시 열어요`} onClick={() => open('agora-review', shownClass.id)} className="!h-9 px-3 text-sm">
+              <Btn title={`${shownClass.name}의 답을 프로젝터에 다시 열어요`} onClick={() => open('agora-review', shownClass.id)} className="!h-9 px-3 text-sm">
                 다시 보기
               </Btn>
               <Btn kind="ghost" onClick={() => setShowAnswers((v) => !v)} className="!h-9 px-3 text-sm">
@@ -2110,7 +2121,7 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
                 <div key={s.id} className="flex items-center gap-2 rounded-xl bg-bg py-1.5 pl-1.5 pr-3">
                   <IdleAvatar look={normalizeLook(s.look ?? undefined)} size={28} seed={s.id} />
                   <span className="text-sm font-semibold">{s.number} {s.name}</span>
-                  {reviewing.has(s.id) && <span className="rounded-full bg-[#FFF6DE] px-2 py-0.5 text-xs font-bold text-ink-2">📒 오답 노트</span>}
+                  {reviewing.has(s.id) && <span className="rounded-full bg-[#FFF6DE] px-2 py-0.5 text-xs font-bold text-ink-2">📒 오답 정리</span>}
                 </div>
               ))}
             </div>
@@ -2177,14 +2188,25 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     if (!canSkip || (live.phase === 'writing' && !confirm('아직 쓰는 중이에요. 이 주제를 여기서 끝내고 넘어갈까요?'))) return;
     send({ type: 'agora-next', index: live.index });
   }, [canSkip, live.phase, live.index, send]);
+  // Students still going over the quiz (its notes or results) who haven't written to this topic: closing now leaves
+  // them out of it, so the teacher is asked first.
+  const wroteHere = new Set((topic ? live.answers[topic.id] ?? [] : []).map((a) => a.studentId));
+  const stillReviewing = view.students
+    .filter((s) => live.reviewing.includes(s.id) && !wroteHere.has(s.id))
+    .sort(byNumber)
+    .map((s) => `${s.number} ${s.name}`)
+    .join(', ');
   const primary = useCallback(() => {
     if (step === 'start') send({ type: 'agora-start' });
-    else if (step === 'close') send({ type: 'agora-close' });
+    else if (step === 'close') {
+      if (stillReviewing && !confirm(`${stillReviewing} 학생은 아직 오답 정리 중이에요. 지금 마감할까요?`)) return;
+      send({ type: 'agora-close' });
+    }
     else if (step === 'reveal') send({ type: 'agora-reveal', public: true, index: live.index });
     else if (step === 'page') send({ type: 'agora-page', dir: 1, from: live.page });
     else if (step === 'next' || step === 'finish') send({ type: 'agora-next', index: live.index });
     else end();
-  }, [step, send, end, live.page, live.index]);
+  }, [step, send, end, live.page, live.index, stillReviewing]);
   useTicker(writing && !!live.timer, 250);
   const left = writing && live.timer ? Math.max(0, live.timer.endsAt - serverNow()) : null;
 
@@ -2449,11 +2471,11 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
             {waiting.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="mr-1 text-[13px] font-semibold text-ink-3">{writing ? '아직 안 낸 학생' : '미답변'}</span>
-                {/* Still going over the quiz's 오답 노트 (an 아고라 right after the arena). */}
+                {/* Still going over the quiz (its 오답 노트 or results: an 아고라 right after the arena). */}
                 {waiting.map((s) => (
                   <span key={s.id} className={`rounded-full px-2.5 py-1 text-sm font-semibold ${reviewing.has(s.id) ? 'bg-[#FFF6DE]' : 'bg-bg'}`}>
                     {s.number} {s.name}
-                    {reviewing.has(s.id) && <span className="ml-1 text-xs font-bold text-ink-2">· 📒 오답 노트 보는 중</span>}
+                    {reviewing.has(s.id) && <span className="ml-1 text-xs font-bold text-ink-2">· 📒 오답 정리 중</span>}
                   </span>
                 ))}
               </div>

@@ -119,6 +119,13 @@ async function cleanUp(teacher: Stream) {
   const v = teacher.view;
   const ours = new Set((v.classes as { id: string; name: string }[]).filter((c) => c.name.startsWith(PREFIX)).map((c) => c.id));
   if (v.agora.live && ours.has(v.agora.live.classId)) await post({ type: 'agora-end' });
+  // A run stopped half-way in 아레나 뒤 아고라: its quiz ended and closed, and its event deleted.
+  if (v.live && ours.has(v.live.classId)) {
+    await post({ type: 'control', action: 'end' });
+    await sleep(300);
+    await post({ type: 'close-session' });
+  }
+  for (const e of v.events as { id: string; name: string }[]) if (e.name.startsWith(MARK)) await post({ type: 'delete-event', eventId: e.id });
   for (const a of v.agora.agoras as { id: string; title: string }[]) if (a.title.startsWith(MARK)) await post({ type: 'agora-delete', agoraId: a.id });
   for (const id of ours) await post({ type: 'delete-class', classId: id, withStudents: true });
   await sleep(300);
@@ -200,23 +207,35 @@ async function run(teacher: Stream, display: Stream) {
   check('다른 반 기기에는 주제가 가지 않고, 지금 수업 중인 반 이름만 간다', !b1.s.view.agora && b1.s.view.elsewhere === A.name, b1.s.view.elsewhere);
   check('그 반 기기에 내 답 노트는 수업 동안 가지 않는다', [a1, a2, a3].every((p) => p.s.view.agoraNotes === null));
   check('선생님 화면에 대기실과 들어온 학생이 보인다', teacher.view.agora.live?.phase === 'lobby' && [1, 2, 3].every((n) => teacher.view.agora.live.joined.includes(studentId(A, n))));
-  // A phone showing its 오답 노트 says so, and the teacher's 아고라 screens mark that student: this class only, until the
-  // notes close or the phone goes.
+  // A phone's tab showing its 오답 노트 or quiz results says so with its numbered heartbeats, and the teacher's 아고라
+  // screens mark that student: this class only, tab by tab, until the tab says otherwise or goes.
   const reviewing = (): string[] => teacher.view.agora.live?.reviewing ?? [];
-  for (const token of [a2.token, b1.token, randomBytes(24).toString('hex')]) await post({ type: 'notes', token, open: true }, {});
+  const tab = (p: Phone, sid: string) => stream(`${BASE}/api/stream?role=student&token=${p.token}&s=${sid}`);
+  const beat = (p: Phone, sid: string, r: boolean, n: number) => post({ type: 'hb', token: p.token, s: sid, r, n }, {});
+  const a2tab = tab(a2, 'chkA2tab');
+  const b1tab = tab(b1, 'chkB1tab');
+  await sleep(400);
+  await beat(a2, 'chkA2tab', true, 1);
+  await beat(b1, 'chkB1tab', true, 1);
   await sleep(200);
-  check('오답 노트를 연 폰은 선생님 화면에 오답 노트 보는 중으로 뜬다 (수업 중인 반만)', reviewing().length === 1 && reviewing()[0] === studentId(A, 2), JSON.stringify(reviewing()));
-  await post({ type: 'notes', token: a2.token, open: false }, {});
-  await post({ type: 'notes', token: b1.token, open: false }, {});
-  await post({ type: 'notes', token: a3.token, open: true }, {});
+  check('오답 노트나 결과를 띄운 폰(탭)은 선생님 화면에 오답 정리 중으로 뜬다 (수업 중인 반만)', reviewing().length === 1 && reviewing()[0] === studentId(A, 2), JSON.stringify(reviewing()));
+  await beat(a2, 'chkA2tab', false, 3);
+  // A late heartbeat (an older number) and one from a tab the server doesn't have change nothing.
+  await beat(a2, 'chkA2tab', true, 2);
+  await beat(a3, 'noSuchTab', true, 1);
+  await sleep(200);
+  check('…닫으면 사라지고, 늦게 온 신호나 없는 탭의 신호는 무시된다', reviewing().length === 0, JSON.stringify(reviewing()));
+  const a3tab = tab(a3, 'chkA3tab');
+  await sleep(400);
+  await beat(a3, 'chkA3tab', true, 1);
   await sleep(200);
   const a3Marked = reviewing().length === 1 && reviewing()[0] === studentId(A, 3);
-  a3.s.controller.abort();
+  a3tab.controller.abort();
   await sleep(300);
-  check('…오답 노트를 닫거나 폰이 나가면 사라진다', a3Marked && reviewing().length === 0, JSON.stringify(reviewing()));
-  a3.s = stream(`${BASE}/api/stream?role=student&token=${a3.token}`);
-  await sleep(300);
-  check('…나갔던 폰이 다시 들어와도 대기실에 그대로 있다', teacher.view.agora.live.joined.includes(studentId(A, 3)) && a3.s.view.agora?.phase === 'lobby');
+  check('…그 탭이 나가면 사라지고(같은 폰의 다른 탭이 남아 있어도), 학생은 대기실에 그대로 있다', a3Marked && reviewing().length === 0 && teacher.view.agora.live.joined.includes(studentId(A, 3)), JSON.stringify(reviewing()));
+  a2tab.controller.abort();
+  b1tab.controller.abort();
+  await sleep(200);
   check('놀이 방법을 누른다', (await post({ type: 'agora-howto' })).ok);
   await sleep(200);
   check('프로젝터에 놀이 방법 시범이 나오고, 선생님 화면도 안다', typeof display.view.agora?.howtoAt === 'number' && teacher.view.agora.live?.howto === true);
@@ -714,6 +733,33 @@ async function run(teacher: Stream, display: Stream) {
   check('…선생님 쿠키 없이는 막힌다', (await speech(SENTENCE, {})).status === 403);
   check('…다른 사이트에서 온 요청도 막힌다', (await speech(SENTENCE, { ...TEACHER, 'Sec-Fetch-Site': 'cross-site' })).status === 403);
   check('…빈 문장과 너무 긴 문장은 받지 않는다', (await speech('  ')).status === 400 && (await speech('a'.repeat(301))).status === 400);
+
+  section('아레나 뒤 아고라');
+  // The arena's results stay up until the teacher closes it, and only then does an 아고라 open. [대기실 닫기] and
+  // [아레나 닫기] carry the arena they meant, and close only a 대기실 or results, never a quiz going on.
+  if (teacher.view.agora.live) await post({ type: 'agora-end' });
+  const draft = await fetch(`${BASE}/api/words`, { method: 'POST', headers: { ...TEACHER, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${MARK} 아레나`, words: [{ spelling: 'apple', meaning: '사과' }, { spelling: 'banana', meaning: '바나나' }, { spelling: 'cherry', meaning: '체리' }, { spelling: 'grape', meaning: '포도' }] }) }).then((r) => r.json() as Promise<View>);
+  const quizId: string | undefined = (await post({ type: 'create-event', draftId: draft.draftId })).eventIds?.[0];
+  check('시험 아레나 이벤트를 만든다', !!quizId, draft.error);
+  await post({ type: 'open-lobby', eventId: quizId, classId: A.id });
+  await sleep(300);
+  const arenaId: string | undefined = teacher.view.live?.id;
+  check('아레나(대기실)가 열려 있으면 아고라는 열리지 않는다', !!arenaId && !!(await post({ type: 'agora-open', agoraId, classId: A.id })).error?.includes('아레나가 열려'));
+  await post({ type: 'close-session', id: 'an-older-arena' });
+  await sleep(200);
+  check('다른(지난) 아레나를 가리키는 닫기는 아무것도 닫지 않는다', teacher.view.live?.id === arenaId);
+  await post({ type: 'control', action: 'start' });
+  await sleep(500);
+  check('퀴즈가 진행 중이면 닫기를 거절한다(결과를 잃지 않게)', !!(await post({ type: 'close-session', id: arenaId })).error?.includes('진행 중') && teacher.view.live?.id === arenaId);
+  await post({ type: 'control', action: 'end' });
+  await sleep(500);
+  const summaryUp = teacher.view.live?.phase === 'summary';
+  const closed = (await post({ type: 'close-session', id: arenaId })).ok;
+  await sleep(200);
+  check('결과 화면은 [아레나 닫기]로 닫힌다', summaryUp && closed && !teacher.view.live);
+  check('아레나를 닫으면 아고라를 연다', (await post({ type: 'agora-open', agoraId, classId: A.id })).ok);
+  await post({ type: 'agora-end' });
+  if (quizId) await post({ type: 'delete-event', eventId: quizId });
 
   section('코드');
   const sinks = htmlSinks(join(process.cwd(), 'src'));

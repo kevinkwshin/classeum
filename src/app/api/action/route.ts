@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
           h.openLobby(String(body.eventId), String(body.classId));
           break;
         case 'close-session':
-          h.closeSession();
+          h.closeSession(body.id === undefined ? undefined : String(body.id));
           break;
         case 'control':
           h.control(String(body.action));
@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
     const tokenHash = hashToken(token);
     switch (type) {
       case 'hb':
-        h.beat(tokenHash, String(body.s ?? '').slice(0, 16));
+        h.beat(tokenHash, String(body.s ?? '').slice(0, 16), typeof body.r === 'boolean' ? body.r : undefined, Number.isInteger(body.n) ? Number(body.n) : undefined);
         break;
       case 'register':
         h.requestRegistration(tokenHash, { classId: String(body.classId ?? ''), number: Number(body.number), name: String(body.name ?? '') });
@@ -206,9 +206,6 @@ export async function POST(request: NextRequest) {
         break;
       case 'practice':
         h.recordPractice(tokenHash, String(body.questionId), Number(body.choice));
-        break;
-      case 'notes':
-        h.setReviewing(tokenHash, body.open === true);
         break;
       case 'agora-answer':
         h.answerTopic(tokenHash, String(body.topicId ?? ''), body.text, Number(body.n ?? NaN));

@@ -39,6 +39,20 @@ async function postAction(body: Record<string, unknown>, timeoutMs: number): Pro
   }
 }
 
+/** Whether this phone shows its 오답 노트 or quiz results, told with every heartbeat: the teacher's 아고라 screens show it. */
+let reviewing = false;
+/** Numbers this page's heartbeats, so the server can tell one that arrives late. */
+let beatCount = 0;
+/** Sends a heartbeat now, while a phone's stream is open. */
+let beatNow: (() => void) | null = null;
+
+/** The phone's 오답 노트 or quiz results came up or went: said at once, and again with every heartbeat after. */
+export function reportReviewing(on: boolean) {
+  if (on === reviewing) return;
+  reviewing = on;
+  beatNow?.();
+}
+
 export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'display' | 'student', token?: string | null) {
   const [view, setView] = useState<T | null>(null);
   const [conn, setConn] = useState<ConnState>('connecting');
@@ -68,8 +82,9 @@ export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'disp
     };
     // Tells the server this phone is still looked at; streams that have beaten and then go quiet are ended there.
     const beat = () => {
-      if (role === 'student' && token && es?.readyState === EventSource.OPEN) void postAction({ type: 'hb', token, s: streamId }, SEND_TIMEOUT_MS);
+      if (role === 'student' && token && es?.readyState === EventSource.OPEN) void postAction({ type: 'hb', token, s: streamId, r: reviewing, n: ++beatCount }, SEND_TIMEOUT_MS);
     };
+    if (role === 'student') beatNow = beat;
     const open = () => {
       if (retry) clearTimeout(retry);
       retry = null;
@@ -138,6 +153,7 @@ export function useLive<T extends { serverNow: number }>(role: 'teacher' | 'disp
     window.addEventListener('offline', onOffline);
     return () => {
       stopped = true;
+      if (beatNow === beat) beatNow = null;
       if (retry) clearTimeout(retry);
       clearInterval(watchdog);
       if (beats) clearInterval(beats);
