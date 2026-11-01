@@ -2180,14 +2180,23 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     : 'finish';
   // [건너뛰기]: this topic ends here and the next comes up (the 끝 after a lesson's last); 다시 보기's last has no next.
   const canSkip = live.phase !== 'end' && !(review && lastTopic);
+  // A 받아쓰기 closed or skipped before [지금 마감] leaves the answers no 마감 has kept yet as 중단, out of its results:
+  // the teacher is told how many first.
+  const unclosed = dictation && topic ? (live.answers[topic.id] ?? []).filter((a) => a.closed === null).length : 0;
   const end = useCallback(() => {
-    if (live.phase === 'writing' && !confirm('아직 쓰는 중이에요. 아고라를 닫으면 쓰기도 끝나요. 닫을까요?')) return;
+    const ask = unclosed
+      ? `아직 받아쓰기 중이에요. [지금 마감] 없이 닫으면 낸 학생 ${unclosed}명의 답이 '중단'으로 남아 결과에서 빠져요. 그래도 닫을까요?`
+      : '아직 쓰는 중이에요. 아고라를 닫으면 쓰기도 끝나요. 닫을까요?';
+    if (live.phase === 'writing' && !confirm(ask)) return;
     send({ type: 'agora-end' });
-  }, [live.phase, send]);
+  }, [live.phase, unclosed, send]);
   const skip = useCallback(() => {
-    if (!canSkip || (live.phase === 'writing' && !confirm('아직 쓰는 중이에요. 이 주제를 여기서 끝내고 넘어갈까요?'))) return;
+    const ask = unclosed
+      ? `아직 받아쓰기 중이에요. [지금 마감] 없이 넘어가면 낸 학생 ${unclosed}명의 답이 '중단'으로 남아 결과에서 빠져요. 그래도 넘어갈까요?`
+      : '아직 쓰는 중이에요. 이 주제를 여기서 끝내고 넘어갈까요?';
+    if (!canSkip || (live.phase === 'writing' && !confirm(ask))) return;
     send({ type: 'agora-next', index: live.index });
-  }, [canSkip, live.phase, live.index, send]);
+  }, [canSkip, live.phase, live.index, unclosed, send]);
   // Students still going over the quiz (its notes or results) who haven't written to this topic: closing now leaves
   // them out of it, so the teacher is asked first.
   const wroteHere = new Set((topic ? live.answers[topic.id] ?? [] : []).map((a) => a.studentId));
