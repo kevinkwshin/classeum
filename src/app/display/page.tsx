@@ -50,11 +50,14 @@ function DisplayApp() {
   );
   // The 아고라 has no 효과음 switch of its own, so its applause plays whenever this window has sound.
   usePraiseSound(agora?.praisedAt ?? 0, audioOn);
-  // 오늘의 보상's 펑 in a 대기실: the arena's with its 효과음, the 아고라's whenever this window has sound.
-  usePrizeSound(s ? (s.phase === 'lobby' ? (s.reward?.revealAt ?? 0) : 0) : agora?.phase === 'lobby' ? agora.reward.revealAt : 0, serverNow, s ? soundOn && audioOn : audioOn);
+  // 오늘의 보상's 펑 in a 대기실: the arena's with its 효과음, the 아고라's whenever this window has sound; not while the
+  // 놀이 방법 demo hides the reward card.
+  const howtoOn = s ? !!(view?.howto && view.howtoAt) : agora?.howtoAt != null;
+  usePrizeSound(s ? (s.phase === 'lobby' ? (s.reward?.revealAt ?? 0) : 0) : agora?.phase === 'lobby' ? agora.reward.revealAt : 0, serverNow, (s ? soundOn && audioOn : audioOn) && !howtoOn);
 
   // After clicking the projector window to make it full screen, keys land here; forward them.
   const paused = !!s?.paused;
+  const sessionId = s?.id;
   const agoraUp = !!agora;
   const agoraPage = agora?.page ?? 0;
   useEffect(() => {
@@ -70,13 +73,14 @@ function DisplayApp() {
       const action = shortcutAction(e.code, paused);
       if (action) {
         e.preventDefault();
-        send({ type: 'control', action }).catch(() => undefined);
+        // Naming this arena, so a key arriving after it closed and another opened changes nothing.
+        send({ type: 'control', action, id: sessionId }).catch(() => undefined);
       }
       if (e.code === 'KeyF') document.documentElement.requestFullscreen?.().catch(() => undefined);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paused, send, agoraUp, agoraPage]);
+  }, [paused, sessionId, send, agoraUp, agoraPage]);
 
   if (!view) return <Shell><Center>연결 중…</Center></Shell>;
   if (view.blank) return <Shell><Center><span className="font-display text-7xl font-bold">Classeum</span></Center></Shell>;

@@ -21,11 +21,22 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem A Classeum server still running from this folder comes first: it is stopped, or asked about while a lesson is
+rem under way, before an update or an install changes anything under it.
+node scripts\check-port.mjs
+if errorlevel 1 (
+  echo.
+  echo   위 안내를 확인하세요. 아무 키나 누르면 창이 닫혀요.
+  pause > nul
+  exit /b 1
+)
+
 rem A folder cloned with git gets the newest version before it starts. The records (.data) aren't in git, so they
 rem are never touched; offline, or with a file changed here that the update changes too, it starts as it is. The
 rem whole block is read before it runs, and after an update it starts this file again from the top, so a
 rem Classeum.bat the update itself changed never runs half old, half new; packages the update changed are installed
-rem further down. git goes through call in case it is a .cmd wrapper, which would otherwise end this script.
+rem further down. git goes through call in case it is a .cmd wrapper, which would otherwise end this script, and is told
+rem this folder is safe: on a USB drive, or made by another Windows account, git refuses it as of 'dubious ownership'.
 if not defined CLASSEUM_UPDATED if exist .git (
   set "CLASSEUM_UPDATED=1"
   where git > nul 2> nul
@@ -37,13 +48,13 @@ if not defined CLASSEUM_UPDATED if exist .git (
     echo   새 버전이 있는지 확인하는 중이에요...
     rem No password prompt or sign-in window: a public repository needs none, and nothing may wait for a click here.
     set "GIT_TERMINAL_PROMPT=0"
-    call git -c credential.helper= -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 fetch --quiet > nul 2> nul
+    call git -c safe.directory=* -c credential.helper= -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 fetch --quiet > nul 2> nul
     if errorlevel 1 (
       echo   새 버전을 확인하지 못해서 지금 버전으로 켤게요. 인터넷 연결을 확인해 보세요.
     ) else (
-      call git merge-base --is-ancestor @{u} HEAD > nul 2> nul
+      call git -c safe.directory=* merge-base --is-ancestor @{u} HEAD > nul 2> nul
       if errorlevel 1 (
-        call git merge --ff-only --quiet @{u} > nul 2> nul
+        call git -c safe.directory=* merge --ff-only --quiet @{u} > nul 2> nul
         if errorlevel 1 (
           echo   새 버전을 받지 못해서 지금 버전으로 켤게요. 이 폴더의 파일을 직접 고쳤다면 그래요.
         ) else (

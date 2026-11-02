@@ -3,6 +3,18 @@
 /** Longest 단답형 answer a phone can send; the importer refuses accepted answers longer than this. */
 export const MAX_TEXT_ANSWER = 200;
 
+/**
+ * Students' names as they type them on a phone: Hangul or Latin letters, spaces, '·', '.', '-', starting with a letter;
+ * at most 20. Registration and the roster (pasted or from an Excel 명단) take the same names, so a roster line always
+ * matches what its student can type.
+ */
+export const NAME_RE = /^[가-힣A-Za-z][가-힣A-Za-z .·-]{0,19}$/;
+
+/** A name as compared and kept: composed Hangul, trimmed, single spaces. */
+export function cleanName(raw: string): string {
+  return raw.normalize('NFC').trim().replace(/\s+/g, ' ');
+}
+
 /** Lowercase, trim, single spaces, straight apostrophes, no trailing period. */
 export function normalizeAnswer(s: string): string {
   return s

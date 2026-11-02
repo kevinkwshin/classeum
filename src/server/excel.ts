@@ -2,7 +2,7 @@
 import readExcelFile from 'read-excel-file/node';
 import type { Confusable, CustomQuestion, GrammarItem, GrammarTab, Pos, Word, WordStatus } from '@/lib/types';
 import { josa } from '@/lib/josa';
-import { MAX_TEXT_ANSWER, hashString, normalizeAnswer, wordKey } from '@/lib/text';
+import { MAX_TEXT_ANSWER, NAME_RE, cleanName, hashString, normalizeAnswer, wordKey } from '@/lib/text';
 import { clozeOf } from './generate';
 import { GRAMMAR_TABS, TEMPLATE_EXAMPLE_ROWS, grammarItem, isTemplateExample } from './grammar';
 
@@ -474,13 +474,19 @@ function parseRoster(data: Cell[][], issues: ImportIssue[]) {
       issues.push({ level: 'warning', sheet, row: i + 2, message: '반, 번호, 이름 중 비어 있는 칸이 있어 건너뛰었어요.' });
       return;
     }
+    // The same names a phone can register with, or the row could never be matched to its student.
+    const clean = cleanName(name);
+    if (!NAME_RE.test(clean)) {
+      issues.push({ level: 'warning', sheet, row: i + 2, message: `이름은 한글이나 영어로 20자까지 쓸 수 있어 건너뛰었어요 (${name}).` });
+      return;
+    }
     const key = `${className}:${num}`;
     if (seen.has(key)) {
       issues.push({ level: 'warning', sheet, row: i + 2, message: `${className} ${num}번이 ${seen.get(key)}행에도 있어서 건너뛰었어요.` });
       return;
     }
     seen.set(key, i + 2);
-    out.push({ className: className.slice(0, 20), number: num, name });
+    out.push({ className: className.slice(0, 20), number: num, name: clean });
   });
   return out;
 }

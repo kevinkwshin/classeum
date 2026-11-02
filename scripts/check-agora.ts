@@ -143,6 +143,8 @@ async function run(teacher: Stream, display: Stream) {
   const again = await post({ type: 'roster', classId: A.id, text: '4 최아인\n가나다\n150 홍길동\n1 김하람' });
   check('같은 번호의 새 이름은 이름 바꿈으로, 못 읽은 줄은 그대로 돌려준다', again.added === 0 && again.renamed === 1 && JSON.stringify(again.skipped) === JSON.stringify(['가나다', '150 홍길동']), JSON.stringify(again));
   await post({ type: 'roster', classId: A.id, text: '4 최아린' });
+  const unmatchable = await post({ type: 'roster', classId: A.id, text: '9 김하람2' });
+  check('폰에서 쓸 수 없는 이름(숫자가 섞인)은 명단에 넣지 않고 칸에 돌려준다', unmatchable.added === 0 && JSON.stringify(unmatchable.skipped) === JSON.stringify(['9 김하람2']), JSON.stringify(unmatchable));
   await post({ type: 'roster', classId: B.id, text: '7 정서윤' });
   const phone = (cls: Phone['cls'], number: number, name: string): Phone => {
     const token = randomBytes(24).toString('hex');
@@ -515,7 +517,10 @@ async function run(teacher: Stream, display: Stream) {
   check('끝 뒤에는 다음이 없다', display.view.agora?.phase === 'end');
 
   section('닫기와 다시 열기');
-  check('선생님이 아고라를 닫는다', (await post({ type: 'agora-end' })).ok);
+  await post({ type: 'agora-end', id: 'an-older-lesson' });
+  await sleep(200);
+  check('다른(지난) 아고라 수업을 가리키는 [아고라 닫기]는 아무것도 닫지 않는다', display.view.agora?.phase === 'end' && teacher.view.agora.live !== null);
+  check('선생님이 아고라를 닫는다', (await post({ type: 'agora-end', id: teacher.view.agora.live?.id })).ok);
   await sleep(200);
   check('닫음: 프로젝터와 기기는 처음 화면으로', !display.view.agora && phones.every((p) => !p.s.view.agora) && teacher.view.agora.live === null);
   const closedA = await classAnswers(agoraId, A.id);
@@ -889,9 +894,13 @@ async function run(teacher: Stream, display: Stream) {
   await post({ type: 'control', action: 'start' });
   await sleep(500);
   check('퀴즈가 진행 중이면 닫기를 거절한다(결과를 잃지 않게)', !!(await post({ type: 'close-session', id: arenaId })).error?.includes('진행 중') && teacher.view.live?.id === arenaId);
-  await post({ type: 'control', action: 'end' });
+  await post({ type: 'control', action: 'end', id: 'an-older-arena' });
+  await sleep(300);
+  check('다른(지난) 아레나를 가리키는 [끝내기]는 진행 중인 퀴즈를 끝내지 않는다', teacher.view.live?.id === arenaId && teacher.view.live.phase !== 'summary');
+  await post({ type: 'control', action: 'end', id: arenaId });
   await sleep(500);
   const summaryUp = teacher.view.live?.phase === 'summary';
+
   const closed = (await post({ type: 'close-session', id: arenaId })).ok;
   await sleep(200);
   check('결과 화면은 [아레나 닫기]로 닫힌다', summaryUp && closed && !teacher.view.live);

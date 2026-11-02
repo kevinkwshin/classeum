@@ -60,6 +60,13 @@ export function computeStats(classId?: string): { students: StudentStats[]; ques
   }
   const rewardsOf = new Map<string, number>();
   for (const r of d.rewards) rewardsOf.set(r.studentId, (rewardsOf.get(r.studentId) ?? 0) + 1);
+  // The quizzes 성장 measures against, as hub.ts finish() counts them: every one the student was judged in (there for at
+  // least half of a quiz that ran at least half way), whatever class it was in. The average is theirs, so the screen
+  // and the reward never disagree; each quiz still shows on its own.
+  const judgedOf = new Map<string, number[]>();
+  for (const ses of d.sessions) {
+    for (const p of ses.perStudent) if (p.judged && p.connected > 0) judgedOf.set(p.studentId, [...(judgedOf.get(p.studentId) ?? []), p.correct / p.connected]);
+  }
   const students: StudentStats[] = Object.values(d.students)
     .filter((s) => !classId || s.classId === classId)
     .sort((a, b) => compareNames(d.classes[a.classId]?.name ?? '', d.classes[b.classId]?.name ?? '') || a.number - b.number)
@@ -74,7 +81,7 @@ export function computeStats(classId?: string): { students: StudentStats[]; ques
           accuracy: p && p.connected > 0 ? p.correct / p.connected : null,
         };
       });
-      const accs = perSession.map((x) => x.accuracy).filter((x): x is number => x !== null);
+      const accs = judgedOf.get(s.id) ?? [];
       const mine = answersOf.get(s.id) ?? [];
       const missCount = new Map<string, number>();
       const firstWrong = new Map<string, number>();

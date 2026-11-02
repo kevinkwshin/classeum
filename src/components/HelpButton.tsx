@@ -28,7 +28,7 @@ const ARENA_KEYS: [string, string][] = [
   ['F', '전체 화면 (프로젝터)'],
 ];
 const AGORA_KEYS: [string, string][] = [
-  ['Enter', '큰 버튼'],
+  ['Enter', '시작·마감·공개·다음 주제'],
   ['← →', '쪽 넘기기'],
   ['↑ ↓', '1분 더·덜'],
   ['S', '건너뛰기'],

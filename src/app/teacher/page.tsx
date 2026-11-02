@@ -909,7 +909,7 @@ function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: {
   useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, plays.now);
   useCountdownTick(live.phase === 'moving' ? live.phaseEndsAt : null, serverNow, live.sound, plays.now);
   useSoundPreview(live.sound, plays.now, live.id);
-  usePrizeSound(live.phase === 'lobby' ? (live.reward?.revealAt ?? 0) : 0, serverNow, live.sound, plays.now);
+  usePrizeSound(live.phase === 'lobby' ? (live.reward?.revealAt ?? 0) : 0, serverNow, live.sound && !live.howto, plays.now);
   useBackgroundMusic(live.music && plays.on ? musicLevel(live.phase, live.blank, live.paused) : 0);
   return null;
 }
@@ -918,7 +918,7 @@ function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: {
 function AgoraSounds({ live, plays, dictation, serverNow }: { live: TeacherAgoraLive; plays: { now: () => boolean; on: boolean }; dictation: boolean; serverNow: () => number }) {
   useBackgroundMusic(live.music && plays.on ? agoraMusicLevel(live.phase, live.reveal, dictation) : 0, AGORA_MUSIC_SRC);
   usePraiseSound(live.praisedAt, true, plays.now);
-  usePrizeSound(live.phase === 'lobby' ? live.reward.revealAt : 0, serverNow, true, plays.now);
+  usePrizeSound(live.phase === 'lobby' ? live.reward.revealAt : 0, serverNow, !live.howto, plays.now);
   return null;
 }
 
@@ -930,7 +930,8 @@ function toward(label: string): string {
 }
 
 function Console({ view, live, act, serverNow }: { view: TeacherView; live: TeacherLive; act: Send; serverNow: () => number }) {
-  const control = useCallback((action: string) => act({ type: 'control', action }).catch(() => undefined), [act]);
+  // Each control names this arena, so a click arriving after it closed and another opened changes nothing.
+  const control = useCallback((action: string) => act({ type: 'control', action, id: live.id }).catch(() => undefined), [act, live.id]);
   // 다음 유형 passes over the rest of a type in one go, so it asks first (the button and Shift+S alike). The quiz is
   // held while the dialog is open, so it can't move on to another type underneath.
   const skipSection = useCallback(() => {
@@ -1458,7 +1459,7 @@ function Students({ view, act, onWrite }: { view: TeacherView; act: Send; onWrit
               {rosterNote?.classId === classId && (
                 <p className="text-sm font-semibold text-good">
                   {rosterNote.done}
-                  {rosterNote.skipped > 0 && <span className="mt-0.5 block font-semibold text-bad">못 읽은 줄 {rosterNote.skipped}개는 위에 남겨 뒀어요. ‘번호 이름’으로 고쳐 주세요.</span>}
+                  {rosterNote.skipped > 0 && <span className="mt-0.5 block font-semibold text-bad">못 읽은 줄 {rosterNote.skipped}개는 위에 남겨 뒀어요. ‘번호 이름’으로 고쳐 주세요(이름은 한글이나 영어로 20자까지).</span>}
                 </p>
               )}
             </Card>
@@ -1924,7 +1925,8 @@ function AgoraDetail({ view, agora, act, onStudents, onEdit }: { view: TeacherVi
     .sort((x, y) => byNumber(x.s, y.s));
   const lesson = shownClass ? (agora.lessons[shownClass.id] ?? null) : null;
   const remove = () => {
-    const extra = total ? `\n학생 답 ${total}개도 함께 지워지고 되돌릴 수 없어요.` : '';
+    // Unlike a played arena event, an 아고라's records go with it: say so, 통계 included.
+    const extra = total ? `\n학생 답 ${total}개도 함께 지워져 아고라 통계와 받아쓰기 엑셀에서도 빠지고, 되돌릴 수 없어요.` : '';
     if (confirm(`이 아고라를 지울까요?${extra}`)) act({ type: 'agora-delete', agoraId: agora.id }).catch(() => undefined);
   };
   // The projector window opens first, inside the click: Safari blocks one opened after the await. An arena still open
@@ -2232,9 +2234,9 @@ function AgoraLobby({ view, live, act, serverNow }: { view: TeacherView; live: T
             {live.howto && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-accent align-middle" />}
             놀이 방법
           </Btn>
-          <Btn kind="ghost" onClick={() => act({ type: 'agora-end' }).catch(() => undefined)}>대기실 닫기</Btn>
+          <Btn kind="ghost" onClick={() => act({ type: 'agora-end', id: live.id }).catch(() => undefined)}>대기실 닫기</Btn>
           {/* With nobody in, a lesson asks first, as the arena does; 다시 보기 shows last time's answers, so it doesn't. */}
-          <Btn kind="accent" disabled={drawing} title={drawing ? '보상을 뽑는 중이에요' : undefined} onClick={() => { if (review || joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) act({ type: 'agora-start' }).catch(() => undefined); }} className="px-6">
+          <Btn kind="accent" disabled={drawing} title={drawing ? '보상을 뽑는 중이에요' : undefined} onClick={() => { if (review || joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) act({ type: 'agora-start', id: live.id }).catch(() => undefined); }} className="px-6">
             {review ? '함께 보기' : '쓰기 시작'}
           </Btn>
         </div>
@@ -2346,8 +2348,8 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
       ? `아직 받아쓰기 중이에요. [지금 마감] 없이 닫으면 낸 학생 ${unclosed}명의 답이 '중단'으로 남아 결과에서 빠져요. 그래도 닫을까요?`
       : '아직 쓰는 중이에요. 아고라를 닫으면 쓰기도 끝나요. 닫을까요?';
     if (live.phase === 'writing' && !confirm(ask)) return;
-    send({ type: 'agora-end' });
-  }, [live.phase, unclosed, send]);
+    send({ type: 'agora-end', id: live.id });
+  }, [live.phase, live.id, unclosed, send]);
   const skip = useCallback(() => {
     const ask = unclosed
       ? `아직 받아쓰기 중이에요. [지금 마감] 없이 넘어가면 낸 학생 ${unclosed}명의 답이 '중단'으로 남아 결과에서 빠져요. 그래도 넘어갈까요?`
@@ -2371,16 +2373,16 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   }, [step]);
   const primary = useCallback(() => {
     if (Date.now() - stepAt.current < STEP_GUARD_MS) return;
-    if (step === 'start') send({ type: 'agora-start' });
+    if (step === 'start') send({ type: 'agora-start', id: live.id });
     else if (step === 'close') {
       if (stillReviewing && !confirm(`${stillReviewing} 학생은 아직 오답 정리 중이에요. 지금 마감할까요?`)) return;
-      send({ type: 'agora-close' });
+      send({ type: 'agora-close', id: live.id });
     }
     else if (step === 'reveal') send({ type: 'agora-reveal', public: true, index: live.index });
     else if (step === 'page') send({ type: 'agora-page', dir: 1, from: live.page });
     else if (step === 'next' || step === 'finish') send({ type: 'agora-next', index: live.index });
     else end();
-  }, [step, send, end, live.page, live.index, stillReviewing]);
+  }, [step, send, end, live.page, live.index, live.id, stillReviewing]);
   useTicker(writing && !!live.timer, 250);
   // A sent '다시 생각해 봐' reads 보냄 for a few seconds.
   useTicker(Object.values(live.nudges).some((at) => at > serverNow() - 4000), 500);
@@ -2488,7 +2490,8 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
               <div className="flex items-center justify-between text-sm font-semibold text-ink-3">
                 <span>프로젝터</span>
                 <span className="font-bold text-ink">{live.phase === 'ready' ? (dictation ? '준비' : '준비 · 주제를 읽어 줘요') : dictation ? (isPublic ? '정답 공개' : '정답 숨김') : isPublic ? '전체 공개' : '비공개'}</span>
-                <span className={`flex items-center gap-1.5 ${dictation ? 'invisible' : ''}`}>
+                {/* A 받아쓰기's cards only say who wrote, but a big class can still fill two pages. */}
+                <span className={`flex items-center gap-1.5 ${dictation && live.pages <= 1 ? 'invisible' : ''}`}>
                   {/* 28px, the height of the arena's question here, so the preview starts where the arena's does. */}
                   <button type="button" aria-label="이전 쪽" disabled={live.page === 0} onClick={() => send({ type: 'agora-page', dir: -1, from: live.page })} className="h-7 w-7 rounded-full border border-[#D5D8DF] bg-white text-xs font-bold text-ink disabled:opacity-30">◀</button>
                   <span className="tabular w-12 text-center font-bold text-ink">{live.page + 1} / {live.pages}</span>
@@ -2708,7 +2711,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
               )}
               {!dictation && (writing || live.phase === 'closed') && step !== 'reveal' && <Btn kind="ghost" onClick={() => send({ type: 'agora-reveal', public: !isPublic, index: live.index })}>{isPublic ? '전체 비공개' : '전체 공개'}</Btn>}
               {/* 다시 보기: this topic's writing opens again, each phone starting from its own answer. */}
-              {review && live.phase === 'closed' && <Btn kind="ghost" onClick={() => send({ type: 'agora-rewrite' })}>다시 쓰기</Btn>}
+              {review && live.phase === 'closed' && <Btn kind="ghost" onClick={() => send({ type: 'agora-rewrite', id: live.id })}>다시 쓰기</Btn>}
               <Btn kind="ghost" disabled={!canSkip} title={canSkip ? undefined : '넘어갈 다음 주제가 없어요'} onClick={skip}>건너뛰기 <span className="text-xs text-ink-3">S</span></Btn>
             </>
           )}
@@ -3044,7 +3047,7 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
                 <col className="w-22" />
                 <col className="w-20" />
               </colgroup>
-              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>출석</th><th className="text-right">평균</th><th className="text-right">최근</th><th className="text-center">최근 5회</th><th className="pr-4 text-right">자주 틀림</th></tr></thead>
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>출석</th><th className="text-right" title="성장 보상의 기준과 같아요: 절반 넘게 푼 퀴즈만">평균</th><th className="text-right">최근</th><th className="text-center">최근 5회</th><th className="pr-4 text-right">자주 틀림</th></tr></thead>
               <tbody>
                 {students.map((s) => {
                   const recent = s.sessions.slice(-5);
@@ -3068,7 +3071,7 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
               <Card className="flex flex-wrap items-center gap-x-6 gap-y-3">
                 <div className="min-w-0 flex-1 truncate whitespace-nowrap text-2xl font-bold" title={student.name}>{student.number} {student.name}</div>
                 <div className="flex shrink-0 gap-3">
-                  <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">평균 정답률</div><div className="tabular text-2xl font-extrabold">{pct(student.average)}</div></div>
+                  <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2" title="성장 보상의 기준과 같아요: 절반 넘게 푼 퀴즈만"><div className="text-xs font-bold text-ink-3">평균 정답률</div><div className="tabular text-2xl font-extrabold">{pct(student.average)}</div></div>
                   <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">출석</div><div className="tabular text-2xl font-extrabold">{student.attendance}</div></div>
                   <div className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">받은 보상</div><div className="tabular text-2xl font-extrabold">{student.rewards}</div></div>
                 </div>

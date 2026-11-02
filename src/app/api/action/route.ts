@@ -13,6 +13,9 @@ const TEACHER_ACTIONS = new Set([
 /** Largest request: an 아고라 of ten topics, each with the longest question and 보조 설명 in Hangul, fits. */
 const BODY_MAX = 32_000;
 
+/** The lesson a click names (the id its screen showed), or undefined from a screen that sends none. */
+const lesson = (id: unknown): string | undefined => (id === undefined ? undefined : String(id));
+
 export async function POST(request: NextRequest) {
   // A JSON content type forces a CORS preflight, which this server never approves.
   if (!request.headers.get('content-type')?.startsWith('application/json')) {
@@ -101,8 +104,9 @@ export async function POST(request: NextRequest) {
         case 'draw-reward':
           h.drawReward(String(body.id ?? ''), Number(body.seq));
           break;
+        // Lesson controls carry the lesson the screen showed (id), so a late click can't reach the next lesson.
         case 'control':
-          h.control(String(body.action));
+          h.control(String(body.action), lesson(body.id));
           break;
         case 'agora-add':
           return Response.json({ ok: true, agoraId: h.saveAgora(null, body) });
@@ -122,19 +126,19 @@ export async function POST(request: NextRequest) {
           h.agoraHowto();
           break;
         case 'agora-start':
-          h.startAgora();
+          h.startAgora(lesson(body.id));
           break;
         case 'agora-rewrite':
-          h.rewriteAgora();
+          h.rewriteAgora(lesson(body.id));
           break;
         case 'agora-next':
           h.nextAgoraTopic(Number.isInteger(body.index) ? Number(body.index) : undefined);
           break;
         case 'agora-close':
-          h.closeAgora();
+          h.closeAgora(lesson(body.id));
           break;
         case 'agora-end':
-          h.endAgora();
+          h.endAgora(lesson(body.id));
           break;
         case 'agora-time':
           h.adjustAgoraTime(Number(body.minutes));

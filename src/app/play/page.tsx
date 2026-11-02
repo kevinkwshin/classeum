@@ -11,7 +11,7 @@ import { PracticeCard } from '@/components/PracticeCard';
 import { PrizeFace, prizeName, prizeStage } from '@/components/PrizeDraw';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
-import { MAX_TEXT_ANSWER } from '@/lib/text';
+import { MAX_TEXT_ANSWER, NAME_RE, cleanName } from '@/lib/text';
 import { ANSWER_MAX } from '@/lib/agora';
 import { gradeDictation, type DictationWord } from '@/lib/dictation';
 import { josa } from '@/lib/josa';
@@ -93,7 +93,9 @@ export default function PlayPage() {
     // An 아고라 being written gets the width of a tablet; everything else, its 대기실 too, stays phone-sized.
     <Screen wide={!!view.agora && (view.agora.phase === 'writing' || view.agora.phase === 'closed') && !view.session}>
       {conn === 'lost' && !view.refused && <div className="fixed inset-x-0 top-0 z-50 bg-bad py-2 text-center text-sm font-bold text-white">연결이 끊겼어요 · 다시 연결 중</div>}
-      <Router view={view} send={send} serverNow={serverNow} conn={conn} />
+      {/* A new student on this phone (registered again for someone else) starts clean: no notes, results or drafts
+          left open from the one before. */}
+      <Router key={view.me?.id ?? 'unregistered'} view={view} send={send} serverNow={serverNow} conn={conn} />
     </Screen>
   );
 }
@@ -103,21 +105,22 @@ type Send = (a: Record<string, unknown>) => Promise<unknown>;
 const PRAISE_SEEN_KEY = 'classeum.praiseSeen';
 
 // The 아고라 answer typed on this phone and not sent yet: a reload (or the phone dropping the page) brings it back while
-// that topic is open for writing. Kept a few hours, one topic at a time; never sent or counted until 제출.
+// that topic is open for writing. Kept a few hours, one topic at a time, for the student who typed it (a phone set up
+// again for another student never shows it); never sent or counted until 제출.
 const ANSWER_DRAFT_KEY = 'classeum.answerDraft';
 const ANSWER_DRAFT_MS = 3 * 60 * 60_000;
-function readAnswerDraft(topicId: string): string | null {
+function readAnswerDraft(studentId: string, topicId: string): string | null {
   try {
-    const d = JSON.parse(localStorage.getItem(ANSWER_DRAFT_KEY) ?? 'null') as { topicId?: string; text?: string; at?: number } | null;
-    return d && d.topicId === topicId && typeof d.text === 'string' && Date.now() - (d.at ?? 0) < ANSWER_DRAFT_MS ? d.text : null;
+    const d = JSON.parse(localStorage.getItem(ANSWER_DRAFT_KEY) ?? 'null') as { studentId?: string; topicId?: string; text?: string; at?: number } | null;
+    return d && d.studentId === studentId && d.topicId === topicId && typeof d.text === 'string' && Date.now() - (d.at ?? 0) < ANSWER_DRAFT_MS ? d.text : null;
   } catch {
     return null;
   }
 }
-function keepAnswerDraft(topicId: string, text: string | null) {
+function keepAnswerDraft(studentId: string, topicId: string, text: string | null) {
   try {
     if (text === null) localStorage.removeItem(ANSWER_DRAFT_KEY);
-    else localStorage.setItem(ANSWER_DRAFT_KEY, JSON.stringify({ topicId, text, at: Date.now() }));
+    else localStorage.setItem(ANSWER_DRAFT_KEY, JSON.stringify({ studentId, topicId, text, at: Date.now() }));
   } catch {
     // A private window: the draft just isn't kept.
   }
@@ -311,12 +314,12 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
   useTicker(!!a.timer, 500);
   const saved = a.mine?.text ?? null;
   // An unsent draft on this phone comes back first (after a reload), else my answer as it is now.
-  const [value, setValue] = useState(() => (open ? readAnswerDraft(a.topic.id) : null) ?? saved ?? '');
+  const [value, setValue] = useState(() => (open ? readAnswerDraft(me.id, a.topic.id) : null) ?? saved ?? '');
   // Writing opening again (다시 쓰기) starts the box the same way.
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) setValue(readAnswerDraft(a.topic.id) ?? saved ?? '');
+    if (open) setValue(readAnswerDraft(me.id, a.topic.id) ?? saved ?? '');
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -399,7 +402,7 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
               className="flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value }, () => keepAnswerDraft(a.topic.id, null));
+                if (typed && !busy && typed !== saved) write({ type: 'agora-answer', text: value }, () => keepAnswerDraft(me.id, a.topic.id, null));
               }}
             >
               <textarea
@@ -408,7 +411,7 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
                   const next = e.target.value;
                   setValue(next);
                   setError('');
-                  keepAnswerDraft(a.topic.id, next.trim() && next !== saved ? next : null);
+                  keepAnswerDraft(me.id, a.topic.id, next.trim() && next !== saved ? next : null);
                 }}
                 maxLength={ANSWER_MAX}
                 rows={dictation ? 3 : 4}
@@ -426,7 +429,7 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
                 {saved !== null && !review && !a.mine?.kept && (
                   <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => {
                     setValue('');
-                    keepAnswerDraft(a.topic.id, null);
+                    keepAnswerDraft(me.id, a.topic.id, null);
                   })} className="font-bold text-ink-3 underline underline-offset-4">
                     내 답 지우기
                   </button>
@@ -650,9 +653,6 @@ function AgoraCountdown({ timer, now }: { timer: NonNullable<StudentAgora['timer
 
 // ---------- registration ----------
 
-// Same rule as the server: Hangul or Latin letters, spaces, '·', '.', '-'; at most 20.
-const NAME_RE = /^[가-힣A-Za-z][가-힣A-Za-z .·-]{0,19}$/;
-const cleanName = (raw: string) => raw.normalize('NFC').trim().replace(/\s+/g, ' ');
 
 /** First visit: the student writes 반, 번호 and 이름; the teacher approves with a matching symbol. */
 function Register({ view, send }: { view: StudentView; send: Send }) {
@@ -719,7 +719,7 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
         ? '번호는 1~99로 써 주세요'
         : !cleaned
           ? '이름을 써 주세요'
-          : /[^가-힣ㄱ-ㅎㅏ-ㅣA-Za-z .·-]/.test(cleaned)
+          : !NAME_RE.test(cleaned) && !/[ㄱ-ㅎㅏ-ㅣ]/.test(cleaned)
             ? '이름은 한글이나 영어로 써 주세요'
             : '';
   return (

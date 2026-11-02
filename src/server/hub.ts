@@ -4,7 +4,7 @@ import { createHash, randomInt } from 'node:crypto';
 import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, GrammarItem, GrammarTab, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, RANDOM_REWARD, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
-import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
+import { cleanName, hashString, MAX_TEXT_ANSWER, mulberry32, NAME_RE, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { zoneOf } from '@/lib/field';
 import { db, flush, newId, save, saveTrouble, watchSaves, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec, type AgoraRec, type TopicRec } from './store';
 import { generateEvent, spreadAnswers } from './generate';
@@ -190,13 +190,6 @@ interface Draft {
   typed?: boolean;
 }
 
-/** Names as students type them: Hangul or Latin letters, spaces, '·', '.', '-'; at most 20. */
-const NAME_RE = /^[가-힣A-Za-z][가-힣A-Za-z .·-]{0,19}$/;
-
-export function cleanName(raw: string): string {
-  return raw.normalize('NFC').trim().replace(/\s+/g, ' ');
-}
-
 /** 김 하윤 and 김하윤 are the same name when matching a registration to the roster. */
 function nameKey(name: string): string {
   return cleanName(name).replace(/\s/g, '').toLowerCase();
@@ -267,6 +260,12 @@ class Hub {
   clients = new Set<Client>();
   /** Last heartbeat per student stream. Pages from before heartbeats never send one, so they are never swept. */
   private beats = new WeakMap<Client, number>();
+  /**
+   * Unregistered phones' streams that haven't sent a heartbeat yet, timed from when they opened. One still unregistered
+   * and silent after the heartbeat timeout is swept like one that stopped beating, so a stuck page (or a script)
+   * can't hold a place in the limit on new phones (admitStudent) for good.
+   */
+  private silent = new WeakSet<Client>();
   private sweeper: NodeJS.Timeout | null = null;
   /** When each pending request's phone was last seen waiting, for expireRequests. */
   private requestSeen = new Map<string, number>();
@@ -345,6 +344,11 @@ class Hub {
       }
     }
     this.clients.add(c);
+    if (c.role === 'student' && !(c.tokenHash && db().devices[c.tokenHash])) {
+      this.beats.set(c, Date.now());
+      this.silent.add(c);
+      this.sweeper ??= setInterval(() => this.sweep(), SWEEP_MS).unref();
+    }
     const sid = c.tokenHash ? db().devices[c.tokenHash]?.studentId : undefined;
     const joinedBefore = sid ? !!this.live?.joined.has(sid) : true;
     // A student of the open 아고라's class comes in: the 대기실 and the classmates' phones show them too.
@@ -388,6 +392,7 @@ class Hub {
     for (const c of this.clients) {
       if (c.streamId !== streamId || c.tokenHash !== tokenHash) continue;
       this.beats.set(c, now);
+      this.silent.delete(c);
       if (reviewing === undefined || n === undefined || n <= (c.beatN ?? -1)) continue;
       c.beatN = n;
       if (c.reviewing === reviewing) continue;
@@ -416,6 +421,8 @@ class Hub {
     for (const c of [...this.clients]) {
       const at = this.beats.get(c);
       if (at === undefined || at >= cutoff) continue;
+      // Registered since it opened: an older page that never beats, kept as before.
+      if (this.silent.has(c) && c.tokenHash && db().devices[c.tokenHash]) continue;
       this.removeClient(c);
       c.close?.();
     }
@@ -1128,7 +1135,12 @@ class Hub {
         continue;
       }
       const number = Number(m[1]);
-      const name = m[2].trim();
+      const name = cleanName(m[2]);
+      // A name its student couldn't type on the phone could never be matched: kept in the box to fix, like a bad line.
+      if (!NAME_RE.test(name)) {
+        skipped.push(line.trim());
+        continue;
+      }
       const existing = byNumber.get(number);
       if (existing) {
         if (rename && existing.name !== name) {
@@ -1296,9 +1308,11 @@ class Hub {
 
   /**
    * [쓰기 시작]: the first topic from the 대기실, a later one from its 준비. In 다시 보기, [함께 보기] instead puts up the
-   * class's answers to the first topic, hidden. Leaving the 대기실, everyone in gets the day's footprint.
+   * class's answers to the first topic, hidden. Leaving the 대기실, everyone in gets the day's footprint. `from` is the
+   * lesson the teacher's screen showed (as for the controls below): one from an older screen changes nothing.
    */
-  startAgora() {
+  startAgora(from?: string) {
+    if (!this.agoraLessonIs(from)) return;
     const live = this.agoraLive;
     const now = this.agoraNow();
     if (!live || !now) return;
@@ -1327,7 +1341,8 @@ class Hub {
    * [다시 쓰기] in 다시 보기: the topic up opens for writing again, each phone starting from its own answer. A 받아쓰기 is
    * listened to and written again, so a sentence shown by [정답 공개] goes back under cover until the next one.
    */
-  rewriteAgora() {
+  rewriteAgora(from?: string) {
+    if (!this.agoraLessonIs(from)) return;
     const live = this.agoraLive;
     const now = this.agoraNow();
     if (!live || !now || live.review === null || live.phase !== 'closed') return;
@@ -1351,7 +1366,8 @@ class Hub {
    * [지금 마감], or the end of the 입력 시간: no more writing or changing. The answers stay up to be shown and talked
    * about; a 받아쓰기's are kept as they stand, for its statistics.
    */
-  closeAgora() {
+  closeAgora(from?: string) {
+    if (!this.agoraLessonIs(from)) return;
     const live = this.agoraLive;
     if (!live || live.phase !== 'writing') return;
     this.stopTimer();
@@ -1392,10 +1408,20 @@ class Hub {
   }
 
   /** [아고라 닫기], or [대기실 닫기]: the projector goes back to its QR and the phones to their home screen. */
-  endAgora() {
+  endAgora(from?: string) {
+    if (!this.agoraLessonIs(from)) return;
     this.clearAgora();
     save();
     this.schedulePush(true);
+  }
+
+  /**
+   * Whether a click names the 아고라 lesson open now. `from` is the lesson the teacher's screen showed; a click without
+   * one (an older screen, a script) is taken as before, but one naming an older lesson, arriving late after the teacher
+   * closed it and opened another, does nothing.
+   */
+  private agoraLessonIs(from: string | undefined): boolean {
+    return from === undefined || from === this.agoraLive?.id;
   }
 
   private clearAgora() {
@@ -2454,9 +2480,10 @@ class Hub {
 
   // ---------- teacher controls ----------
 
-  control(action: string) {
+  /** The arena's controls. `from` is the arena the screen showed: one from an older screen, arriving late, does nothing. */
+  control(action: string, from?: string) {
     const live = this.live;
-    if (!live) return;
+    if (!live || (from !== undefined && from !== live.id)) return;
     const now = Date.now();
     // 오늘 낼 문제 in the lobby: 'section:words', 'section:고르기', …; the last type in can't be left out.
     // 'skip-section:<type>' carries the type the teacher confirmed.
