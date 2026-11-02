@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Phase, RevealInfo } from '@/lib/types';
 import type { AgoraPhase, TopicReveal } from '@/lib/agora';
-import { AGORA_MUSIC_FULL, AGORA_MUSIC_SOFT, MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playApplause, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
+import { AGORA_MUSIC_FULL, AGORA_MUSIC_SOFT, MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playApplause, playCheer, playCrickets, playPop, playTickTock, setMusic, unlockAudio } from './sound';
 
 const CHANNEL = 'classeum-sound';
 // One function for every render: a fresh `() => true` default would re-run the sound effects on each re-render
@@ -121,6 +121,19 @@ export function usePraiseSound(praisedAt: number, on: boolean, canPlay: () => bo
     seen.current = praisedAt;
     if (on && praisedAt > 0 && canPlay()) playApplause();
   }, [praisedAt, on, canPlay]);
+}
+
+/**
+ * 오늘의 보상's 펑, the moment the drawn item pops out of the projector's capsule machine (`revealAt`, server clock;
+ * 0 outside a 대기실). Only for a draw this window saw playing: one already done when the page opened stays quiet.
+ */
+export function usePrizeSound(revealAt: number, serverNow: () => number, on: boolean, canPlay: () => boolean = always) {
+  useEffect(() => {
+    const wait = revealAt - serverNow();
+    if (!on || wait <= 0) return;
+    const t = setTimeout(() => canPlay() && playPop(), wait);
+    return () => clearTimeout(t);
+  }, [revealAt, serverNow, on, canPlay]);
 }
 
 /**

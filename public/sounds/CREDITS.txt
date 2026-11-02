@@ -25,6 +25,13 @@ applause.wav
   Changed: 5 seconds from the first claps (0.54 s to 5.54 s) cut from freesound's MP3 preview, a 15 ms fade in
   and a 1 s fade out, evened out in level (a few of the loudest claps softly rounded off); 44.1 kHz stereo WAV.
 
+pop.wav
+  "Pop sound" by deraj
+  https://freesound.org/s/202230/
+  License: CC0 1.0 (public domain)
+  Changed: cut from freesound's MP3 preview to the pop itself (0.192 s to 0.422 s), a 2 ms fade in and a 60 ms
+  fade out, louder (peaks at 0.8); 44.1 kHz mono WAV.
+
 music.mp3
   "오늘은 내가 정해" (Today I Decide), made for Classeum by the teacher with Suno (https://suno.com), 2026-10-26.
   Changed: the MP3's tags (lyrics, cover art, Suno ids) removed; the audio is untouched.

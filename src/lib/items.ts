@@ -185,7 +185,7 @@ export const QUIZ_REWARD_ITEMS = ITEMS.filter((i) => !ATTENDANCE_UNLOCKS.include
 /** The reward set to 무작위: each lesson draws its item from QUIZ_REWARD_ITEMS (src/server/prize.ts). */
 export const RANDOM_REWARD = 'random';
 
-/** How long the projector's draw plays before the item pops out: the capsules rattling, names flicking past. */
+/** How long the projector's draw plays before the item pops out with a 펑: the capsules rattling, names flicking past. */
 export const PRIZE_SHOW_MS = 2400;
 
 export function itemById(id: string): ItemDef | undefined {

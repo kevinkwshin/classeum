@@ -6,7 +6,7 @@ import type { PrizeDraw, TeacherAgora, TeacherAgoraLive, TeacherAnswer, TeacherE
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { AGORA_MUSIC_SRC, AGORA_MUSIC_TITLE, MUSIC_TITLE } from '@/client/sound';
-import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, usePraiseSound, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
+import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCountdownTick, usePraiseSound, usePrizeSound, useRevealSound, useSoundPreview, useTeacherPlaysSound } from '@/client/revealSound';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
@@ -149,7 +149,7 @@ function TeacherApp() {
           </div>
         )}
         {view.live && <TeacherSounds live={view.live} plays={plays} serverNow={serverNow} />}
-        {!view.live && agoraLive && <AgoraSounds live={agoraLive} plays={plays} dictation={view.agora.agoras.find((a) => a.id === agoraLive.agoraId)?.topics[agoraLive.index]?.dictation != null} />}
+        {!view.live && agoraLive && <AgoraSounds live={agoraLive} plays={plays} dictation={view.agora.agoras.find((a) => a.id === agoraLive.agoraId)?.topics[agoraLive.index]?.dictation != null} serverNow={serverNow} />}
         {/* A quiz started from another window shows the console whatever tab this one was on (the menu is hidden then). */}
         {agoraRunning && <AgoraConsole view={view} live={agoraLive} act={act} serverNow={serverNow} />}
         {(tab === 'arena' || (running && !agoraRunning)) &&
@@ -898,14 +898,16 @@ function TeacherSounds({ live, plays, serverNow }: { live: TeacherLive; plays: {
   useRevealSound(live.question?.seq ?? -1, live.phase === 'reveal' ? live.reveal : null, live.sound, plays.now);
   useCountdownTick(live.phase === 'moving' ? live.phaseEndsAt : null, serverNow, live.sound, plays.now);
   useSoundPreview(live.sound, plays.now, live.id);
+  usePrizeSound(live.phase === 'lobby' ? (live.reward?.revealAt ?? 0) : 0, serverNow, live.sound, plays.now);
   useBackgroundMusic(live.music && plays.on ? musicLevel(live.phase, live.blank, live.paused) : 0);
   return null;
 }
 
-/** The 아고라's song and the ⭐ applause from this screen while the projector can't play them, as TeacherSounds does for the arena's. */
-function AgoraSounds({ live, plays, dictation }: { live: TeacherAgoraLive; plays: { now: () => boolean; on: boolean }; dictation: boolean }) {
+/** The 아고라's song, the ⭐ applause and the draw's 펑 from this screen while the projector can't play them, as TeacherSounds does for the arena's. */
+function AgoraSounds({ live, plays, dictation, serverNow }: { live: TeacherAgoraLive; plays: { now: () => boolean; on: boolean }; dictation: boolean; serverNow: () => number }) {
   useBackgroundMusic(live.music && plays.on ? agoraMusicLevel(live.phase, live.reveal, dictation) : 0, AGORA_MUSIC_SRC);
   usePraiseSound(live.praisedAt, true, plays.now);
+  usePrizeSound(live.phase === 'lobby' ? live.reward.revealAt : 0, serverNow, true, plays.now);
   return null;
 }
 
