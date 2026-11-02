@@ -21,6 +21,49 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem A folder cloned with git gets the newest version before it starts. The records (.data) aren't in git, so they
+rem are never touched; offline, or with a file changed here that the update changes too, it starts as it is. The
+rem whole block is read before it runs, and after an update it starts this file again from the top, so a
+rem Classeum.bat the update itself changed never runs half old, half new. git goes through call in case it is a
+rem .cmd wrapper, which would otherwise end this script.
+if not defined CLASSEUM_UPDATED if exist .git (
+  set "CLASSEUM_UPDATED=1"
+  where git > nul 2> nul
+  if errorlevel 1 (
+    echo.
+    echo   git이 없어서 새 버전 확인은 건너뛰어요.
+  ) else (
+    echo.
+    echo   새 버전이 있는지 확인하는 중이에요...
+    rem No password prompt or sign-in window: a public repository needs none, and nothing may wait for a click here.
+    set "GIT_TERMINAL_PROMPT=0"
+    call git -c credential.helper= -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 fetch --quiet > nul 2> nul
+    if errorlevel 1 (
+      echo   새 버전을 확인하지 못해서 지금 버전으로 켤게요. 인터넷 연결을 확인해 보세요.
+    ) else (
+      call git merge-base --is-ancestor @{u} HEAD > nul 2> nul
+      if errorlevel 1 (
+        set "CLASSEUM_DEPS="
+        call git diff --quiet HEAD @{u} -- package.json package-lock.json > nul 2> nul
+        if errorlevel 1 set "CLASSEUM_DEPS=1"
+        call git merge --ff-only --quiet @{u} > nul 2> nul
+        if errorlevel 1 (
+          echo   새 버전을 받지 못해서 지금 버전으로 켤게요. 이 폴더의 파일을 직접 고쳤다면 그래요.
+        ) else (
+          echo   새 버전을 받았어요.
+          if defined CLASSEUM_DEPS if exist node_modules\.package-lock.json (
+            echo   필요한 파일이 바뀌어서 다시 받는 중이에요. 몇 분 걸릴 수 있어요.
+            call npm install
+          )
+          "%~f0" %*
+        )
+      ) else (
+        echo   최신 버전이에요.
+      )
+    )
+  )
+)
+
 rem npm writes this file only when an install finished, so a half-done first install is repeated.
 if not exist node_modules\.package-lock.json (
   echo.

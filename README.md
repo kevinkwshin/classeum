@@ -113,7 +113,7 @@
 
 ## 설치 (처음 한 번)
 
-- 이 폴더를 받아요. GitHub 페이지의 [Code → Download ZIP]으로 받아 압축을 풀거나 `git clone https://github.com/kevinkwshin/classeum.git`.
+- 이 폴더를 받아요. GitHub 페이지의 [Code → Download ZIP]으로 받아 압축을 풀거나 `git clone https://github.com/kevinkwshin/classeum.git`. 윈도우에서 git으로 받으면([Git for Windows](https://git-scm.com/download/win) 설치) `Classeum.bat`이 켤 때마다 새 버전을 저절로 받아요.
 - 폴더는 OneDrive·iCloud로 동기화되는 곳(바탕 화면·문서 폴더인 경우가 많아요) 말고 다른 곳에 두세요. 기록 파일을 문제마다 다시 써서 동기화 앱과 부딪혀요.
 - **Mac**: [nodejs.org](https://nodejs.org)에서 **LTS**를 설치하고, 터미널에서 이 폴더로 가서 `npm install`.
 - **윈도우**: [nodejs.org](https://nodejs.org)에서 **LTS**를 설치하고(기본값 그대로), 폴더의 **`Classeum.bat`을 더블클릭**하세요. 처음 한 번은 필요한 파일을 받느라 몇 분 걸리고, 바탕화면에 Classeum 아이콘 바로가기가 생겨요. 다음부터는 그걸 더블클릭하면 돼요. 바로가기가 없으면(이미 쓰던 폴더라면) `바로가기 만들기.bat`을 한 번 더블클릭하세요.
@@ -208,9 +208,9 @@
 
 ## 업데이트
 
-- git으로 받았다면 그 폴더에서 `git pull`. 기록이 든 `.data` 폴더는 git이 건드리지 않고, 예전 기록은 새 버전이 그대로 읽어요.
+- git으로 받았다면 윈도우의 `Classeum.bat`은 켤 때마다 새 버전이 있는지 보고 저절로 받아요. 인터넷이 안 되거나 이 폴더의 파일을 직접 고쳐 둔 게 겹치면 지금 버전으로 켜요. Mac은 그 폴더에서 `git pull`. 기록이 든 `.data` 폴더는 git이 건드리지 않고, 예전 기록은 새 버전이 그대로 읽어요.
 - 새 ZIP으로 받았다면 압축을 푼 새 폴더에 **예전 폴더의 `.data` 폴더를 통째로 복사**하세요. Mac Finder에서는 `.data`가 숨겨져 있어서 `Cmd+Shift+.`을 눌러야 보여요.
-- 업데이트한 뒤 처음 켤 때는 빌드하느라 조금 걸려요. 필요한 파일이 바뀌었으면 터미널이 `npm install`을 하라고 알려 줘요.
+- 업데이트한 뒤 처음 켤 때는 빌드하느라 조금 걸려요. 필요한 파일이 바뀌었으면 `Classeum.bat`이 받은 업데이트는 `npm install`까지 저절로 하고, 그 밖에는 터미널이 하라고 알려 줘요.
 - 업데이트가 됐는지는 선생님 화면 왼쪽 메뉴 맨 아래의 **최종 수정** 날짜로 알 수 있어요.
 
 ---
