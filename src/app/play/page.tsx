@@ -14,6 +14,7 @@ import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN
 import { MAX_TEXT_ANSWER } from '@/lib/text';
 import { ANSWER_MAX } from '@/lib/agora';
 import { gradeDictation, type DictationWord } from '@/lib/dictation';
+import { josa } from '@/lib/josa';
 import { zoneCenter, zoneOf } from '@/lib/field';
 import { ATTENDANCE_UNLOCKS, ITEMS, SLOTS, STAMPS_PER_UNLOCK, THEMES, attendanceStamps, itemById, previewLook } from '@/lib/items';
 import type { AvatarLook, AvatarSlot, FieldPoint, ItemTheme, Question, StudentSummary } from '@/lib/types';
@@ -657,9 +658,9 @@ const cleanName = (raw: string) => raw.normalize('NFC').trim().replace(/\s+/g, '
 function Register({ view, send }: { view: StudentView; send: Send }) {
   const req = view.request;
   const classes = view.classes ?? [];
-  // After a rejection or timeout the form keeps what was typed, so only the mistake needs fixing.
-  const [classPick, setClassPick] = useState<string | null>(() => classes.find((c) => c.name === req?.className)?.id ?? null);
-  // The class from an earlier request, even if it isn't offered right now.
+  // The 반 the student tapped. After a rejection or timeout the form keeps what was typed, so only the mistake needs
+  // fixing: the class of the earlier request (even if it isn't offered right now) is picked while it is offered.
+  const [classPick, setClassPick] = useState<string | null>(null);
   const [prefillClass] = useState(() => req?.className ?? null);
   const [number, setNumber] = useState(() => (req ? String(req.number) : ''));
   const [name, setName] = useState(() => req?.name ?? '');
@@ -695,17 +696,32 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
     return <Message title="잠시만요" body={view.registrationOpen ? '선생님이 반을 만들면 등록할 수 있어요.' : '선생님 화면이 켜지면 등록할 수 있어요.'} />;
   }
 
-  // While a class is in the room only its 반 is offered. It's picked for the student unless
-  // they had chosen (or earlier asked for) another class: then they must tap it on purpose.
+  // While a class is in the room only its 반 is offered. It's picked for the student unless they tapped another class,
+  // or asked for one in a request that didn't go through (one cancelled as this class started, say): then they must
+  // tap it on purpose. Only a lesson in progress (one class offered) makes that "another class"; a deleted class
+  // doesn't, nor a registration the teacher approved and later took off the roster (the phone is simply set up again).
   const offered = (id: string | null) => !!id && classes.some((c) => c.id === id);
-  // Only a lesson in progress (one class offered) makes an earlier choice "another class"; a deleted class doesn't.
+  const earlier = classes.find((c) => c.name === prefillClass)?.id ?? null;
   const choseOther =
     classes.length === 1 &&
     req?.reason !== 'gone' &&
-    ((classPick !== null && !offered(classPick)) || (classPick === null && !!prefillClass && !classes.some((c) => c.name === prefillClass)));
-  const classId = offered(classPick) ? classPick : classes.length === 1 && !choseOther ? classes[0].id : null;
+    ((classPick !== null && !offered(classPick)) || (classPick === null && req?.status !== 'approved' && !!prefillClass && !earlier));
+  const classId = offered(classPick) ? classPick : (earlier ?? (classes.length === 1 && !choseOther ? classes[0].id : null));
   const num = Number(number);
-  const canSend = !!classId && Number.isInteger(num) && num >= 1 && num <= 99 && NAME_RE.test(cleanName(name));
+  const cleaned = cleanName(name);
+  const canSend = !!classId && Number.isInteger(num) && num >= 1 && num <= 99 && NAME_RE.test(cleaned);
+  // A phone has no hover, so what still holds [등록 요청] back is said above it (not a name still being typed).
+  const missing = !classId
+    ? '반을 눌러 골라 주세요'
+    : !number
+      ? '번호를 써 주세요'
+      : !(num >= 1 && num <= 99)
+        ? '번호는 1~99로 써 주세요'
+        : !cleaned
+          ? '이름을 써 주세요'
+          : /[^가-힣ㄱ-ㅎㅏ-ㅣA-Za-z .·-]/.test(cleaned)
+            ? '이름은 한글이나 영어로 써 주세요'
+            : '';
   return (
     <form
       className="flex flex-1 flex-col gap-5 px-5 pb-6 pt-10"
@@ -723,8 +739,10 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
       {req?.status === 'expired' && req.reason === 'class' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">다른 반 수업이 시작돼서 요청이 취소됐어요.</div>}
       {req?.status === 'expired' && req.reason === 'gone' && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">그 반이 없어졌어요. 반을 다시 골라 주세요.</div>}
       {req?.status === 'expired' && (req.reason === 'timeout' || !req.reason) && <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">시간이 지나 다시 요청해야 해요.</div>}
-      {choseOther && classes.length > 0 && (
-        <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">지금은 {classes.map((c) => c.name).join(', ')} 수업이라 그 반만 등록할 수 있어요. 내 반이 맞는지 보고 골라 주세요.</div>
+      {choseOther && (
+        <div className="rounded-xl bg-bg px-4 py-3 text-sm font-semibold text-ink-2">
+          지금은 {classes[0].name} 수업이에요. 내 반이 맞으면 아래 {josa(`[${classes[0].name}]`, '을/를')} 눌러 주세요.
+        </div>
       )}
       <div className="flex flex-col gap-2">
         <div className="text-sm font-bold text-ink-3">반</div>
@@ -735,7 +753,7 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
               type="button"
               aria-pressed={classId === c.id}
               onClick={() => setClassPick(c.id)}
-              className={`h-12 rounded-2xl px-5 text-base font-bold ${classId === c.id ? 'bg-ink text-white' : 'bg-bg'}`}
+              className={`h-12 rounded-2xl px-5 text-base font-bold ${classId === c.id ? 'bg-ink text-white' : choseOther ? 'bg-bg ring-2 ring-accent' : 'bg-bg'}`}
             >
               {c.name}
             </button>
@@ -769,6 +787,7 @@ function Register({ view, send }: { view: StudentView; send: Send }) {
       {error && <div className="text-sm font-semibold text-bad">{error}</div>}
       <div className="flex-1" />
       <p className="text-center text-sm text-ink-3">선생님이 확인하면 들어가요. 폰을 바꿨다면 예전과 똑같이 쓰면 기록이 이어져요.</p>
+      {!canSend && missing && <div className="-mb-2 text-center text-sm font-bold text-ink-2">{missing}</div>}
       <button type="submit" disabled={!canSend} className="h-14 rounded-2xl bg-ink text-[17px] font-extrabold text-white disabled:opacity-40">
         등록 요청
       </button>
