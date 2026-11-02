@@ -91,13 +91,14 @@ export function musicLevel(phase: Phase | undefined, blank: boolean | undefined,
 }
 
 /**
- * The 아고라's song, always gentle (about a third of the arena's): a little fuller in the 대기실, while students write
- * and at the 끝; softer while the teacher reads a topic out (준비), once the answers show, or with writing closed. A
- * 받아쓰기 topic is listened to, so it has none.
+ * The 아고라's song: in the 대기실 as loud as the arena's, while the class gathers; from then on gentle (about a third
+ * of the arena's), a little fuller while students write and at the 끝, softer while the teacher reads a topic out
+ * (준비), once the answers show, or with writing closed. A 받아쓰기 topic is listened to, so it has none.
  */
 export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal, dictation = false): number {
-  if (dictation && phase !== 'lobby' && phase !== 'end') return 0;
-  return phase === 'lobby' || phase === 'end' || (phase === 'writing' && reveal === 'hidden') ? AGORA_MUSIC_FULL : AGORA_MUSIC_SOFT;
+  if (phase === 'lobby') return MUSIC_FULL;
+  if (dictation && phase !== 'end') return 0;
+  return phase === 'end' || (phase === 'writing' && reveal === 'hidden') ? AGORA_MUSIC_FULL : AGORA_MUSIC_SOFT;
 }
 
 /** Background music at `level` (0 for none), easing between levels and fading out when it stops; `src` picks the song. */
