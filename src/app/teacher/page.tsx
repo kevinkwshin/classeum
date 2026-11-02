@@ -700,6 +700,17 @@ function RewardItemPicker({ itemId, onPick }: { itemId: string; onPick: (id: str
  * [직접 작성하기]: a title and a table of word / meaning / example. Pasting several lines copied from Excel or a
  * Hangul table fills the rows from there (columns split by tabs); Enter moves down a row.
  */
+/**
+ * A key press the class shortcuts leave alone: one typed into a field (checkboxes and buttons don't swallow the
+ * shortcuts), or one pressed while a window such as the 도움말 is open over the console, where Enter on its ✕ closes
+ * the window and must not close writing or reveal the answer.
+ */
+function notForShortcuts(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  const typing = !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((t as HTMLInputElement).type)));
+  return typing || !!document.querySelector('[role="dialog"][aria-modal="true"]');
+}
+
 /** Esc closes a window, as it does the 도움말 (not while a Korean syllable is being typed). */
 function useEscape(onClose: () => void) {
   useEffect(() => {
@@ -950,10 +961,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
     if (!running) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
-      // Typing fields keep their keys; checkboxes and buttons don't swallow the shortcuts.
-      const t = e.target as HTMLElement | null;
-      const typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((t as HTMLInputElement).type)));
-      if (typing) return;
+      if (notForShortcuts(e)) return;
       const action = shortcutAction(e.code, live.paused, e.shiftKey);
       if (action) {
         e.preventDefault();
@@ -2286,6 +2294,9 @@ type AgoraStep = 'start' | 'close' | 'reveal' | 'page' | 'next' | 'finish' | 'en
 /** Why ±1분 is off: there is a 입력 시간 to change only while a topic with one is being written. */
 const TIME_ONLY = '입력 시간이 있는 주제를 쓰는 동안만 바꿀 수 있어요';
 
+/** How long the 아고라's big button waits after its step changes (the arena's controls wait as long on the server). */
+const STEP_GUARD_MS = 1000;
+
 /**
  * The open 아고라 from [쓰기 시작] on, laid out as the arena's console: a dark bar with the class, the topic up out of
  * how many, the phase and the 입력 시간; the projector's preview, the topic's 열·순서 and the next topic on the left; who
@@ -2352,7 +2363,14 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     .sort(byNumber)
     .map((s) => `${s.number} ${s.name}`)
     .join(', ');
+  // The big button keeps its place as it turns into the next step, so a double click (or a second Enter) would press
+  // that one too: [쓰기 시작] then [지금 마감]. For a second after the step changes it waits, as the arena's controls do.
+  const stepAt = useRef(0);
+  useEffect(() => {
+    stepAt.current = Date.now();
+  }, [step]);
   const primary = useCallback(() => {
+    if (Date.now() - stepAt.current < STEP_GUARD_MS) return;
     if (step === 'start') send({ type: 'agora-start' });
     else if (step === 'close') {
       if (stillReviewing && !confirm(`${stillReviewing} 학생은 아직 오답 정리 중이에요. 지금 마감할까요?`)) return;
@@ -2373,10 +2391,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
-      // Typing fields keep their keys; checkboxes and buttons don't swallow the shortcuts.
-      const t = e.target as HTMLElement | null;
-      const typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((t as HTMLInputElement).type)));
-      if (typing) return;
+      if (notForShortcuts(e)) return;
       // As in the arena: Enter moves it on (never closing it), arrows page and change the time, S skips.
       const keys: Record<string, () => void> = {
         Enter: () => step !== 'page' && step !== 'finish' && step !== 'end' && primary(),

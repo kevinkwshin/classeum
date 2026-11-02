@@ -39,6 +39,10 @@ if (process.argv.includes('--forget')) {
   process.exit(1);
 }
 
+// `--needs-install`, asked by Classeum.bat before it starts: exits 1 when the installed packages don't match
+// package-lock.json (an update changed them, or an install broke off), so it installs them again first.
+if (process.argv.includes('--needs-install')) process.exit(needsInstall() ? 1 : 0);
+
 function files(path, out = []) {
   if (!existsSync(path)) return out;
   if (statSync(path).isDirectory()) {

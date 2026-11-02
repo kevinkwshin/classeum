@@ -512,7 +512,9 @@ function load(): DB {
       }
     }
   }
-  if (!broken) return empty();
+  // A first start: nothing was saved before 무작위 became the default, so it goes through the same steps and is
+  // marked as switched, and an item picked from now on stays.
+  if (!broken) return migrate(empty());
   throw new Error(box([
     'Classeum: 저장된 기록을 읽지 못해서 서버를 켜지 않았어요.',
     '아무것도 덮어쓰지 않았어요.',

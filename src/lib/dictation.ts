@@ -43,12 +43,24 @@ export function dictationKey(raw: string): string {
   return /^\d{1,2}$/.test(w) ? numberWord(Number(w)) : w;
 }
 
-/** The words of a sentence, as written and as compared; marks standing alone (a dash, an ellipsis) aren't words. */
+// Twenty to ninety, then one to nine: 'twenty one' is heard as twenty-one (21), however it is written.
+const TENS_WORDS = new Set(TENS.filter(Boolean));
+const ONES_WORDS = new Set(ONES.slice(1, 10));
+
+/**
+ * The words of a sentence, as written and as compared; marks standing alone (a dash, an ellipsis) aren't words, and a
+ * number written as two words ('twenty one', not 'twenty, one') is one, as 21 and twenty-one are.
+ */
 function words(text: string): { word: string; key: string }[] {
-  return text
-    .split(/\s+/)
-    .map((word) => ({ word, key: dictationKey(word) }))
-    .filter((w) => w.key !== '');
+  const out: { word: string; key: string }[] = [];
+  for (const word of text.split(/\s+/)) {
+    const key = dictationKey(word);
+    if (key === '') continue;
+    const prev = out[out.length - 1];
+    if (prev && TENS_WORDS.has(prev.key) && /\p{L}$/u.test(prev.word) && ONES_WORDS.has(key)) out[out.length - 1] = { word: `${prev.word} ${word}`, key: `${prev.key}-${key}` };
+    else out.push({ word, key });
+  }
+  return out;
 }
 
 /**

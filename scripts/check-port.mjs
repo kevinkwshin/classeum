@@ -67,7 +67,8 @@ async function liveState() {
 
 /**
  * Has the old server write its records before it is stopped: on Windows the stop below ends it at once, without the
- * save Ctrl+C gets. An older server without this request just answers no; the stop still goes ahead.
+ * save Ctrl+C gets. False when it answers that it couldn't save; then it is left running. An older server without this
+ * request just answers no, and the stop still goes ahead.
  */
 async function saveFirst() {
   try {
@@ -78,10 +79,12 @@ async function saveFirst() {
       signal: AbortSignal.timeout(3000),
     });
     const body = await res.json();
-    if (body.ok && body.saved === false) say('켜져 있던 서버가 마지막 기록을 저장하지 못했어요. 끄고 나서 .data 폴더를 확인해 주세요.');
+    // Its save failed (a full disk, a locked folder): stopping it now would lose what only it holds.
+    if (body.ok && body.saved === false) return false;
   } catch {
     // An older Classeum, or another folder's server: nothing to ask it.
   }
+  return true;
 }
 
 /** Node processes listening on the port. */
@@ -121,7 +124,6 @@ async function stop(pids) {
       // Already gone, or not ours to stop; the checks below decide.
     }
   };
-  await saveFirst();
   pids.forEach((pid) => kill(pid));
   // About 3 s to finish on its own (its pending save goes out meanwhile), then it is stopped for good.
   for (let i = 0; i < 10 && pids.some(alive); i++) await sleep(300);
@@ -164,6 +166,10 @@ if (!(await free())) {
       say('켜져 있는 서버를 그대로 둘게요.');
       process.exit(1);
     }
+  }
+  if (!(await saveFirst())) {
+    say('켜져 있던 서버가 기록을 저장하지 못하고 있어서 끄지 않았어요. 지금 끄면 저장하지 못한 기록이 사라져요.', '디스크 남은 공간과 .data 폴더를 확인한 뒤 다시 실행하세요.');
+    process.exit(1);
   }
   say('켜져 있던 Classeum 서버를 끄고 새로 켤게요.');
   if (!(await stop(listeners()))) {

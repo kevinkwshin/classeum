@@ -24,8 +24,8 @@ if errorlevel 1 (
 rem A folder cloned with git gets the newest version before it starts. The records (.data) aren't in git, so they
 rem are never touched; offline, or with a file changed here that the update changes too, it starts as it is. The
 rem whole block is read before it runs, and after an update it starts this file again from the top, so a
-rem Classeum.bat the update itself changed never runs half old, half new. git goes through call in case it is a
-rem .cmd wrapper, which would otherwise end this script.
+rem Classeum.bat the update itself changed never runs half old, half new; packages the update changed are installed
+rem further down. git goes through call in case it is a .cmd wrapper, which would otherwise end this script.
 if not defined CLASSEUM_UPDATED if exist .git (
   set "CLASSEUM_UPDATED=1"
   where git > nul 2> nul
@@ -43,18 +43,11 @@ if not defined CLASSEUM_UPDATED if exist .git (
     ) else (
       call git merge-base --is-ancestor @{u} HEAD > nul 2> nul
       if errorlevel 1 (
-        set "CLASSEUM_DEPS="
-        call git diff --quiet HEAD @{u} -- package.json package-lock.json > nul 2> nul
-        if errorlevel 1 set "CLASSEUM_DEPS=1"
         call git merge --ff-only --quiet @{u} > nul 2> nul
         if errorlevel 1 (
           echo   새 버전을 받지 못해서 지금 버전으로 켤게요. 이 폴더의 파일을 직접 고쳤다면 그래요.
         ) else (
           echo   새 버전을 받았어요.
-          if defined CLASSEUM_DEPS if exist node_modules\.package-lock.json (
-            echo   필요한 파일이 바뀌어서 다시 받는 중이에요. 몇 분 걸릴 수 있어요.
-            call npm install
-          )
           "%~f0" %*
         )
       ) else (
@@ -76,6 +69,23 @@ if not exist node_modules\.package-lock.json (
   )
   rem The first start also puts a shortcut with the Classeum icon on the desktop.
   call "%~dp0바로가기 만들기.bat" quiet
+)
+
+rem Packages that no longer match package-lock.json (an update changed them, or their install broke off) are installed
+rem again. If that fails it stops here rather than start half updated, and the next start tries again.
+node scripts\build-if-changed.mjs --needs-install > nul 2> nul
+if errorlevel 1 (
+  echo.
+  echo   필요한 파일이 바뀌어서 다시 받는 중이에요. 몇 분 걸릴 수 있어요.
+  echo.
+  call npm install
+  if errorlevel 1 (
+    echo.
+    echo   필요한 파일을 받지 못했어요. 인터넷 연결을 확인하고 다시 켜 주세요.
+    echo.
+    pause
+    exit /b 1
+  )
 )
 
 echo.

@@ -829,6 +829,7 @@ async function run(teacher: Stream, display: Stream) {
   const g = (target: string, answer: string) => gradeDictation(target, answer);
   check('채점: 대소문자와 문장부호는 보지 않는다', g('What did you do?', 'what did you do').perfect);
   check('채점: 15와 fifteen은 같다', g('I have 15 apples.', 'I have fifteen apples').perfect);
+  check('채점: 21은 twenty-one과 하이픈 없는 twenty one 모두 (쉼표로 나눈 twenty, one은 아님)', g('I am 21 years old.', 'I am twenty one years old').perfect && g('He is twenty one.', 'he is twenty-one').perfect && !g('I am 21.', 'I am twenty, one').perfect);
   check('채점: 줄임말은 들린 대로(don’t ≠ do not)', !g("I don't like it.", 'I do not like it').perfect && g("I don’t like it.", "I don't like it").perfect);
   check('채점: 한 단어가 빠져도 뒤는 맞게 줄을 맞춘다(5/6)', Math.round(g('I go to school every day.', 'I go school every day').accuracy * 6) === 5);
   // [▶ 읽어 주기]'s sound file: on a Mac the laptop's own voice as a WAV, slow and loud; elsewhere 501 (the browser reads).
