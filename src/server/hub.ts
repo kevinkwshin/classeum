@@ -1323,11 +1323,15 @@ class Hub {
     this.schedulePush(true);
   }
 
-  /** [다시 쓰기] in 다시 보기: the topic up opens for writing again, each phone starting from its own answer. */
+  /**
+   * [다시 쓰기] in 다시 보기: the topic up opens for writing again, each phone starting from its own answer. A 받아쓰기 is
+   * listened to and written again, so a sentence shown by [정답 공개] goes back under cover until the next one.
+   */
   rewriteAgora() {
     const live = this.agoraLive;
     const now = this.agoraNow();
     if (!live || !now || live.review === null || live.phase !== 'closed') return;
+    if (now.topic.dictation !== undefined) live.reveal = 'hidden';
     this.startWriting(now.agora, now.topic);
     save();
     this.schedulePush(true);

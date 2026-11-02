@@ -805,6 +805,23 @@ async function run(teacher: Stream, display: Stream) {
   check('…그 답은 지울 수 없다 (고쳐 내기만)', (await post({ type: 'agora-unanswer', token: a1.token, topicId: d1 }, {})).error === '마감된 받아쓰기 답은 지울 수 없어요. 고쳐서 제출해 주세요.');
   await post({ type: 'agora-end' });
   await sleep(300);
+  // 다시 보기: [정답 공개] shows the sentence, and [다시 쓰기] puts it back under cover while the class writes again.
+  await post({ type: 'agora-review', agoraId: dict, classId: A.id });
+  await sleep(300);
+  await drawDone();
+  await post({ type: 'agora-start' });
+  await post({ type: 'agora-reveal', public: true, index: 0 });
+  await sleep(300);
+  const shownInReview = display.view.agora?.topic.answer === SENTENCE;
+  await post({ type: 'agora-rewrite' });
+  await sleep(300);
+  check('다시 보기에서 보여 준 받아쓰기 문장은 [다시 쓰기] 동안 프로젝터와 폰에서 다시 가려진다', shownInReview && display.view.agora?.phase === 'writing' && display.view.agora.topic.answer === undefined && a2.s.view.agora?.topic.answer === undefined);
+  await post({ type: 'agora-close' });
+  await post({ type: 'agora-reveal', public: true, index: 0 });
+  await sleep(300);
+  check('…마감 뒤 [정답 공개]로 다시 보인다', display.view.agora?.topic.answer === SENTENCE);
+  await post({ type: 'agora-end' });
+  await sleep(300);
 
   section('아고라 통계');
   const statsRes = await fetch(`${BASE}/api/agora-stats?class=${A.id}`, { headers: TEACHER });
