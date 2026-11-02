@@ -366,6 +366,24 @@ const TUNIC: Record<string, string[]> = {
     '......k]]]]]]]]]L]]]]k..',
     '.................kkL]]k.',
   ]),
+  rainbow: rows(16, [
+    '......krrrrrrrrrrk......',
+    '.....k{{{{{{{{{{{}k.....',
+    '....ksyyyyyyyyyyygsk....',
+    '....ks]]]]]]]]]]]xsk....',
+    '....kS)))))))))))zSk....',
+    '......kuuuuuuuuuuk......',
+  ]),
+  duckring: rows(14, [
+    '..kk....................',
+    '.kyyk...................',
+    '.kyeyk..................',
+    'kVVyyk..................',
+    '.kkyyykkkkkkkkkkkkkkkk..',
+    '..kyyyyWyyyyyyyyyyyyyyk.',
+    '..kgyyyyyyyyyyyyyyyyygk.',
+    '...kggggggggggggggggk...',
+  ]),
 };
 
 // 머리: hats, ears, headphones and crowns.
@@ -607,6 +625,31 @@ const HELMET: Record<string, string[]> = {
     '...k^kkkkkkkkkkkkkk^k...',
     '...kk..............kk...',
   ]),
+  halo: rows(0, [
+    '........1yyyyyy1........',
+    '.......y1......1y.......',
+    '........yyyyyyyy........',
+  ]),
+  chick: rows(0, [
+    '...........kkk..........',
+    '..........kyyyk.........',
+    '..........kyeyVV........',
+    '..........k1yyyk........',
+    '...........kkkk.........',
+  ]),
+  sprout: rows(0, [
+    '.........kk...kk........',
+    '........kjjk.kjjk.......',
+    '.........kjjLjjk........',
+    '..........kkLkk.........',
+  ]),
+  horns: rows(0, [
+    '......k..........k......',
+    '......kk........kk......',
+    '......krk......krk......',
+    '......krrk....krrk......',
+    '.......kDrk..krDk.......',
+  ]),
 };
 
 // 얼굴: worn over the eye boxes.
@@ -660,6 +703,18 @@ const FACE: Record<string, string[]> = {
     '....kkkkk......kkkkk....',
     '..kk................kk..',
   ]),
+  blush: rows(12, [
+    '......T.T.....T.T.......',
+    '.......T.......T........',
+  ]),
+  ironmask: rows(9, [
+    '......aqqqqqqqqqqA......',
+    '......aqnnnaannnqA......',
+    '......aqqqqaaqqqqA......',
+    '......aqqqaAAaqqqA......',
+    '.......aqnnnnnnqA.......',
+    '........aqqqqqqA........',
+  ]),
 };
 
 // 발
@@ -680,6 +735,15 @@ const SHOES: Record<string, string[]> = {
   slippers: rows(22, ['........kWqkkqWk........', '......knvvnkknvvnk......']),
   chunky: rows(22, ['......kqWdqkkqdWqk......', '.....kaAaAakkaAaAak.....']),
   bunny: rows(22, ['.......kqkqkkqkqk.......', '......kppWpkkpWppk......']),
+  flippers: rows(22, [
+    '......k}VVkkkkVV}k......',
+    '....k}V}V}k..k}V}V}k....',
+  ]),
+  goldsneakers: rows(21, [
+    '.....W..................',
+    '......kyWgykkygWyk......',
+    '.....kGgGgGkkGgGgGk.....',
+  ]),
 };
 
 // 손: held in the hand on the picture's left.
@@ -1090,6 +1154,63 @@ const HAND: Record<string, string[]> = {
     '.kSSS...................',
     '..kkkk..................',
   ]),
+  slime: rows(12, [
+    '...k....................',
+    '..k|k...................',
+    '.k&W|k..................',
+    'k&W|||k.................',
+    'k|e|e|k.................',
+    'kf|R|fk.................',
+    '.kfffk..................',
+    '.ksss...................',
+    '.kSSS...................',
+    '..kkkk..................',
+  ]),
+  milk: rows(9, [
+    '.....k..................',
+    '....kWk.................',
+    '....kRk.................',
+    '..kkkWk.................',
+    '.k444k..................',
+    'k44444k.................',
+    'kppppFk.................',
+    'kpjRpFk.................',
+    'kpRRpFk.................',
+    'kppppFk.................',
+    '.ksssFk.................',
+    '.kSSSk..................',
+    '..kkkk..................',
+  ]),
+  chicken: rows(10, [
+    '.kkkk...................',
+    'kmYmmk..................',
+    'kYgm!!k.................',
+    'km!gm!k.................',
+    'kg!m!}k.................',
+    '.k!}}k..................',
+    '..k}k...................',
+    '..kWk...................',
+    '..kWk...................',
+    '.ksss...................',
+    '.kSSS...................',
+    '..kWkk..................',
+    '.kWWWk..................',
+    '..kkk...................',
+  ]),
+  fan: rows(10, [
+    '..kkk...................',
+    '.k3W3k..................',
+    'k33W33k.................',
+    'kWWpWWk.................',
+    'k33W33k.................',
+    '.k3W3k..................',
+    '..kkk...................',
+    '..kpk...................',
+    '..kpk...................',
+    '.ksss...................',
+    '.kSSS...................',
+    '..kkkk..................',
+  ]),
 };
 
 // 팔: on the picture's right, over the arm.
@@ -1187,6 +1308,43 @@ const SHIELD: Record<string, string[]> = {
     '..................n|W|k.',
     '..................n|||k.',
     '...................kkk..',
+  ]),
+  waxball: rows(11, [
+    '......................q.',
+    '.......................W',
+    '...................kkk..',
+    '..................k4Wpk.',
+    '.................k4Wpp4k',
+    '.................kWWWpTk',
+    '.................kppWWWk',
+    '..................kTpTk.',
+    '...................kkk..',
+  ]),
+  umbrella: rows(0, [
+    '.................kkkkk..',
+    '................k{Wy]]k.',
+    '...............kr{{y]])k',
+    '...............kr{{y]])k',
+    '...............kk{kAk]kk',
+    '.................k.A.k..',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................A....',
+    '...................B....',
+    '...................B.B..',
+    '....................B...',
   ]),
 };
 
@@ -1342,6 +1500,44 @@ const CAPE: Record<string, string[]> = {
     'kmBmmmkk................',
     '.kkkkkk.................',
   ]),
+  angel: rows(9, [
+    '....k..............k....',
+    '...kW..............Wk...',
+    '..kWW..............WWk..',
+    '.kWWq..............qWWk.',
+    'kWWqW..............WqWWk',
+    'kWqWWk............kWWqWk',
+    'kqWWqWk..........kWqWWqk',
+    'kWWqWk............kWqWWk',
+    '.kWWk..............kWWk.',
+    '.kqWk..............kWqk.',
+    '..kk................kk..',
+  ]),
+  hood: rows(1, [
+    '........kkkkkkkk........',
+    '......kkxXXXXXXxkk......',
+    '......kx........Xk......',
+    '....kx............Xk....',
+    '...kx..............Xk...',
+    '...kx..............Xk...',
+    '...kx..............Xk...',
+    '...kx..............Xk...',
+    '...kX..............>k...',
+    '...kX..............>k...',
+    '...kX..............>k...',
+    '...kX..............>k...',
+    '...kX..............>k...',
+    '....kX............>k....',
+    '....kXk..........kXk....',
+    '....kXXXgk....kgXX>k....',
+    '...kXXXk........kX>>k...',
+    '.kXX................>>k.',
+    '.kXX................>>k.',
+    '.kXX................>>k.',
+    '.kXXXX............>>>>k.',
+    '.kXxXXX>........>>>>>>k.',
+    '..kkkkkk........kkkkkk..',
+  ]),
 };
 
 /** Hats that cover the top of the head hide hair that would stick up through them (the helmet hides curls too). */
@@ -1370,9 +1566,14 @@ const FIXED: Record<string, string> = {"0":"#3CCFE6","1":"#FFE58A","2":"#C9B6F4"
 /** Every layer table, for checking that each row is exactly 24 pixels. */
 export const ALL_LAYERS = { HAIR, EYES, TUNIC, HELMET, FACE, SHOES, HAND, SHIELD, CAPE };
 
-/** Shades, heart glasses, the visor, the pixel shades and swim goggles hide the eyes, so blinking and reaction faces skip the eyes. */
+/** Shades, heart glasses, the visor, the pixel shades, swim goggles and the iron mask hide the eyes, so blinking and reaction faces skip the eyes. */
 export function eyesCovered(look: AvatarLook): boolean {
-  return ['sunglasses', 'heartglasses', 'visor', 'pixelshades', 'goggles'].includes(look.face);
+  return ['sunglasses', 'heartglasses', 'visor', 'pixelshades', 'goggles', 'ironmask'].includes(look.face);
+}
+
+/** The iron mask covers the mouth too, so reaction faces don't draw a grin on it. */
+export function mouthCovered(look: AvatarLook): boolean {
+  return look.face === 'ironmask';
 }
 
 export interface PixelRun {

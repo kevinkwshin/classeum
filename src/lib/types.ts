@@ -137,15 +137,15 @@ export interface AvatarLook {
   hairStyle: 'short' | 'long' | 'bob' | 'ponytail' | 'pigtails' | 'braid' | 'side' | 'curly' | 'spiky' | 'bun' | 'twinbun' | 'buzz';
   eyes: 'round' | 'big' | 'smile' | 'sharp' | 'dot';
   /** What the body wears, armour included. */
-  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold' | 'spacesuit' | 'chainmail' | 'monk' | 'tee67' | 'bball' | 'soccer' | 'baseball' | 'longpad' | 'dino';
-  helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones' | 'space' | 'knight' | 'hennin' | 'capybara' | 'hardhat' | 'sweatband' | 'beanie' | 'bearears' | 'bucket';
-  face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses' | 'visor' | 'pixelshades' | 'facepaint' | 'goggles' | 'roundglasses' | 'bandaid' | 'whiskers';
+  tunic: 'white' | 'sky' | 'olive' | 'stripe' | 'hoodie' | 'vest' | 'sequin' | 'suit' | 'robe' | 'tracksuit' | 'lorica' | 'gold' | 'spacesuit' | 'chainmail' | 'monk' | 'tee67' | 'bball' | 'soccer' | 'baseball' | 'longpad' | 'dino' | 'rainbow' | 'duckring';
+  helmet: 'none' | 'galea' | 'laurel' | 'straw' | 'crown' | 'cat' | 'ribbon' | 'grad' | 'wizard' | 'headset' | 'cap' | 'headphones' | 'space' | 'knight' | 'hennin' | 'capybara' | 'hardhat' | 'sweatband' | 'beanie' | 'bearears' | 'bucket' | 'sprout' | 'halo' | 'chick' | 'horns';
+  face: 'none' | 'glasses' | 'sunglasses' | 'heartglasses' | 'visor' | 'pixelshades' | 'facepaint' | 'goggles' | 'roundglasses' | 'bandaid' | 'whiskers' | 'blush' | 'ironmask';
   /** Worn on the back: capes, wings or a bag. */
-  cape: 'none' | 'red' | 'blue' | 'star' | 'dragon' | 'fairy' | 'backpack' | 'jetpack' | 'knightcape' | 'bearpack' | 'turtle' | 'guitar';
-  shield: 'none' | 'round' | 'book' | 'star' | 'energy' | 'lion' | 'glove' | 'skateboard' | 'teddy' | 'watch';
-  shoes: 'none' | 'sandal' | 'boots' | 'sneakers' | 'winged' | 'skates' | 'hover' | 'hightop' | 'cleats' | 'slippers' | 'chunky' | 'bunny';
-  hand: 'none' | 'sword' | 'spear' | 'wand' | 'pencil' | 'flag' | 'mic' | 'lightstick' | 'phone' | 'staff' | 'icecream' | 'saber' | 'pilgrim' | 'lute' | 'cookie' | 'tanghulu' | 'bubbletea' | 'gamepad' | 'basketball' | 'soccerball' | 'bat' | 'racket' | 'tteok';
-  effect: 'none' | 'sparkle' | 'dust' | 'gold' | 'hearts' | 'notes' | 'electric' | 'fire' | 'neon' | 'aura' | 'sweat' | 'bubbles' | 'petals' | 'snow';
+  cape: 'none' | 'red' | 'blue' | 'star' | 'dragon' | 'fairy' | 'backpack' | 'jetpack' | 'knightcape' | 'bearpack' | 'turtle' | 'guitar' | 'angel' | 'hood';
+  shield: 'none' | 'round' | 'book' | 'star' | 'energy' | 'lion' | 'glove' | 'skateboard' | 'teddy' | 'watch' | 'waxball' | 'umbrella';
+  shoes: 'none' | 'sandal' | 'boots' | 'sneakers' | 'winged' | 'skates' | 'hover' | 'hightop' | 'cleats' | 'slippers' | 'chunky' | 'bunny' | 'flippers' | 'goldsneakers';
+  hand: 'none' | 'sword' | 'spear' | 'wand' | 'pencil' | 'flag' | 'mic' | 'lightstick' | 'phone' | 'staff' | 'icecream' | 'saber' | 'pilgrim' | 'lute' | 'cookie' | 'tanghulu' | 'bubbletea' | 'gamepad' | 'basketball' | 'soccerball' | 'bat' | 'racket' | 'tteok' | 'slime' | 'milk' | 'chicken' | 'fan';
+  effect: 'none' | 'sparkle' | 'dust' | 'gold' | 'hearts' | 'notes' | 'electric' | 'fire' | 'neon' | 'aura' | 'sweat' | 'bubbles' | 'petals' | 'snow' | 'shootingstar' | 'goldsteps';
 }
 
 export interface RewardSetting {

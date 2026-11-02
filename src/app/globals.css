@@ -158,6 +158,8 @@ body {
 /* Drifting down with a little sideways sway (petals, snow), and a bead of sweat sliding down. */
 @keyframes clsFall { 0% { opacity: 0; transform: translate(0, -3px); } 15%, 80% { opacity: 1; } 100% { opacity: 0; transform: translate(2px, 5px); } }
 @keyframes clsDrip { 0%, 15% { opacity: 0; transform: translateY(0); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(3px); } }
+/* A shooting star sliding down to the left, there and gone. */
+@keyframes clsShoot { 0% { opacity: 0; transform: translate(2px, -2px); } 25%, 60% { opacity: 1; } 100% { opacity: 0; transform: translate(-3px, 3px); } }
 /* Idle (IdleAvatar): mostly still, then a quick hop, a sway or a glance aside near the end of each cycle. */
 @keyframes clsIdleHop { 0%, 88%, 100% { transform: translateY(0) scale(1, 1); } 91% { transform: translateY(0) scale(1.06, 0.94); } 94% { transform: translateY(-12%) scale(0.96, 1.04); } 97% { transform: translateY(0) scale(1.03, 0.97); } }
 @keyframes clsIdleSway { 0%, 86%, 100% { transform: rotate(0); } 90% { transform: rotate(-7deg); } 95% { transform: rotate(6deg); } }
@@ -207,6 +209,7 @@ body {
   .cls-spin { animation: clsSpin 0.8s ease-in-out; }
   .cls-fall { animation: clsFall 3.2s linear infinite both; }
   .cls-drip { animation: clsDrip 2.2s ease-in infinite both; }
+  .cls-shoot { animation: clsShoot 2.4s ease-in infinite both; }
   .cls-idle-0 { animation: clsIdleHop 8s ease-in-out infinite; transform-origin: 50% 100%; }
   .cls-idle-1 { animation: clsIdleSway 8s ease-in-out infinite; transform-origin: 50% 100%; }
   .cls-idle-2 { animation: clsIdleLook 8s ease-in-out infinite; }

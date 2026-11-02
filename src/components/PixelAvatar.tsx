@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import type { AvatarLook } from '@/lib/types';
-import { avatarRuns, eyesCovered, GRID, skinTones } from '@/lib/avatar';
+import { avatarRuns, eyesCovered, GRID, mouthCovered, skinTones } from '@/lib/avatar';
 
 const SPARKS: [number, number, number][] = [[1, 3, 0], [13, 2, 0.4], [14, 8, 0.8], [0, 10, 1.2], [12, 13, 0.6], [2, 6, 1.0]];
 const PUFFS: [number, number, number][] = [[3, 15, 0], [12, 15, 0.4], [2, 14, 0.8], [13, 14, 0.2]];
@@ -25,6 +25,12 @@ const PETALS: [number, number, number, string][] = [[0, 1, 0, '#F7A8C4'], [13, 0
 const FLAKES: [number, number, number][] = [[0, 1, 0], [12, 2, 1.1], [1, 8, 2.2], [13, 9, 0.6], [11, 13, 1.6]];
 // Light rising off the character, the way 'aura' is drawn in memes.
 const AURAS: [number, number, number, string][] = [[2, 14, 0, '#FFE58A'], [13, 13, 0.4, '#FFFFFF'], [4, 15, 0.8, '#FFE58A'], [11, 15, 1.2, '#FFE58A'], [1, 10, 1.0, '#FFFFFF'], [14, 10, 0.2, '#FFE58A'], [7, 15, 0.6, '#FFFFFF']];
+// Shooting stars sliding down to the left, each trailing a fading tail up to its right.
+const STAR = [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]];
+const STAR_TAIL: [number, number, number][] = [[3, 0, 0.7], [4, -1, 0.45], [5, -2, 0.2]];
+const STARS: [number, number, number][] = [[0, 3, 0], [8, 0, 0.8], [10, 8, 1.6]];
+// Golden footprints drawn like the phone's 출석 발자국 (two rounded steps, one ahead), coming and going beside the character.
+const STEPS: [number, number, number][] = [[0, 12.5, 0], [0.6, 8.5, 0.4], [13.4, 12.5, 0.8], [13.6, 8.5, 1.2]];
 
 function Shape({ cells, x, y, color, delay, className }: { cells: number[][]; x: number; y: number; color: string; delay: number; className: string }) {
   return (
@@ -56,8 +62,9 @@ function colourPaths(look: AvatarLook): [string, string][] {
 
 function Face({ look, mood }: { look: AvatarLook; mood: Exclude<Mood, 'normal'> }) {
   const [skin] = skinTones(look);
-  // Behind sunglasses only the mouth changes.
+  // Behind sunglasses only the mouth changes; behind the iron mask nothing does.
   const eyes = !eyesCovered(look);
+  const mouth = !mouthCovered(look);
   return (
     <g>
       {eyes && EYE_BOX.map((x) => <rect key={x} x={x} y={EYE_Y} width={3} height={2} fill={skin} />)}
@@ -72,8 +79,12 @@ function Face({ look, mood }: { look: AvatarLook; mood: Exclude<Mood, 'normal'> 
                 <rect x={x + 2} y={EYE_Y + 1} width={1} height={1} />
               </g>
             ))}
-          <rect x={10} y={13} width={4} height={1} fill="#7A2A2A" />
-          <rect x={11} y={14} width={2} height={1} fill="#E06A6A" />
+          {mouth && (
+            <>
+              <rect x={10} y={13} width={4} height={1} fill="#7A2A2A" />
+              <rect x={11} y={14} width={2} height={1} fill="#E06A6A" />
+            </>
+          )}
         </>
       )}
       {mood === 'dizzy' && (
@@ -86,8 +97,12 @@ function Face({ look, mood }: { look: AvatarLook; mood: Exclude<Mood, 'normal'> 
                 <rect x={x - 0.1} y={EYE_Y + 0.75} width={3.2} height={0.5} fill={INK} transform={`rotate(-35 ${x + 1.5} ${EYE_Y + 1})`} />
               </g>
             ))}
-          <rect x={10} y={13} width={2} height={1} fill="#7A2A2A" />
-          <rect x={12} y={13.5} width={2} height={1} fill="#7A2A2A" />
+          {mouth && (
+            <>
+              <rect x={10} y={13} width={2} height={1} fill="#7A2A2A" />
+              <rect x={12} y={13.5} width={2} height={1} fill="#7A2A2A" />
+            </>
+          )}
         </>
       )}
       {mood === 'sleep' && eyes && EYE_BOX.map((x) => <rect key={x} x={x} y={EYE_Y + 1} width={3} height={0.6} fill={INK} />)}
@@ -164,6 +179,24 @@ function PixelAvatarImpl({
         {look.effect === 'bubbles' && BUBBLES.map(([x, y, d], i) => <Shape key={`b${i}`} cells={BUBBLE} x={x} y={y} color="#5DBDEA" delay={d} className="cls-rise" />)}
         {look.effect === 'petals' && PETALS.map(([x, y, d, c], i) => <Shape key={`l${i}`} cells={PETAL} x={x} y={y} color={c} delay={d} className="cls-fall" />)}
         {look.effect === 'snow' && FLAKES.map(([x, y, d], i) => <Shape key={`k${i}`} cells={FLAKE} x={x} y={y} color="#A9CBEA" delay={d} className="cls-fall" />)}
+        {look.effect === 'shootingstar' &&
+          STARS.map(([x, y, d], i) => (
+            <g key={`t${i}`} className="cls-shoot" style={{ animationDelay: `${d}s` }}>
+              {STAR_TAIL.map(([dx, dy, o]) => (
+                <rect key={dx} x={x + dx} y={y + dy} width={1} height={1} fill="#FFE14D" opacity={o} />
+              ))}
+              {STAR.map(([dx, dy]) => (
+                <rect key={`${dx}-${dy}`} x={x + dx} y={y + dy} width={1} height={1} fill="#FFE14D" />
+              ))}
+            </g>
+          ))}
+        {look.effect === 'goldsteps' &&
+          STEPS.map(([x, y, d], i) => (
+            <g key={`g${i}`} className="cls-spark" fill="#F5B82E" style={{ animationDelay: `${d}s` }}>
+              <rect x={x} y={y + 0.8} width={1} height={1.6} rx={0.4} />
+              <rect x={x + 1.3} y={y} width={1} height={1.6} rx={0.4} />
+            </g>
+          ))}
       </g>
     </svg>
   );

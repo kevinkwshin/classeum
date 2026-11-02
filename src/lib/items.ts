@@ -157,25 +157,56 @@ export const ITEMS: ItemDef[] = [
   { id: 'back-guitar', name: '기타', slot: 'cape', value: 'guitar', theme: 'modern' },
 
   { id: 'face-roundglasses', name: '동그란 안경', slot: 'face', value: 'roundglasses', theme: 'school' },
+
+  // Given only for attendance (ATTENDANCE_UNLOCKS), never drawn as a lesson's reward.
+  { id: 'hand-slime', name: '슬라임', slot: 'hand', value: 'slime', theme: 'trend' },
+  { id: 'face-blush', name: '하트 볼터치', slot: 'face', value: 'blush', theme: 'cute' },
+  { id: 'hat-sprout', name: '새싹 머리핀', slot: 'helmet', value: 'sprout', theme: 'cute' },
+  { id: 'hand-milk', name: '딸기 우유', slot: 'hand', value: 'milk', theme: 'school' },
+  { id: 'shield-waxball', name: '왁뿌볼', slot: 'shield', value: 'waxball', theme: 'trend' },
+  { id: 'shoes-flippers', name: '오리발', slot: 'shoes', value: 'flippers', theme: 'sports' },
+  { id: 'top-rainbow', name: '무지개 티', slot: 'tunic', value: 'rainbow', theme: 'cute' },
+  { id: 'hat-halo', name: '천사 머리띠', slot: 'helmet', value: 'halo', theme: 'fantasy' },
+  { id: 'hand-chicken', name: '치킨 다리', slot: 'hand', value: 'chicken', theme: 'trend' },
+  { id: 'back-angel', name: '천사 날개', slot: 'cape', value: 'angel', theme: 'fantasy' },
+  { id: 'shield-umbrella', name: '우산', slot: 'shield', value: 'umbrella', theme: 'cute' },
+  { id: 'top-duckring', name: '오리 튜브', slot: 'tunic', value: 'duckring', theme: 'cute' },
+  { id: 'hat-chick', name: '머리 위 병아리', slot: 'helmet', value: 'chick', theme: 'cute' },
+  { id: 'hand-fan', name: '휴대용 선풍기', slot: 'hand', value: 'fan', theme: 'school' },
+  { id: 'face-ironmask', name: '철가면', slot: 'face', value: 'ironmask', theme: 'medieval' },
+  { id: 'hat-horns', name: '악마 뿔 머리띠', slot: 'helmet', value: 'horns', theme: 'fantasy' },
+  { id: 'back-hood', name: '초록 두건 망토', slot: 'cape', value: 'hood', theme: 'medieval' },
+  { id: 'shoes-gold', name: '황금 운동화', slot: 'shoes', value: 'goldsneakers', theme: 'sports' },
+  { id: 'fx-shootingstar', name: '별똥별', slot: 'effect', value: 'shootingstar', theme: 'fantasy' },
+  { id: 'fx-goldsteps', name: '황금 발자국', slot: 'effect', value: 'goldsteps', theme: 'school' },
 ];
 
 /**
- * One item every 5 attendance footprints, in this order. The 10th, 20th and 30th match what
- * students already got when the reward came every 10 stamps.
+ * One item every 5 attendance footprints, in this order, up to 100 footprints. Each is an item only attendance gives.
+ * Until 2026-11-02 the list was twelve items from the lesson rewards (샌들, 하늘 튜닉, …); anyone who earned one keeps it,
+ * those items went back to the lesson rewards, and the new list is caught up at the next footprint.
  */
 export const ATTENDANCE_UNLOCKS = [
-  'shoes-sandal',
-  'tunic-sky',
-  'hat-ribbon',
-  'fx-dust',
-  'shoes-sneakers',
-  'tunic-olive',
-  'hat-cat',
-  'face-glasses',
-  'fx-notes',
-  'hand-flag',
-  'back-backpack',
-  'hat-cap',
+  'hand-slime',
+  'face-blush',
+  'hat-sprout',
+  'hand-milk',
+  'shield-waxball',
+  'shoes-flippers',
+  'top-rainbow',
+  'hat-halo',
+  'hand-chicken',
+  'back-angel',
+  'shield-umbrella',
+  'top-duckring',
+  'hat-chick',
+  'hand-fan',
+  'face-ironmask',
+  'hat-horns',
+  'back-hood',
+  'shoes-gold',
+  'fx-shootingstar',
+  'fx-goldsteps',
 ];
 export const STAMPS_PER_UNLOCK = 5;
 

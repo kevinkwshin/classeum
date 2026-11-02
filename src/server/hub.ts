@@ -1714,7 +1714,7 @@ class Hub {
     if (days.includes(today)) return false;
     days.push(today);
     const s = d.students[studentId];
-    // One item per 5 footprints; anything already earned but missing (the rule used to be every 10) is caught up too.
+    // One item per 5 footprints; anything already earned but missing (the rule used to be every 10, and the list changed) is caught up too.
     const earned = ATTENDANCE_UNLOCKS.slice(0, Math.floor(days.length / STAMPS_PER_UNLOCK));
     for (const unlock of earned) {
       if (!s || s.inventory.includes(unlock)) continue;
