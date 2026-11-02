@@ -144,6 +144,9 @@ const SONGS = [MUSIC_SRC, AGORA_MUSIC_SRC];
 /** Music volumes: fuller in the lobby and on the results, softly under the questions. */
 export const MUSIC_FULL = 0.25;
 export const MUSIC_SOFT = 0.12;
+/** The 아고라's song stays gentle, well under the arena's: students are thinking and writing, not racing. */
+export const AGORA_MUSIC_FULL = 0.08;
+export const AGORA_MUSIC_SOFT = 0.045;
 // Under the tick-tock the music dips further, so the last three seconds are heard.
 const MUSIC_DUCK = 0.35;
 let musicLevel = 0;

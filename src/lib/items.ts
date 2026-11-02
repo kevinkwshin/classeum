@@ -179,8 +179,14 @@ export const ATTENDANCE_UNLOCKS = [
 ];
 export const STAMPS_PER_UNLOCK = 5;
 
-/** Items a quiz reward rotates through by default (attendance items are earned by coming). */
+/** Items a quiz or 아고라 can reward (attendance items are earned by coming). */
 export const QUIZ_REWARD_ITEMS = ITEMS.filter((i) => !ATTENDANCE_UNLOCKS.includes(i.id));
+
+/** The reward set to 무작위: each lesson draws its item from QUIZ_REWARD_ITEMS (src/server/prize.ts). */
+export const RANDOM_REWARD = 'random';
+
+/** How long the projector's draw plays before the item pops out: the capsules rattling, names flicking past. */
+export const PRIZE_SHOW_MS = 2400;
 
 export function itemById(id: string): ItemDef | undefined {
   return ITEMS.find((i) => i.id === id);

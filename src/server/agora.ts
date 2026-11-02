@@ -9,10 +9,11 @@
 import { ANSWER_MAX, COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TITLE_MAX, TOPIC_MAX, TOPICS_MAX, type AgoraPhase, type TopicReveal, type TopicSort } from '@/lib/agora';
 import { normalizeLook } from '@/lib/avatar';
 import { gradeDictation } from '@/lib/dictation';
-import { QUIZ_REWARD_ITEMS, itemById } from '@/lib/items';
+import { QUIZ_REWARD_ITEMS, RANDOM_REWARD, itemById } from '@/lib/items';
 import type { AvatarLook, ItemDef } from '@/lib/types';
 import { csvText } from './csv';
-import { db, newId, rewardItemAt, type AgoraRec, type TopicAnswerRec, type TopicRec } from './store';
+import type { Prize } from './prize';
+import { db, newId, type AgoraRec, type TopicAnswerRec, type TopicRec } from './store';
 
 /** Own keys only, so ids like 'constructor' or '__proto__' sent by a screen never match. */
 function own<T>(table: Record<string, T>, key: string | undefined): T | undefined {
@@ -125,19 +126,20 @@ function agoraFields(input: AgoraInput, prev?: AgoraRec): { title: string; topic
 export function addAgora(input: AgoraInput): string {
   const id = newId('ago');
   const agoras = db().agoras;
-  agoras[id] = { id, ...agoraFields(input), runs: {}, reward: { itemId: rewardItemAt(Object.keys(agoras).length) }, createdAt: Date.now() };
+  // 무작위: each lesson draws its item, so the teacher doesn't have to pick one.
+  agoras[id] = { id, ...agoraFields(input), runs: {}, reward: { itemId: RANDOM_REWARD }, createdAt: Date.now() };
   return id;
 }
 
-/** 이번 아고라 보상: one of the items a quiz can reward (attendance items are earned by coming). */
+/** 이번 아고라 보상: one of the items a quiz can reward (attendance items are earned by coming), or 무작위. */
 export function setReward(agoraId: string, itemId: string) {
   const a = own(db().agoras, agoraId);
   if (!a) throw new Error('그 아고라가 없어졌어요. 화면을 새로 고쳐 주세요.');
-  if (!QUIZ_REWARD_ITEMS.some((i) => i.id === itemId)) throw new Error('그 아이템은 보상으로 고를 수 없어요.');
+  if (itemId !== RANDOM_REWARD && !QUIZ_REWARD_ITEMS.some((i) => i.id === itemId)) throw new Error('그 아이템은 보상으로 고를 수 없어요.');
   a.reward = { itemId };
 }
 
-/** The 아고라's reward item; one the catalog no longer has falls back to its first. */
+/** The 아고라's set reward item; one the catalog no longer has (or 무작위, which a lesson draws) falls back to its first. */
 export function rewardItem(a: AgoraRec): ItemDef {
   const item = itemById(a.reward?.itemId ?? '');
   return item && QUIZ_REWARD_ITEMS.includes(item) ? item : QUIZ_REWARD_ITEMS[0];
@@ -333,6 +335,12 @@ export interface AgoraLive {
   pageNumbers: number[][];
   /** 받아쓰기: when the teacher's laptop started reading the sentence (server clock) and about how long it takes; null otherwise. */
   listening: { at: number; ms: number } | null;
+  /** Whether 오늘의 보상 is 무작위 for this lesson (as the 아고라 had it when the 대기실 opened). */
+  prizeRandom: boolean;
+  /** The lesson's item: the set one, or drawn as the 대기실 opens, at [다시 뽑기], or quietly at the start. */
+  prize: Prize;
+  /** '다시 생각해 봐' the teacher sent while students wrote: when, by student (that phone alone shows it). */
+  nudges: Map<string, number>;
 }
 
 /** A reward for a ⭐: the item, whether the student already had it (then nothing new reaches their 보관함), and when. */
@@ -358,7 +366,8 @@ export function toggleStar(a: AgoraRec, live: AgoraLive, x: TopicAnswerRec, stud
   const d = db();
   const s = own(d.students, studentId);
   if (!s || live.rewarded.has(studentId)) return;
-  const item = rewardItem(a);
+  // The lesson's own item (the 대기실 settled it); the set one only for a lesson from before draws.
+  const item = itemById(live.prize.itemId ?? '') ?? rewardItem(a);
   const alreadyOwned = s.inventory.includes(item.id);
   if (!alreadyOwned) s.inventory.push(item.id);
   const at = Date.now();
@@ -420,10 +429,10 @@ function endSummary(a: AgoraRec, live: AgoraLive) {
   return { answers: topics.reduce((n, t) => n + t.sent, 0), rewarded: live.rewarded.size, topics, parade };
 }
 
-/** What the 대기실 and the phones show of the reward: the item and its name. */
-function rewardView(a: AgoraRec) {
-  const item = rewardItem(a);
-  return { itemId: item.id, name: item.name };
+/** What the 대기실 and the phones show of the lesson's reward: the item (none before a 무작위 draw), and the draw. */
+function rewardView(live: AgoraLive) {
+  const item = itemById(live.prize.itemId ?? '');
+  return { itemId: item?.id ?? null, name: item?.name ?? '', random: live.prizeRandom, seq: live.prize.seq, revealAt: live.prize.revealAt };
 }
 
 const onBoard = (phase: AgoraPhase) => phase === 'writing' || phase === 'closed';
@@ -448,7 +457,7 @@ export function displayAgora(a: AgoraRec, t: TopicRec, live: AgoraLive) {
     review: live.review,
     index: live.index,
     count: a.topics.length,
-    reward: rewardView(a),
+    reward: rewardView(live),
     topic: { ...screenTopic(t, live), minutes: t.minutes, columns: t.columns, sort: t.sort },
     reveal: live.reveal,
     listening: live.listening,
@@ -496,13 +505,15 @@ export function studentAgora(a: AgoraRec, t: TopicRec, live: AgoraLive, studentI
     review: live.review,
     index: live.index,
     count: a.topics.length,
-    reward: rewardView(a),
+    reward: rewardView(live),
     topic: screenTopic(t, live),
     reveal: live.reveal,
     listening: live.listening,
-    mine: mine ? { text: mine.text, first: mine.first ?? null, at: mine.createdAt, star: !!mine.star } : null,
+    // `kept`: a 받아쓰기 answer a 마감 has kept for 통계, which can be changed but not taken back.
+    mine: mine ? { text: mine.text, first: mine.first ?? null, at: mine.createdAt, star: !!mine.star, kept: mine.closed !== undefined } : null,
     /** The reward this student got for a ⭐ in this session, for the box that opens on their phone. */
     praise: live.rewarded.get(studentId) ?? null,
+    nudgedAt: live.nudges.get(studentId) ?? 0,
     cards: onBoard(live.phase) ? roomCards(t, live) : [],
     timer: live.timer,
     end: live.phase === 'end' ? myAnswers(a, studentId) : null,
@@ -584,7 +595,7 @@ export function teacherAgora(live: AgoraLive | null, reviewing: string[] = []) {
       runs: Object.entries(a.runs)
         .filter(([classId]) => own(d.classes, classId))
         .map(([classId, at]) => ({ classId, at })),
-      reward: { itemId: rewardItem(a).id },
+      reward: { itemId: a.reward?.itemId === RANDOM_REWARD ? RANDOM_REWARD : rewardItem(a).id },
       topics,
       writers: Object.fromEntries(Object.entries(writers).map(([classId, ids]) => [classId, ids.size])),
       // As lessonOf: the class's last run, or its latest answer in an 아고라 from before runs were kept.
@@ -594,6 +605,7 @@ export function teacherAgora(live: AgoraLive | null, reviewing: string[] = []) {
     };
   });
   const session = live && {
+    id: live.id,
     agoraId: live.agoraId,
     classId: live.classId,
     className: own(d.classes, live.classId)?.name ?? '',
@@ -612,6 +624,8 @@ export function teacherAgora(live: AgoraLive | null, reviewing: string[] = []) {
     praisedAt: live.praisedAt,
     pageNumbers: live.pageNumbers,
     howto: live.howtoAt !== null,
+    reward: rewardView(live),
+    nudges: Object.fromEntries(live.nudges),
     // The console's cards, writers and stars: this class's answers to the open 아고라, the only texts that travel.
     answers: teacherAnswers(live.agoraId, live.classId) ?? {},
   };

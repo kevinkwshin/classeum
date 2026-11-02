@@ -83,6 +83,8 @@ body {
 }
 @keyframes clsPop { 0% { opacity: 0; transform: scale(0.4); } 60% { opacity: 1; transform: scale(1.12); } 100% { transform: scale(1); } }
 @keyframes clsShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-8px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(5px); } }
+/* 오늘의 보상 뽑기: the capsules rattling in the machine while the projector draws. */
+@keyframes clsRattle { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-14%, 10%); } 50% { transform: translate(12%, -12%); } 75% { transform: translate(-8%, 12%); } }
 @keyframes clsSlideUp { 0% { opacity: 0; transform: translateY(24px); } 100% { opacity: 1; transform: translateY(0); } }
 @keyframes clsUrgent { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
 @keyframes clsUnbox {
@@ -175,6 +177,7 @@ body {
   .cls-leaf { animation: clsLeaf 2.6s ease-in forwards; }
   .cls-pop { animation: clsPop 0.45s cubic-bezier(0.3, 0.7, 0.4, 1) both; }
   .cls-shake { animation: clsShake 0.45s ease-in-out both; }
+  .cls-rattle { animation: clsRattle 0.24s linear infinite; }
   .cls-slide-up { animation: clsSlideUp 0.4s ease-out both; }
   .cls-urgent { animation: clsUrgent 0.5s ease-in-out infinite; }
   .cls-unbox { animation: clsUnbox 0.9s cubic-bezier(0.3, 0.7, 0.4, 1) both; }

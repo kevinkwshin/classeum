@@ -11,9 +11,10 @@ import { GrammarCard, zoneLabels } from '@/components/GrammarCard';
 import { FullscreenHint } from '@/components/FullscreenHint';
 import { HowTo } from '@/components/HowTo';
 import { PixelAvatar } from '@/components/PixelAvatar';
+import { PrizeFace, prizeName, prizeStage } from '@/components/PrizeDraw';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK } from '@/lib/avatar';
-import { itemById, previewLook } from '@/lib/items';
+import { previewLook } from '@/lib/items';
 import type { AvatarLook } from '@/lib/types';
 
 export default function DisplayPage() {
@@ -443,25 +444,34 @@ function AgoraClock({ timer, now }: { timer: NonNullable<DisplayAgora['timer']>;
   );
 }
 
-function RewardCard({ s }: { s: SessionPublic }) {
-  if (!s.reward) return null;
-  const item = itemById(s.reward.itemId);
+function RewardCard({ s, serverNow }: { s: SessionPublic; serverNow: () => number }) {
+  const prize = s.reward;
+  // Redrawn through the projector's draw, so the item pops out on time.
+  useTicker(!!prize && serverNow() < prize.revealAt + 300, 100);
+  if (!prize) return null;
+  const now = serverNow();
+  const drawing = prizeStage(prize, now) === 'draw';
   return (
     // Spacing is capped by the screen height too, so the card leaves room for the class at 1280×720.
     <div className="flex items-center gap-[min(2.5rem,3.7vh)] rounded-[32px] bg-ink p-[min(2.5rem,3.7vh)] text-white">
-      <div className="flex h-[min(16vw,28.4vh)] w-[min(14vw,24.9vh)] shrink-0 items-end justify-center rounded-t-full rounded-b-3xl bg-gold pb-6">
-        {item && (
-          <div className="cls-float">
-            <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={168} />
-          </div>
-        )}
+      <div className={`flex h-[min(16vw,28.4vh)] w-[min(14vw,24.9vh)] shrink-0 justify-center rounded-t-full rounded-b-3xl bg-gold ${drawing ? 'items-center' : 'items-end pb-6'}`}>
+        <PrizeFace
+          prize={prize}
+          now={now}
+          size={168}
+          show={(item) => (
+            <div className="cls-float">
+              <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={168} />
+            </div>
+          )}
+        />
       </div>
       <div className="flex flex-col gap-5">
-        <div className="text-2xl font-bold text-gold">오늘의 보상</div>
-        <div className="text-6xl font-bold tracking-tight">{s.reward.itemName}</div>
+        <div className="text-2xl font-bold text-gold">{drawing ? '두근두근… 오늘의 보상은' : '오늘의 보상'}</div>
+        <div className={`text-6xl font-bold tracking-tight ${drawing ? 'text-white/60' : ''}`}>{prizeName(prize, prize.itemName, now)}</div>
         <div className="flex flex-wrap gap-3 text-2xl font-semibold">
-          <span className="rounded-2xl bg-[#24272F] px-5 py-3">도전 <b className="text-gold">정답 {s.reward.challengePct}%+</b></span>
-          <span className="rounded-2xl bg-[#24272F] px-5 py-3">성장 <b className="text-gold">내 평균 +{s.reward.growthPp}%p</b></span>
+          <span className="rounded-2xl bg-[#24272F] px-5 py-3">도전 <b className="text-gold">정답 {prize.challengePct}%+</b></span>
+          <span className="rounded-2xl bg-[#24272F] px-5 py-3">성장 <b className="text-gold">내 평균 +{prize.growthPp}%p</b></span>
         </div>
       </div>
     </div>
@@ -500,7 +510,7 @@ function Lobby({ view, s, serverNow }: { view: DisplayView; s: SessionPublic; se
         {howtoAt !== null && <HowTo key={howtoAt} startedAt={howtoAt} serverNow={serverNow} sound={view.sound !== false} />}
         {/* The teacher's 이름표 switch decides whether names show here too. */}
         <LobbyCrowd avatars={avatars.map((a) => ({ key: a.studentId, name: a.name, look: a.look }))} wantNames={view.nameLabels !== false} hidden={howtoAt !== null} />
-        {howtoAt === null && <RewardCard s={s} />}
+        {howtoAt === null && <RewardCard s={s} serverNow={serverNow} />}
       </div>
     </div>
   );
@@ -540,7 +550,7 @@ function AgoraLobby({ view, agora, serverNow }: { view: DisplayView; agora: Disp
               </>
             )}
           </div>
-          <AgoraRewardCard reward={agora.reward} />
+          <AgoraRewardCard reward={agora.reward} serverNow={serverNow} />
         </div>
       </div>
     </div>
@@ -548,21 +558,28 @@ function AgoraLobby({ view, agora, serverNow }: { view: DisplayView; agora: Disp
 }
 
 /** 오늘의 보상 beside the topic, in the frame of the arena's reward card: the item on a plain character, and how it is won. */
-function AgoraRewardCard({ reward }: { reward: DisplayAgora['reward'] }) {
-  const item = itemById(reward.itemId);
+function AgoraRewardCard({ reward, serverNow }: { reward: DisplayAgora['reward']; serverNow: () => number }) {
+  useTicker(serverNow() < reward.revealAt + 300, 100);
+  const now = serverNow();
+  const drawing = prizeStage(reward, now) === 'draw';
   return (
     <div className="flex w-[27vw] shrink-0 flex-col justify-center gap-[min(1rem,1.5vh)] rounded-[32px] bg-ink p-[min(2rem,3vh)] text-white">
       <div className="flex items-center gap-[1.4vw]">
-        <div className="flex h-[min(10vw,17.8vh)] w-[min(8.6vw,15.3vh)] shrink-0 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-3">
-          {item && (
-            <div className="cls-float">
-              <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={104} />
-            </div>
-          )}
+        <div className={`flex h-[min(10vw,17.8vh)] w-[min(8.6vw,15.3vh)] shrink-0 justify-center rounded-t-full rounded-b-2xl bg-gold ${drawing ? 'items-center' : 'items-end pb-3'}`}>
+          <PrizeFace
+            prize={reward}
+            now={now}
+            size={104}
+            show={(item) => (
+              <div className="cls-float">
+                <PixelAvatar look={previewLook(item, DEFAULT_LOOK)} size={104} />
+              </div>
+            )}
+          />
         </div>
         <div className="min-w-0">
-          <div className="text-2xl font-bold text-gold">오늘의 보상</div>
-          <div className="mt-1 break-keep text-[2.3vw] font-bold leading-tight tracking-tight">{reward.name}</div>
+          <div className="text-2xl font-bold text-gold">{drawing ? '두근두근…' : '오늘의 보상'}</div>
+          <div className={`mt-1 break-keep text-[2.3vw] font-bold leading-tight tracking-tight ${drawing ? 'text-white/60' : ''}`}>{prizeName(reward, reward.name, now)}</div>
         </div>
       </div>
       <span className="self-start rounded-2xl bg-[#24272F] px-5 py-3 text-xl font-semibold">

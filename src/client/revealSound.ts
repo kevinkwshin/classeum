@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Phase, RevealInfo } from '@/lib/types';
 import type { AgoraPhase, TopicReveal } from '@/lib/agora';
-import { MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playApplause, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
+import { AGORA_MUSIC_FULL, AGORA_MUSIC_SOFT, MUSIC_FULL, MUSIC_SOFT, MUSIC_SRC, TICK_LEAD_MS, TICK_PRE_MS, TICK_STEP_MS, playApplause, playCheer, playCrickets, playTickTock, setMusic, unlockAudio } from './sound';
 
 const CHANNEL = 'classeum-sound';
 // One function for every render: a fresh `() => true` default would re-run the sound effects on each re-render
@@ -91,12 +91,13 @@ export function musicLevel(phase: Phase | undefined, blank: boolean | undefined,
 }
 
 /**
- * The 아고라's song: fuller in the 대기실, while students write and at the 끝; softly while the teacher reads a topic
- * out (준비), once the answers show, or with writing closed. A 받아쓰기 topic is listened to, so it has none.
+ * The 아고라's song, always gentle (about a third of the arena's): a little fuller in the 대기실, while students write
+ * and at the 끝; softer while the teacher reads a topic out (준비), once the answers show, or with writing closed. A
+ * 받아쓰기 topic is listened to, so it has none.
  */
 export function agoraMusicLevel(phase: AgoraPhase, reveal: TopicReveal, dictation = false): number {
   if (dictation && phase !== 'lobby' && phase !== 'end') return 0;
-  return phase === 'lobby' || phase === 'end' || (phase === 'writing' && reveal === 'hidden') ? MUSIC_FULL : MUSIC_SOFT;
+  return phase === 'lobby' || phase === 'end' || (phase === 'writing' && reveal === 'hidden') ? AGORA_MUSIC_FULL : AGORA_MUSIC_SOFT;
 }
 
 /** Background music at `level` (0 for none), easing between levels and fading out when it stops; `src` picks the song. */

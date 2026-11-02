@@ -3,11 +3,11 @@ import { hashToken, hub } from '@/server/hub';
 import { isTeacher } from '@/server/auth';
 
 const TEACHER_ACTIONS = new Set([
-  'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control',
+  'approve', 'reject', 'approve-all', 'revoke', 'roster', 'remove-student', 'create-event', 'delete-event', 'reward', 'retry-round', 'open-lobby', 'close-session', 'control', 'draw-reward',
   'add-class', 'rename-class', 'delete-class', 'revoke-class', 'remove-students',
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete', 'agora-reward', 'agora-star', 'agora-speak', 'agora-accept', 'save-now',
+  'agora-card-delete', 'agora-reward', 'agora-star', 'agora-nudge', 'agora-speak', 'agora-accept', 'save-now',
 ]);
 
 /** Largest request: an 아고라 of ten topics, each with the longest question and 보조 설명 in Hangul, fits. */
@@ -97,6 +97,10 @@ export async function POST(request: NextRequest) {
         case 'close-session':
           h.closeSession(body.id === undefined ? undefined : String(body.id));
           break;
+        // [다시 뽑기] in an arena's or an 아고라's 대기실: the lesson and the draw the teacher's screen showed.
+        case 'draw-reward':
+          h.drawReward(String(body.id ?? ''), Number(body.seq));
+          break;
         case 'control':
           h.control(String(body.action));
           break;
@@ -171,6 +175,10 @@ export async function POST(request: NextRequest) {
           break;
         case 'agora-reward':
           h.setAgoraReward(String(body.agoraId), String(body.itemId));
+          break;
+        // '다시 생각해 봐' to one student, while the topic the teacher's screen showed is being written.
+        case 'agora-nudge':
+          h.nudgeAgora(String(body.studentId ?? ''), String(body.topicId ?? ''));
           break;
         case 'agora-star':
           h.starAgoraCard(String(body.studentId), body.topicId === undefined ? undefined : String(body.topicId), typeof body.star === 'boolean' ? body.star : undefined);

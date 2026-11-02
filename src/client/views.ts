@@ -1,5 +1,16 @@
 // Shapes of the views the server pushes over SSE (see src/server/hub.ts).
 import type { AvatarLook, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, WrongNote } from '@/lib/types';
+
+/**
+ * A lesson's 오늘의 보상 draw (아레나 or 아고라): the item, null before a 무작위 one is drawn; whether it is 무작위; the
+ * draw it is (each [다시 뽑기] adds one); and when the projector's draw shows it (server clock; 0 when nothing plays).
+ */
+export interface PrizeDraw {
+  itemId: string | null;
+  random: boolean;
+  seq: number;
+  revealAt: number;
+}
 import type { AgoraPhase, TopicReveal, TopicSort } from '@/lib/agora';
 
 export type { WrongNote };
@@ -22,7 +33,7 @@ export interface SessionPublic {
   pausedRemaining: number | null;
   checkpoint: { kind: 'block' | 'retry'; accuracy: number; done: number; total: number } | null;
   summary: { accuracy: number; rewarded: number; judged: number } | null;
-  reward: (RewardSetting & { itemName: string }) | null;
+  reward: (PrizeDraw & Omit<RewardSetting, 'itemId'> & { itemName: string }) | null;
 }
 
 export interface DisplayView {
@@ -73,9 +84,8 @@ export interface AgoraTopicView {
 /** 받아쓰기: the teacher's laptop started reading the sentence then (server clock), for about `ms`. */
 export type AgoraListening = { at: number; ms: number } | null;
 
-/** An 아고라's reward item, for the 대기실 and the phones. */
-export interface AgoraReward {
-  itemId: string;
+/** An 아고라 lesson's reward, for the 대기실 and the phones. */
+export interface AgoraReward extends PrizeDraw {
   name: string;
 }
 
@@ -142,9 +152,12 @@ export interface StudentAgora {
   /** Whether the teacher has shown every answer ([전체 공개]), or a 받아쓰기's sentence ([정답 공개]). */
   reveal: TopicReveal;
   listening: AgoraListening;
-  mine: { text: string; first: string | null; at: number; star: boolean } | null;
+  /** My answer; `kept` when a 마감 has kept it (a 받아쓰기 counted in 통계), so it can't be taken back. */
+  mine: { text: string; first: string | null; at: number; star: boolean; kept: boolean } | null;
   /** The reward I got for a ⭐ in this session: the item, whether I had it already, and when. */
   praise: { itemId: string; alreadyOwned: boolean; at: number } | null;
+  /** When the teacher last sent me '다시 생각해 봐' in this lesson (server clock; 0 for never). */
+  nudgedAt: number;
   cards: AgoraCard[];
   timer: AgoraTimer;
   end: MyAnswer[] | null;
@@ -249,6 +262,8 @@ export type AgoraTimer = { startedAt: number; endsAt: number } | null;
  * [공개], projector page, song, 입력 시간, who has come in, and the topics written to so far.
  */
 export interface TeacherAgoraLive {
+  /** The lesson, which a [다시 뽑기] names. */
+  id: string;
   agoraId: string;
   classId: string;
   className: string;
@@ -276,6 +291,10 @@ export interface TeacherAgoraLive {
   answers: Record<string, TeacherAnswer[]>;
   /** The 놀이 방법 demo is playing on the projector. */
   howto: boolean;
+  /** 오늘의 보상 for this lesson. */
+  reward: AgoraReward;
+  /** '다시 생각해 봐' sent this lesson: when, by student id. */
+  nudges: Record<string, number>;
 }
 
 /** An 아고라 on the teacher screen: its topics in order, and the classes that did it ([쓰기 시작], latest time). */

@@ -24,7 +24,7 @@ const ARENA_KEYS: [string, string][] = [
   ['→', '다음'],
   ['↑', '+5초'],
   ['S', '건너뛰기'],
-  ['B', '화면 가리기'],
+  ['B', '잠시 멈춤'],
   ['F', '전체 화면 (프로젝터)'],
 ];
 const AGORA_KEYS: [string, string][] = [
@@ -127,7 +127,9 @@ export function HelpButton({ view, onTab, first }: { view: TeacherView; onTab?: 
           {go('agora', '아고라로')}
         </div>
         <div className={LINE}>그다음은 오른쪽 아래 큰 버튼만 차례로 누르면 돼요.</div>
-        <div className={LINE}>받아쓰기는 [▶ 읽어 주기]로 읽어 주고, 좋은 답에는 [⭐ 칭찬]을 눌러요.</div>
+        <div className={LINE}>받아쓰기는 [▶ 읽어 주기]로 읽어 줘요.</div>
+        <div className={LINE}>좋은 답에는 [⭐ 칭찬], 고쳐 볼 답에는 [🤔 다시]를 눌러요.</div>
+        <div className={LINE}>지난 기록은 아고라 위 [통계]에서 봐요.</div>
         <Keys keys={AGORA_KEYS} />
       </div>
     ),

@@ -11,7 +11,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ANSWER_MAX, TITLE_MAX, TOPICS_MAX } from '../src/lib/agora';
 import { gradeDictation } from '../src/lib/dictation';
-import { ATTENDANCE_UNLOCKS, QUIZ_REWARD_ITEMS } from '../src/lib/items';
+import { ATTENDANCE_UNLOCKS, QUIZ_REWARD_ITEMS, RANDOM_REWARD } from '../src/lib/items';
 
 const BASE = process.argv[2] ?? 'http://localhost:3000';
 const PREFIX = '아고라점검';
@@ -22,7 +22,7 @@ const TEACHER = { Cookie: `cls_teacher=${readFileSync(join(DATA, 'teacher-key'),
 const TEACHER_ONLY = [
   'agora-add', 'agora-edit', 'agora-delete', 'agora-open', 'agora-review', 'agora-howto', 'agora-start', 'agora-rewrite', 'agora-close',
   'agora-next', 'agora-end', 'agora-time', 'agora-reveal', 'agora-settings', 'agora-page', 'agora-pages', 'agora-music', 'agora-card',
-  'agora-card-delete', 'agora-reward', 'agora-star', 'agora-speak', 'agora-accept',
+  'agora-card-delete', 'agora-reward', 'agora-star', 'agora-speak', 'agora-accept', 'agora-nudge', 'draw-reward',
 ];
 // The one place a page takes HTML: the QR picture the server draws itself.
 const QR_HTML = 'dangerouslySetInnerHTML={{ __html: view.qr }}';
@@ -184,7 +184,7 @@ async function run(teacher: Stream, display: Stream) {
   const liveAnswers = (id = t1): View[] => (teacher.view.agora.live?.answers?.[id] as View[] | undefined) ?? [];
   check('주제는 쓴 순서대로, 주제마다 입력 시간·열·순서를 따로 가진다', agora().topics.length === 3 && topic(t1).minutes === 10 && topic(t1).columns === 3 && topic(t1).sort === 'time' && topic(t2).minutes === 5 && topic(t3).minutes === null);
   const REWARD = QUIZ_REWARD_ITEMS[3];
-  check('아고라는 만들 때 보상 아이템을 하나 가진다 (아레나 이벤트처럼)', QUIZ_REWARD_ITEMS.some((i) => i.id === agora().reward?.itemId));
+  check('새 아고라의 보상은 무작위로 시작한다 (수업마다 대기실에서 뽑는다)', agora().reward?.itemId === RANDOM_REWARD);
   check('출석 아이템은 보상으로 고를 수 없다', (await post({ type: 'agora-reward', agoraId, itemId: ATTENDANCE_UNLOCKS[0] })).error === '그 아이템은 보상으로 고를 수 없어요.');
   check('없는 아이템도 고를 수 없다', (await post({ type: 'agora-reward', agoraId, itemId: 'no-such-item' })).error === '그 아이템은 보상으로 고를 수 없어요.');
   check('선생님이 이번 아고라 보상을 고른다', (await post({ type: 'agora-reward', agoraId, itemId: REWARD.id })).ok);
@@ -197,6 +197,11 @@ async function run(teacher: Stream, display: Stream) {
   const answerOf = (n: number, id = t1): View | undefined => liveAnswers(id).find((a) => a.studentId === studentId(A, n));
   const owns = (p: Phone) => !!(p.s.view.me?.inventory as string[] | undefined)?.includes(REWARD.id);
   const rewarded = (): string[] => teacher.view.agora.live?.rewarded ?? [];
+  /** Waits out 오늘의 보상's draw (a 무작위 reward's 대기실 draws as it opens): nothing starts while the projector plays it. */
+  const drawDone = async () => {
+    const at = Math.max(teacher.view.agora.live?.reward?.revealAt ?? 0, teacher.view.live?.reward?.revealAt ?? 0);
+    await sleep(Math.max(0, at - Date.now()) + 150);
+  };
   // When the teacher last gave a ⭐, as the projector and the teacher screen see it (the applause plays when it changes).
   const praisedAt = (): [number, number] => [display.view.agora?.praisedAt ?? -1, teacher.view.agora.live?.praisedAt ?? -1];
   /** Whether a stream ever carried this answer's text. */
@@ -228,7 +233,8 @@ async function run(teacher: Stream, display: Stream) {
   // A late heartbeat (an older number) and one from a tab the server doesn't have change nothing.
   await beat(a2, 'chkA2tab', true, 2);
   await beat(a3, 'noSuchTab', true, 1);
-  await sleep(200);
+  // A heartbeat's push waits for the 300 ms since the last one.
+  await sleep(400);
   check('…닫으면 사라지고, 늦게 온 신호나 없는 탭의 신호는 무시된다', reviewing().length === 0, JSON.stringify(reviewing()));
   const a3tab = tab(a3, 'chkA3tab');
   await sleep(400);
@@ -331,6 +337,23 @@ async function run(teacher: Stream, display: Stream) {
   check('2번이 자기 답을 지운다', (await post({ type: 'agora-unanswer', token: a2.token, topicId: t1 }, {})).ok);
   await sleep(200);
   check('2번 답이 사라졌다', a2.s.view.agora.mine === null && !liveAnswers().some((a) => a.text === SECRET2));
+
+  section('다시 생각해 봐');
+  // [🤔 다시] on the console: that student's phone alone hears it, while writing is open on the topic the console showed.
+  const nudgedAt = (p: Phone): number => p.s.view.agora?.nudgedAt ?? 0;
+  check('선생님이 1번에게 [🤔 다시]를 보낸다', (await post({ type: 'agora-nudge', studentId: studentId(A, 1), topicId: t1 })).ok);
+  await sleep(200);
+  check('…1번 폰만 받고, 선생님 화면도 보낸 것을 안다', nudgedAt(a1) > 0 && nudgedAt(a3) === 0 && teacher.view.agora.live?.nudges?.[studentId(A, 1)] === nudgedAt(a1));
+  check('…프로젝터와 다른 반 폰에는 가지 않는다', !display.raw.some((r) => r.includes('nudge')) && !b1.s.raw.some((r) => r.includes('nudge')));
+  const nudged1 = nudgedAt(a1);
+  await post({ type: 'agora-nudge', studentId: studentId(A, 1), topicId: t1 });
+  await sleep(200);
+  check('…4초 안에 또 눌러도 한 번만 간다', nudgedAt(a1) === nudged1);
+  await post({ type: 'agora-nudge', studentId: studentId(A, 2), topicId: t1 });
+  await post({ type: 'agora-nudge', studentId: studentId(B, 7), topicId: t1 });
+  await post({ type: 'agora-nudge', studentId: studentId(A, 3), topicId: t2 });
+  await sleep(200);
+  check('답이 없는 학생, 다른 반 학생, 떠 있지 않은 주제(늦게 도착한 클릭)에는 가지 않는다', nudgedAt(a2) === 0 && nudgedAt(a3) === 0 && Object.keys(teacher.view.agora.live?.nudges ?? {}).join() === studentId(A, 1));
 
   section('공개');
   check('2번이 다시 낸다', (await post({ type: 'agora-answer', token: a2.token, topicId: t1, text: SECRET2 }, {})).ok);
@@ -442,6 +465,9 @@ async function run(teacher: Stream, display: Stream) {
   await sleep(200);
   check('마감: 기기는 마감을 보고, 프로젝터는 그대로 띄워 둔다', a1.s.view.agora?.phase === 'closed' && display.view.agora?.phase === 'closed' && display.view.agora.timer === null);
   check('마감 뒤에는 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId: t1, text: 'late' }, {})).error === '마감됐어요.');
+  await post({ type: 'agora-nudge', studentId: studentId(A, 3), topicId: t1 });
+  await sleep(150);
+  check('마감 뒤에는 [🤔 다시]가 가지 않는다', nudgedAt(a3) === 0);
   check('마감 뒤 +1분은 아무것도 바꾸지 않는다', (await post({ type: 'agora-time', minutes: 1 })).ok && display.view.agora.phase === 'closed' && display.view.agora.timer === null);
   check('열려 있는 동안에는 그 반만 등록할 수 있다', (await post({ type: 'register', token: randomBytes(24).toString('hex'), classId: B.id, number: 9, name: '늦은학생' }, {})).error?.includes(`${A.name} 수업`));
   // One answer shown on its own, to see a new session let go of it.
@@ -628,11 +654,53 @@ async function run(teacher: Stream, display: Stream) {
   check('시간이 끝나면 쓸 수 없다', (await post({ type: 'agora-answer', token: a1.token, topicId: t3m, text: 'late' }, {})).error === '마감됐어요.');
   await post({ type: 'agora-end' });
   await post({ type: 'agora-open', agoraId: aNone, classId: A.id });
+  await sleep(200);
+  await drawDone();
   await post({ type: 'agora-start' });
   await sleep(200);
   check('시간 제한이 없는 주제에는 시계가 없다', display.view.agora?.topic.id === tNone && display.view.agora.phase === 'writing' && display.view.agora.timer === null);
   check('시간 제한이 없으면 ±1분은 아무것도 바꾸지 않는다', (await post({ type: 'agora-time', minutes: 1 })).ok && display.view.agora.timer === null);
   await post({ type: 'agora-end' });
+
+  section('오늘의 보상 뽑기');
+  // 무작위: each lesson draws in its 대기실, at random among the items the fewest of the class own (here all but REWARD,
+  // which 1~3번 got for their ⭐), never the one just drawn, and the item is fixed as the lesson leaves the 대기실.
+  check('[다른 아고라]의 보상은 무작위 그대로다', agora(other).reward?.itemId === RANDOM_REWARD);
+  const openedAt = Date.now();
+  await post({ type: 'agora-open', agoraId: other, classId: A.id });
+  await sleep(300);
+  const prize = (): View => teacher.view.agora.live?.reward ?? {};
+  const lesson: string = teacher.view.agora.live?.id;
+  const drawn1 = prize();
+  check('대기실을 열면 저절로 뽑는다: 선생님 화면·프로젝터·폰이 같은 뽑기를 받는다', drawn1.random === true && typeof drawn1.itemId === 'string' && drawn1.seq === 1 && drawn1.revealAt > openedAt && display.view.agora?.reward?.itemId === drawn1.itemId && display.view.agora.reward.revealAt === drawn1.revealAt && a2.s.view.agora?.reward?.seq === 1, JSON.stringify(drawn1));
+  check('…반 학생들이 가진 아이템(시험 보상)은 뽑지 않는다', drawn1.itemId !== REWARD.id);
+  check('뽑는 동안에는 쓰기를 시작할 수 없다', (await post({ type: 'agora-start' })).error === '보상을 뽑는 중이에요. 다 뽑히면 시작해요.' && teacher.view.agora.live?.phase === 'lobby');
+  await post({ type: 'draw-reward', id: lesson, seq: 1 });
+  await sleep(200);
+  check('…뽑는 동안 [다시 뽑기]는 아무것도 하지 않는다', prize().seq === 1 && prize().itemId === drawn1.itemId);
+  await drawDone();
+  await post({ type: 'draw-reward', id: lesson, seq: 0 });
+  await post({ type: 'draw-reward', id: 'an-older-lesson', seq: 1 });
+  await sleep(200);
+  check('지난 뽑기나 다른 수업을 가리키는(늦게 도착한) [다시 뽑기]는 무시된다', prize().seq === 1 && prize().itemId === drawn1.itemId);
+  check('[다시 뽑기]', (await post({ type: 'draw-reward', id: lesson, seq: 1 })).ok);
+  await post({ type: 'draw-reward', id: lesson, seq: 1 });
+  await sleep(200);
+  const drawn2 = prize();
+  check('…방금 것과 다른 아이템을 한 번만 새로 뽑는다 (두 번 온 클릭은 무시)', drawn2.seq === 2 && drawn2.itemId !== drawn1.itemId && drawn2.itemId !== REWARD.id && display.view.agora?.reward?.itemId === drawn2.itemId, JSON.stringify(drawn2));
+  await drawDone();
+  check('다 뽑히면 쓰기를 시작한다', (await post({ type: 'agora-start' })).ok);
+  await post({ type: 'draw-reward', id: lesson, seq: 2 });
+  await sleep(200);
+  check('…시작하면 보상이 정해져 [다시 뽑기]는 아무것도 하지 않는다', prize().seq === 2 && prize().itemId === drawn2.itemId);
+  const tOther: string = agora(other).topics[0].id;
+  await post({ type: 'agora-answer', token: a1.token, topicId: tOther, text: '뽑기 점검' }, {});
+  await sleep(200);
+  await post({ type: 'agora-star', studentId: studentId(A, 1), topicId: tOther, star: true });
+  await sleep(300);
+  check('⭐을 받으면 그 수업에 뽑힌 아이템을 받는다', a1.s.view.agora?.praise?.itemId === drawn2.itemId && (a1.s.view.me?.inventory as string[]).includes(drawn2.itemId));
+  await post({ type: 'agora-end' });
+  await sleep(200);
 
   section('받아쓰기');
   const SENTENCE = 'Where did you go last weekend?';
@@ -655,6 +723,7 @@ async function run(teacher: Stream, display: Stream) {
   await sleep(300);
   check('대기실: 프로젝터와 폰에는 받아쓰기라는 것만 가고 문장은 없다', display.view.agora?.topic.kind === 'dictation' && display.view.agora.topic.text === '' && display.view.agora.topic.answer === undefined && a1.s.view.agora?.topic.kind === 'dictation' && a1.s.view.agora.topic.answer === undefined);
   check('[정답 공개]는 쓰기 전에는 아무것도 하지 않는다', (await post({ type: 'agora-reveal', public: true, index: 0 })).ok);
+  await drawDone();
   await post({ type: 'agora-start' });
   await sleep(300);
   check('쓰기 시작: 폰과 프로젝터는 받아쓰기로 바뀌고 시계는 없다', display.view.agora?.phase === 'writing' && display.view.agora.timer === null && a1.s.view.agora?.phase === 'writing');
@@ -678,6 +747,7 @@ async function run(teacher: Stream, display: Stream) {
   check('공개 전에는 문장이 프로젝터, 쓰지 않은 3번, 다른 반 폰에 한 번도 가지 않았다', !carried(display, 'go last weekend') && !carried(a3.s, 'go last weekend') && !carried(b1.s, 'go last weekend') && !carried(a2.s, 'go last weekend'));
   check('공개 전 보조 설명도 어디에도 가지 않았다', !carried(display, '정답이 들어간 설명') && !carried(a1.s, '정답이 들어간 설명'));
   check('선생님 화면은 수업 중인 반의 받아쓰기 답을 받는다', liveAnswers(d1).length === 2);
+  check('3번은 한 단어를 바꿔 쓰고 두 단어를 놓친다', (await post({ type: 'agora-answer', token: a3.token, topicId: d1, text: 'Where do you go' }, {})).ok);
   await post({ type: 'agora-close' });
   await sleep(200);
   check('늦게 도착한(다른 주제를 가리키는) [정답 공개]는 무시된다', (await post({ type: 'agora-reveal', public: true, index: 2 })).ok && display.view.agora?.topic.answer === undefined);
@@ -724,6 +794,37 @@ async function run(teacher: Stream, display: Stream) {
   check('…선생님 쿠키 없이는 막힌다', (await fetch(`${BASE}/api/agora-answers?agoraId=${dict}&classId=${A.id}&format=csv`)).status === 403);
   check('답이 있는 받아쓰기는 문장을 바꿀 수 없다', (await post({ type: 'agora-edit', agoraId: dict, title: `${MARK} 받아쓰기`, topics: [{ id: d1, kind: 'dictation', text: 'Where did you go?' }, { id: w2, text: SENTENCE }, { id: d3, kind: 'dictation', text: SKIPPED }] })).error?.includes('답이 있는 받아쓰기는'));
   check('…작문으로 바꿀 수도 없다', (await post({ type: 'agora-edit', agoraId: dict, title: `${MARK} 받아쓰기`, topics: [{ id: d1, text: SENTENCE }, { id: w2, text: SENTENCE }, { id: d3, kind: 'dictation', text: SKIPPED }] })).error?.includes('답이 있는 받아쓰기는'));
+  // The same 아고라 opened again for the class: its 받아쓰기 opens to write again, but an answer a 마감 kept stays.
+  await post({ type: 'agora-open', agoraId: dict, classId: A.id });
+  await sleep(300);
+  await drawDone();
+  await post({ type: 'agora-start' });
+  await sleep(300);
+  check('같은 반에서 다시 열면 폰은 마감된 받아쓰기 답을 안다 ([내 답 지우기] 없음)', a1.s.view.agora?.phase === 'writing' && a1.s.view.agora.mine?.kept === true && a3.s.view.agora?.mine?.kept === true);
+  check('…그 답은 지울 수 없다 (고쳐 내기만)', (await post({ type: 'agora-unanswer', token: a1.token, topicId: d1 }, {})).error === '마감된 받아쓰기 답은 지울 수 없어요. 고쳐서 제출해 주세요.');
+  await post({ type: 'agora-end' });
+  await sleep(300);
+
+  section('아고라 통계');
+  const statsRes = await fetch(`${BASE}/api/agora-stats?class=${A.id}`, { headers: TEACHER });
+  const st = (await statsRes.json()) as View;
+  const g2 = gradeDictation(SENTENCE, 'Where did you go last week?');
+  const g3 = gradeDictation(SENTENCE, 'Where do you go');
+  const near = (x: unknown, y: number) => typeof x === 'number' && Math.abs(x - y) < 1e-9;
+  const sOf = (n: number): View => (st.students as View[]).find((x) => x.number === n)!;
+  const sentence = (id: string): View | undefined => (st.sentences as View[]).find((x) => x.topicId === id);
+  check('아고라 통계는 선생님만 (쿠키 없이는 화면용도 엑셀도 막힌다)', statsRes.status === 200 && (await fetch(`${BASE}/api/agora-stats?class=${A.id}`)).status === 403 && (await fetch(`${BASE}/api/agora-stats?class=${A.id}&format=csv`)).status === 403);
+  check('…없는 반은 없다고 답한다', (await fetch(`${BASE}/api/agora-stats?class=no-such-class`, { headers: TEACHER })).status === 404);
+  check('받아쓰기는 처음 마감 때 답으로: 1번 정답, 2번 정답 인정, 3번 틀림, 4번은 기록 없음', sOf(1).dictation.right === 1 && sOf(1).dictation.graded === 1 && sOf(2).dictation.right === 1 && sOf(2).dictation.accepted === 1 && near(sOf(2).dictation.accuracy, g2.accuracy) && sOf(3).dictation.right === 0 && sOf(3).dictation.graded === 1 && near(sOf(3).dictation.accuracy, g3.accuracy) && sOf(4).dictation.graded === 0 && sOf(4).dictation.accuracy === null, JSON.stringify((st.students as View[]).map((x) => x.dictation)));
+  check('…쓰다가 건너뛴 받아쓰기는 중단: 0점으로 세지 않는다', sOf(1).dictation.stopped === 1 && near(sOf(1).dictation.accuracy, 1) && (sOf(1).entries as View[]).map((e) => e.result).join() === 'right,stopped');
+  check('…반 전체는 모든 답을 한꺼번에 (정답 2/3, 정확도는 세 답의 평균)', st.class.right === 2 && st.class.graded === 3 && near(st.class.accuracy, (1 + g2.accuracy + g3.accuracy) / 3), JSON.stringify(st.class));
+  check('자주 놓친 말: 정답 인정 답은 빼고, 한 답에서 한 번씩', (sOf(2).missed as View[]).length === 0 && (sOf(3).missed as View[]).map((m) => m.word).sort().join() === 'did,last,weekend', JSON.stringify(sOf(3).missed));
+  check('문장별: 반이 한 순서대로, 반이 놓친 말은 두 명 이상만', sentence(d1)?.right === 2 && sentence(d1)?.graded === 3 && sentence(d1)?.missed.length === 0 && sentence(d3)?.graded === 0 && sentence(d3)?.accuracy === null && (st.sentences as View[]).findIndex((x) => x.topicId === d1) < (st.sentences as View[]).findIndex((x) => x.topicId === d3));
+  check('작문은 점수 없이 낸 수만 (받아쓰기 기록에 작문은 없다)', sOf(1).writing >= 1 && sOf(4).writing === 0 && sOf(4).stars === 0 && (st.students as View[]).every((x) => (x.entries as View[]).every((e) => e.topicId === d1 || e.topicId === d3)));
+  check('다른 반 통계에는 이 반 받아쓰기가 없다', ((await (await fetch(`${BASE}/api/agora-stats?class=${B.id}`, { headers: TEACHER })).json()) as View).sentences.length === 0);
+  const sCsv = await fetch(`${BASE}/api/agora-stats?class=${A.id}&format=csv`, { headers: TEACHER });
+  const sCsvText = await sCsv.text();
+  check('반 전체 받아쓰기 엑셀: 아고라 이름과 결과(정답 · 정답 인정 · 틀림 · 중단 · 안 냄)', sCsv.status === 200 && sCsvText.includes(`${MARK} 받아쓰기`) && [',정답,', ',정답 인정,', ',틀림,', ',중단,', ',안 냄,'].every((x) => sCsvText.includes(x)));
   const g = (target: string, answer: string) => gradeDictation(target, answer);
   check('채점: 대소문자와 문장부호는 보지 않는다', g('What did you do?', 'what did you do').perfect);
   check('채점: 15와 fifteen은 같다', g('I have 15 apples.', 'I have fifteen apples').perfect);
@@ -751,11 +852,21 @@ async function run(teacher: Stream, display: Stream) {
   check('시험 아레나 이벤트를 만든다', !!quizId, draft.error);
   await post({ type: 'open-lobby', eventId: quizId, classId: A.id });
   await sleep(300);
+  check('새 아레나 이벤트의 보상도 무작위로 시작한다', (teacher.view.events as View[]).find((e) => e.id === quizId)?.reward?.itemId === RANDOM_REWARD);
   const arenaId: string | undefined = teacher.view.live?.id;
+  const arenaPrize = (): View => teacher.view.live?.reward ?? {};
+  const arenaDrawn = arenaPrize();
+  check('아레나 대기실도 열 때 저절로 뽑고, 프로젝터가 같은 뽑기를 받는다', arenaDrawn.random === true && typeof arenaDrawn.itemId === 'string' && arenaDrawn.seq === 1 && display.view.session?.reward?.itemId === arenaDrawn.itemId && display.view.session.reward.revealAt === arenaDrawn.revealAt, JSON.stringify(arenaDrawn));
+  check('…뽑는 동안에는 퀴즈를 시작할 수 없다', (await post({ type: 'control', action: 'start' })).error === '보상을 뽑는 중이에요. 다 뽑히면 시작해요.' && teacher.view.live?.phase === 'lobby');
   check('아레나(대기실)가 열려 있으면 아고라는 열리지 않는다', !!arenaId && !!(await post({ type: 'agora-open', agoraId, classId: A.id })).error?.includes('아레나가 열려'));
   await post({ type: 'close-session', id: 'an-older-arena' });
   await sleep(200);
   check('다른(지난) 아레나를 가리키는 닫기는 아무것도 닫지 않는다', teacher.view.live?.id === arenaId);
+  await drawDone();
+  check('아레나 대기실의 [다시 뽑기]', (await post({ type: 'draw-reward', id: arenaId, seq: 1 })).ok);
+  await sleep(200);
+  check('…다른 아이템을 뽑아 프로젝터도 같은 것을 받는다', arenaPrize().seq === 2 && arenaPrize().itemId !== arenaDrawn.itemId && display.view.session?.reward?.itemId === arenaPrize().itemId);
+  await drawDone();
   await post({ type: 'control', action: 'start' });
   await sleep(500);
   check('퀴즈가 진행 중이면 닫기를 거절한다(결과를 잃지 않게)', !!(await post({ type: 'close-session', id: arenaId })).error?.includes('진행 중') && teacher.view.live?.id === arenaId);

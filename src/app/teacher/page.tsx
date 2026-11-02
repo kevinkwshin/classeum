@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useClock } from '@/client/clock';
 import { formatClock, formatDay, remainingMs, shortcutAction, useLive, useTicker } from '@/client/live';
-import type { TeacherAgora, TeacherAgoraLive, TeacherAnswer, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
+import type { PrizeDraw, TeacherAgora, TeacherAgoraLive, TeacherAnswer, TeacherEvent, TeacherLive, TeacherStudent, TeacherTopic, TeacherView } from '@/client/views';
 import { Field } from '@/components/Field';
 import { HelpButton } from '@/components/HelpButton';
 import { AGORA_MUSIC_SRC, AGORA_MUSIC_TITLE, MUSIC_TITLE } from '@/client/sound';
@@ -10,10 +10,11 @@ import { agoraMusicLevel, musicLevel, useAudioUnlock, useBackgroundMusic, useCou
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { Logo } from '@/components/Logo';
 import { ProjectorLink, openProjector } from '@/components/ProjectorLink';
+import { CapsuleMachine, PrizeFace, prizeName, prizeStage } from '@/components/PrizeDraw';
 import { AgoraGuide, SetupGuide } from '@/components/SetupGuide';
 import { TeacherGate } from '@/components/TeacherGate';
 import { DEFAULT_LOOK, normalizeLook } from '@/lib/avatar';
-import { ATTENDANCE_UNLOCKS, ITEMS, THEMES, itemById, previewLook } from '@/lib/items';
+import { ATTENDANCE_UNLOCKS, ITEMS, RANDOM_REWARD, THEMES, itemById, previewLook } from '@/lib/items';
 import { COLUMN_CHOICES, DEFAULT_MINUTES, MINUTE_CHOICES, NOTE_MAX, TITLE_MAX, TOPIC_MAX, TOPICS_MAX, agoraMinutes, type TopicSort } from '@/lib/agora';
 import { gradeDictation, type DictationWord } from '@/lib/dictation';
 import { josa } from '@/lib/josa';
@@ -170,7 +171,7 @@ function TeacherApp() {
             }}
           />
         )}
-        {tab === 'agora' && !running && <Agora view={view} act={act} onStudents={() => setTab('students')} />}
+        {tab === 'agora' && !running && <Agora view={view} act={act} serverNow={serverNow} onStudents={() => setTab('students')} />}
       </main>
       {/* During a quiz it floats over the console; otherwise it gets its own column on wide screens so it covers no buttons. */}
       {view.requests.length > 0 &&
@@ -235,11 +236,16 @@ function Btn({ children, onClick, kind = 'dark', disabled, className = '', title
 
 /** The arena tab's title: 이벤트 or 통계, with the other one in gray to switch to. */
 function ArenaTitle({ value, onChange }: { value: ArenaView; onChange: (next: ArenaView) => void }) {
+  return <ViewTitle value={value} onChange={onChange} views={[['events', '이벤트'], ['stats', '통계']]} />;
+}
+
+/** A tab's title that switches what it shows (아레나's 이벤트 | 통계, 아고라's 아고라 | 통계): the one up in ink, the other in gray. */
+function ViewTitle<T extends string>({ value, onChange, views }: { value: T; onChange: (next: T) => void; views: readonly (readonly [T, string])[] }) {
   return (
     <div className="flex items-baseline gap-4">
-      {(['events', 'stats'] as const).map((v) => (
+      {views.map(([v, label]) => (
         <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={`text-2xl font-bold ${value === v ? 'text-ink' : 'text-[#A3A8B4] hover:text-ink-2'}`}>
-          {v === 'events' ? '이벤트' : '통계'}
+          {label}
         </button>
       ))}
     </div>
@@ -643,16 +649,30 @@ function EventDetail({ view, event, act, onStudents, onExcel }: { view: TeacherV
 
 /** The reward picker of 이번 아레나 보상 and 이번 아고라 보상: the chosen item on a plain character, and every item a quiz can give, by theme. */
 function RewardItemPicker({ itemId, onPick }: { itemId: string; onPick: (id: string) => void }) {
-  const item = itemById(itemId);
+  const random = itemId === RANDOM_REWARD;
+  const item = random ? undefined : itemById(itemId);
   return (
     <div className="flex gap-6">
       <div className="flex w-48 shrink-0 flex-col items-center gap-3">
-        <div className="flex h-56 w-48 items-end justify-center rounded-t-full rounded-b-2xl bg-gold pb-4">{item && <IdleAvatar key={item.id} look={previewLook(item, DEFAULT_LOOK)} size={150} seed={item.id} />}</div>
-        <div className="text-lg font-bold">{item?.name}</div>
+        <div className={`flex h-56 w-48 justify-center rounded-t-full rounded-b-2xl bg-gold ${random ? 'items-center' : 'items-end pb-4'}`}>
+          {random ? <CapsuleMachine size={128} still /> : item && <IdleAvatar key={item.id} look={previewLook(item, DEFAULT_LOOK)} size={150} seed={item.id} />}
+        </div>
+        <div className="text-lg font-bold">{random ? '무작위' : item?.name}</div>
+        {random && <div className="-mt-2 text-center text-sm text-ink-3">대기실에서 저절로 뽑아요</div>}
       </div>
-      {/* Grouped by theme; attendance items are earned by coming, so they aren't offered here. The scroll box clips
-          what sticks out, so 4 px of padding (cancelled by the margin) keeps the chosen item's ring whole. */}
+      {/* 무작위 first (each lesson draws, the class's least-owned items first), then the items grouped by theme;
+          attendance items are earned by coming, so they aren't offered here. The scroll box clips what sticks out,
+          so 4 px of padding (cancelled by the margin) keeps the chosen item's ring whole. */}
       <div className="-m-1 flex max-h-[428px] flex-1 flex-col gap-4 overflow-y-auto p-1">
+        <div>
+          <div className="mb-1.5 text-xs font-bold text-ink-3">뽑기</div>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(max(72px,calc(20%_-_0.5rem)),1fr))] gap-2">
+            <button type="button" aria-pressed={random} onClick={() => onPick(RANDOM_REWARD)} className={`flex flex-col items-center gap-1 rounded-2xl p-2 ${random ? 'bg-[#FFF6DE] ring-2 ring-gold' : 'bg-bg'}`}>
+              <span className="flex h-12 items-center"><CapsuleMachine size={40} still /></span>
+              <span className="text-[11px] font-semibold leading-tight">무작위</span>
+            </button>
+          </div>
+        </div>
         {THEMES.map((th) => {
           const list = ITEMS.filter((it) => it.theme === th.id && !ATTENDANCE_UNLOCKS.includes(it.id));
           if (list.length === 0) return null;
@@ -943,7 +963,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
     return () => window.removeEventListener('keydown', onKey);
   }, [running, live.paused, control, skipSection]);
 
-  if (live.phase === 'lobby') return <Lobby view={view} live={live} act={act} control={control} />;
+  if (live.phase === 'lobby') return <Lobby view={view} live={live} act={act} control={control} serverNow={serverNow} />;
   if (live.phase === 'summary') {
     return (
       <div className="flex flex-col items-center gap-8 p-12">
@@ -1041,7 +1061,7 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
           <MusicSwitch dark on={live.music} onToggle={() => control('music')} />
           {/* B: the projector goes blank and the quiz holds, to call the class's eyes to the teacher; pressed again it comes back. */}
           <button type="button" onClick={() => control('blank')} className={`h-10 rounded-xl border border-[#3D4354] px-4 text-sm font-semibold ${live.blank ? 'bg-white text-ink' : ''}`}>
-            {live.blank ? '화면 보이기' : '화면 가리기'} <span className="text-xs text-ink-3">B</span>
+            잠시 멈춤 <span className="text-xs text-ink-3">B</span>
           </button>
           <HelpButton view={view} first="arena" />
           <button
@@ -1165,8 +1185,37 @@ function Console({ view, live, act, serverNow }: { view: TeacherView; live: Teac
   );
 }
 
-function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherLive; act: Send; control: (a: string) => void }) {
+/**
+ * 오늘의 보상 in a 대기실 (arena or 아고라): the projector's draw as it plays, then the item; [다시 뽑기] for 무작위 draws
+ * another (never the same), naming the lesson and the draw this screen saw so a late click draws nothing.
+ */
+function LobbyPrize({ prize, name, lessonId, act, serverNow }: { prize: PrizeDraw; name: string; lessonId: string; act: Send; serverNow: () => number }) {
+  useTicker(serverNow() < prize.revealAt + 300, 150);
+  const now = serverNow();
+  const drawing = prizeStage(prize, now) === 'draw';
+  return (
+    <Card className="flex items-center gap-4 !py-3">
+      <div className={`flex h-14 w-14 shrink-0 justify-center overflow-hidden rounded-t-full rounded-b-xl bg-gold ${drawing ? 'items-center' : 'items-end'}`}>
+        <PrizeFace prize={prize} now={now} size={48} show={(item) => <IdleAvatar look={previewLook(item, DEFAULT_LOOK)} size={48} seed={item.id} />} />
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-ink-3">{drawing ? '뽑는 중…' : '오늘의 보상'}</div>
+        <div className={`truncate text-lg font-bold ${drawing ? 'text-ink-3' : ''}`}>{prizeName(prize, name, now)}</div>
+      </div>
+      {prize.random && (
+        <Btn kind="ghost" disabled={drawing} title={drawing ? '뽑는 중이에요' : '다른 보상을 뽑아요'} onClick={() => act({ type: 'draw-reward', id: lessonId, seq: prize.seq }).catch(() => undefined)} className="ml-auto shrink-0">
+          🎲 다시 뽑기
+        </Btn>
+      )}
+    </Card>
+  );
+}
+
+function Lobby({ view, live, act, control, serverNow }: { view: TeacherView; live: TeacherLive; act: Send; control: (a: string) => void; serverNow: () => number }) {
   const mine = view.students.filter((s) => s.classId === live.classId);
+  // While the projector draws 오늘의 보상 the quiz waits for it (the server says so too).
+  const drawing = !!live.reward && serverNow() < live.reward.revealAt;
+  useTicker(drawing, 200);
   const joined = mine.filter((s) => s.joined);
   const notJoined = mine.filter((s) => !s.joined);
   return (
@@ -1194,12 +1243,13 @@ function Lobby({ view, live, act, control }: { view: TeacherView; live: TeacherL
           </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'close-session', id: live.id })}>대기실 닫기</Btn>
           {/* With nobody in, it asks first: starting is still allowed (to try the quiz alone), just not by a slip. */}
-          <Btn kind="accent" onClick={() => { if (joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) control('start'); }} className="px-6">퀴즈 시작</Btn>
+          <Btn kind="accent" disabled={drawing} title={drawing ? '보상을 뽑는 중이에요' : undefined} onClick={() => { if (joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) control('start'); }} className="px-6">퀴즈 시작</Btn>
         </div>
       </div>
       <div className="flex gap-5">
         {/* The right column is where the floating 등록 요청 card sits, so the controls stay on the left. */}
         <div className="flex min-w-0 flex-1 flex-col gap-5">
+          {live.reward && <LobbyPrize prize={live.reward} name={live.reward.itemName} lessonId={live.id} act={act} serverNow={serverNow} />}
           {live.plan && (
             // 오늘 낼 문제: a type left out here isn't asked today, and doesn't count toward the reward bar.
             <Card className="flex flex-wrap items-center gap-2.5 !py-4">
@@ -1537,7 +1587,9 @@ function useClassAnswers(agoraId: string, classId: string | null, key: string) {
  * The 아고라 tab, laid out as the arena's events: every 아고라, the newest first, each made once and opened for today's
  * class with [대기실 열기]. While one is open its 대기실 is here; from [쓰기 시작] AgoraConsole takes the whole screen.
  */
-function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStudents: () => void }) {
+function Agora({ view, act, serverNow, onStudents }: { view: TeacherView; act: Send; serverNow: () => number; onStudents: () => void }) {
+  // The tab's title switches it to 통계, as the arena's does.
+  const [shown, setShown] = useState<'list' | 'stats'>('list');
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<AgoraDraft | null>(null);
   // [수정]'s table as it opened: closing it with changes asks first. A new 아고라's draft is kept instead (keepAgoraDraft).
@@ -1551,7 +1603,7 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
       return out;
     });
   const live = view.agora.live;
-  if (live) return <AgoraLobby view={view} live={live} act={act} />;
+  if (live) return <AgoraLobby view={view} live={live} act={act} serverNow={serverNow} />;
   const agoras = view.agora.agoras;
   const agora = agoras.find((a) => a.id === selected) ?? agoras[0] ?? null;
   const editing = draft?.agoraId ? agoras.find((a) => a.id === draft.agoraId) : undefined;
@@ -1583,11 +1635,13 @@ function Agora({ view, act, onStudents }: { view: TeacherView; act: Send; onStud
       .catch(() => undefined)
       .finally(() => setBusy(false));
   };
+  const agoraTitle = <ViewTitle value={shown} onChange={setShown} views={[['list', '아고라'], ['stats', '통계']]} />;
+  if (shown === 'stats') return <AgoraStatsView classes={view.classes} title={agoraTitle} />;
   return (
     <div className="flex flex-col gap-5 p-8">
       {/* Same height as the other tabs' header rows, so titles line up across tabs. */}
       <div className="flex min-h-11 items-center justify-between">
-        <h1 className="text-2xl font-bold">아고라</h1>
+        {agoraTitle}
         <button type="button" onClick={startNew} className="flex h-11 w-32 items-center justify-center rounded-xl bg-ink text-[15px] font-bold text-white">
           새 아고라
         </button>
@@ -2136,7 +2190,9 @@ function AgoraRuns({ view, runs, chosen }: { view: TeacherView; runs: Map<string
  * The 아고라's 대기실, laid out as the arena's: what comes up (the topics in order, or the lesson looked at again), who has
  * come in, and [쓰기 시작], or in 다시 보기 [함께 보기].
  */
-function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgoraLive; act: Send }) {
+function AgoraLobby({ view, live, act, serverNow }: { view: TeacherView; live: TeacherAgoraLive; act: Send; serverNow: () => number }) {
+  const drawing = serverNow() < live.reward.revealAt;
+  useTicker(drawing, 200);
   const agora = view.agora.agoras.find((a) => a.id === live.agoraId);
   if (!agora) return null;
   const review = live.review !== null;
@@ -2168,7 +2224,7 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
           </Btn>
           <Btn kind="ghost" onClick={() => act({ type: 'agora-end' }).catch(() => undefined)}>대기실 닫기</Btn>
           {/* With nobody in, a lesson asks first, as the arena does; 다시 보기 shows last time's answers, so it doesn't. */}
-          <Btn kind="accent" onClick={() => { if (review || joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) act({ type: 'agora-start' }).catch(() => undefined); }} className="px-6">
+          <Btn kind="accent" disabled={drawing} title={drawing ? '보상을 뽑는 중이에요' : undefined} onClick={() => { if (review || joined.length > 0 || confirm('아직 들어온 학생이 없어요. 그래도 시작할까요?')) act({ type: 'agora-start' }).catch(() => undefined); }} className="px-6">
             {review ? '함께 보기' : '쓰기 시작'}
           </Btn>
         </div>
@@ -2176,6 +2232,7 @@ function AgoraLobby({ view, live, act }: { view: TeacherView; live: TeacherAgora
       <div className="flex gap-5">
         {/* The right column is where the floating 등록 요청 card sits, so the controls stay on the left. */}
         <div className="flex min-w-0 flex-1 flex-col gap-5">
+          <LobbyPrize prize={live.reward} name={live.reward.name} lessonId={live.id} act={act} serverNow={serverNow} />
           <Card className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="text-lg font-bold">{review ? '다시 볼 주제' : '오늘의 주제'}</h2>
@@ -2305,6 +2362,10 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
     else end();
   }, [step, send, end, live.page, live.index, stillReviewing]);
   useTicker(writing && !!live.timer, 250);
+  // A sent '다시 생각해 봐' reads 보냄 for a few seconds.
+  useTicker(Object.values(live.nudges).some((at) => at > serverNow() - 4000), 500);
+  // 받아쓰기: the topic whose sentence the teacher asked to see here ([정답 보기]); another topic hides it again.
+  const [sentenceShown, setSentenceShown] = useState<string | null>(null);
   const left = writing && live.timer ? Math.max(0, live.timer.endsAt - serverNow()) : null;
 
   useEffect(() => {
@@ -2495,7 +2556,17 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
 
           <Card className="flex min-w-0 flex-1 flex-col gap-4">
             <div className="flex items-end justify-between">
-              <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'ready' ? '들어온 학생 · 쓰기 시작을 누르면 답이 여기에 모여요' : dictation ? '낸 학생 · 마감 뒤에 ⭐로 칭찬 · 학생별 결과는 수업 뒤 답 카드에서' : '낸 학생 · 누르면 그 답만 공개·비공개 · ⭐로 칭찬'}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div className="text-[15px] font-semibold text-ink-3">{live.phase === 'ready' ? '들어온 학생 · 쓰기 시작을 누르면 답이 여기에 모여요' : dictation ? '낸 학생 · 프로젝터에는 ✓만 · 마감 뒤에 ⭐로 칭찬' : '낸 학생 · 누르면 그 답만 공개·비공개 · ⭐로 칭찬'}</div>
+                {/* 받아쓰기: the sentence on this screen only when the teacher asks, as the arena's [정답 보기]. */}
+                {dictation && live.phase !== 'ready' && (sentenceShown === topic.id ? (
+                  <span className="rounded-full bg-good-soft px-3 py-1 text-sm font-bold text-good [overflow-wrap:anywhere]">정답 · {topic.dictation}</span>
+                ) : (
+                  <button type="button" onClick={() => setSentenceShown(topic.id)} className="rounded-full bg-bg px-3 py-1 text-sm font-bold text-ink-2">
+                    정답 보기 <span className="font-semibold text-ink-3">· 선생님만</span>
+                  </button>
+                ))}
+              </div>
               {live.phase === 'ready' ? (
                 <div className="tabular text-5xl font-extrabold leading-none tracking-tight">{view.students.filter((s) => s.classId === live.classId && inRoom.has(s.id)).length}</div>
               ) : (
@@ -2509,9 +2580,10 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
               {sent.length === 0 && live.phase !== 'ready' && <div className="text-sm text-ink-3">아직 낸 학생이 없어요</div>}
               {sent.map((s) => {
                 const a = answers.get(s.id)!;
-                // Whether the projector shows it. The teacher reads every 작문 answer here either way, to choose whom
-                // to praise; a 받아쓰기 answer is the sentence itself, so it stays a ✓ until the 답 card after class.
+                // Whether the projector shows it. The teacher reads every answer here either way (a 받아쓰기 one too,
+                // which the projector and the other phones never show before [정답 공개]), to praise or to nudge.
                 const shown = !dictation && shownOf(a);
+                const nudged = (live.nudges[s.id] ?? 0) > serverNow() - 4000;
                 return (
                   <div key={s.id} className={`flex items-start gap-1 rounded-xl ${a.star ? 'bg-[#FFF6DE]' : 'bg-bg'}`}>
                     <button
@@ -2538,7 +2610,7 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                         )}
                       </span>
                       {!dictation && a.first !== null && <span className="whitespace-pre-wrap pl-8 text-[13px] text-ink-3 [overflow-wrap:anywhere]">처음 답 · <s>{a.first}</s></span>}
-                      {!dictation && <span className="whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere]">{a.text}</span>}
+                      <span className="whitespace-pre-wrap pl-8 text-[15px] [overflow-wrap:anywhere]">{a.text}</span>
                     </button>
                     {/* 칭찬: the first ⭐ in a lesson gives this student the 아고라's reward; taking it back keeps the reward. */}
                     <button
@@ -2551,6 +2623,18 @@ function AgoraConsole({ view, live, act, serverNow }: { view: TeacherView; live:
                     >
                       ⭐ {a.star ? '칭찬함' : '칭찬'}
                     </button>
+                    {/* '다시 생각해 봐': only this student's phone shows it, while they can still change their answer. */}
+                    {writing && (
+                      <button
+                        type="button"
+                        disabled={nudged}
+                        title={nudged ? '보냈어요' : '이 학생 폰에만 ‘다시 생각해 봐’가 떠요'}
+                        onClick={() => send({ type: 'agora-nudge', studentId: s.id, topicId: topic.id })}
+                        className="mt-1.5 h-8 shrink-0 whitespace-nowrap rounded-full border border-[#D5D8DF] bg-white px-2.5 text-xs font-extrabold text-ink-3 hover:text-ink disabled:border-transparent disabled:bg-good-soft disabled:text-good"
+                      >
+                        {nudged ? '🤔 보냄' : '🤔 다시'}
+                      </button>
+                    )}
                     {!dictation && (
                       <button
                         type="button"
@@ -2990,6 +3074,245 @@ function Stats({ classes, title }: { classes: TeacherView['classes']; title: Rea
                 <Card><h2 className="mb-3 font-bold">자주 틀리는 단어</h2><div className="flex flex-wrap gap-2">{student.missed.map((m) => <span key={m.word} className="rounded-full bg-bad-soft px-3 py-1.5 text-sm font-bold">{m.word} <span className="text-bad">×{m.count}</span></span>)}{student.missed.length === 0 && <span className="text-sm text-ink-3">없음</span>}</div></Card>
                 <Card><h2 className="mb-3 font-bold">이제 맞히는 단어</h2><div className="flex flex-wrap gap-2">{student.fixed.map((w) => <span key={w} className="rounded-full bg-good-soft px-3 py-1.5 text-sm font-bold text-good">{w}</span>)}{student.fixed.length === 0 && <span className="text-sm text-ink-3">없음</span>}</div></Card>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- 아고라 통계 ----------
+
+interface AgoraStatsData {
+  students: {
+    id: string;
+    number: number;
+    name: string;
+    writing: number;
+    stars: number;
+    dictation: { right: number; graded: number; accepted: number; accuracy: number | null; stopped: number };
+    entries: { topicId: string; label: string; sentence: string; at: number; result: 'right' | 'accepted' | 'wrong' | 'stopped'; accuracy: number | null; answer: string; marked: DictationWord[] | null }[];
+    missed: { word: string; count: number }[];
+  }[];
+  sentences: { topicId: string; label: string; sentence: string; at: number; right: number; graded: number; accuracy: number | null; missed: { word: string; count: number }[] }[];
+  class: { right: number; graded: number; accuracy: number | null };
+}
+
+/**
+ * 아고라 통계, in the arena's 통계 frame: a class's 받아쓰기 counted as the 답 card counts it (처음에 정답, 정답 인정 as
+ * right), and how many 작문 topics each student wrote to and their ⭐, never a score. Sentences, answers and missed
+ * words stay hidden until [문장·답 보기]: the screen may be on a projector, and another class may not have heard a
+ * sentence yet.
+ */
+function AgoraStatsView({ classes, title }: { classes: TeacherView['classes']; title: React.ReactNode }) {
+  const [classId, setClassId] = useClassChoice(classes);
+  const [data, setData] = useState<{ classId: string; stats: AgoraStatsData } | null>(null);
+  const [mode, setMode] = useState<'students' | 'sentences'>('students');
+  const [picked, setPicked] = useState<string | null>(null);
+  // 학생별: by number, or the lowest word accuracy first (no 받아쓰기 yet goes last).
+  const [order, setOrder] = useState<'number' | 'missed'>('number');
+  // [문장·답 보기], hidden again for each class.
+  const [open, setOpen] = useState(false);
+  // The class whose statistics couldn't be fetched, and a count that [다시 시도] raises to fetch again.
+  const [failed, setFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let stop = false;
+    fetch(`/api/agora-stats?class=${encodeURIComponent(classId)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<AgoraStatsData>) : Promise.reject(new Error(String(r.status)))))
+      .then((stats) => {
+        if (stop) return;
+        setData({ classId, stats });
+        setFailed(null);
+      })
+      .catch(() => !stop && setFailed(classId));
+    return () => {
+      stop = true;
+    };
+  }, [classId, attempt]);
+  // Under the list on a small laptop: picking a student brings their card into view.
+  const detail = useRef<HTMLDivElement>(null);
+  const pick = (id: string) => {
+    setPicked(id);
+    if (window.matchMedia('(max-width: 1359px)').matches) requestAnimationFrame(() => detail.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  const stats = data && data.classId === classId ? data.stats : null;
+  const students = useMemo(
+    () => (!stats ? [] : order === 'number' ? stats.students : [...stats.students].sort((a, b) => (a.dictation.accuracy ?? 2) - (b.dictation.accuracy ?? 2) || a.number - b.number)),
+    [stats, order],
+  );
+  const student = useMemo(() => students.find((s) => s.id === picked) ?? students[0], [students, picked]);
+  const pct = (v: number | null) => (v === null ? '-' : `${Math.round(v * 100)}%`);
+  const ratio = (x: { right: number; graded: number }) => (x.graded ? `${x.right}/${x.graded}` : '-');
+  // The title switches back to 아고라, so it shows while there is nothing to show too.
+  if (classes.length === 0 || !stats) {
+    return (
+      <div className="flex flex-col gap-5 p-8">
+        <div className="flex min-h-11 items-center">{title}</div>
+        {classes.length === 0 ? (
+          <div className="text-ink-3">반 관리에서 반을 먼저 만들어 주세요.</div>
+        ) : failed === classId ? (
+          <LoadFailed
+            onRetry={() => {
+              setFailed(null);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        ) : (
+          <div className="text-ink-3">불러오는 중…</div>
+        )}
+      </div>
+    );
+  }
+  // As the console's [정답 보기]: grey on a card, white on the page.
+  const reveal = (onCard: boolean) => (
+    <button type="button" aria-pressed={open} onClick={() => setOpen((o) => !o)} className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-sm font-bold text-ink-2 ${onCard ? 'bg-bg' : 'bg-white'}`}>
+      {open ? '문장·답 숨기기' : '문장·답 보기'}
+    </button>
+  );
+  const missedChips = (missed: { word: string; count: number }[]) =>
+    missed.length === 0 ? <span className="text-sm text-ink-3">없음</span> : missed.map((m) => <span key={m.word} className="rounded-full bg-bad-soft px-3 py-1.5 text-sm font-bold">{m.word} <span className="text-bad">×{m.count}</span></span>);
+  return (
+    <div className="flex flex-col gap-5 p-8">
+      {/* The 아고라 header: the title alone on the left, and the Excel button dark, as in the arena's 통계. */}
+      <div className="flex items-center justify-between">
+        {title}
+        <a href={`/api/agora-stats?format=csv&class=${encodeURIComponent(classId)}`} className="flex h-11 items-center justify-center whitespace-nowrap rounded-xl bg-ink px-5 text-[15px] font-bold text-white">받아쓰기 엑셀로 받기</a>
+      </div>
+      <ClassTabs
+        classes={classes}
+        value={classId}
+        onChange={(id) => {
+          setClassId(id);
+          setPicked(null);
+          setOpen(false);
+        }}
+        extra={
+          <div className="ml-auto flex gap-1 rounded-xl bg-[#E9EBEF] p-1">
+            {(['students', 'sentences'] as const).map((m) => (
+              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`h-8 rounded-lg px-3.5 text-sm ${mode === m ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>{m === 'students' ? '학생별' : '문장별'}</button>
+            ))}
+          </div>
+        }
+      />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-semibold">
+        <span className="text-ink-3">반 전체 받아쓰기</span>
+        <span className="tabular">처음에 정답 {ratio(stats.class)}</span>
+        <span className="tabular">단어 정확도 {pct(stats.class.accuracy)}</span>
+        <span className="font-normal text-ink-3">정답 인정 포함 · 중단과 안 낸 답은 빼요</span>
+        {mode === 'sentences' && <span className="ml-auto">{reveal(false)}</span>}
+      </div>
+      {mode === 'sentences' ? (
+        <Card className="!p-2">
+          <table className="w-full table-fixed text-left text-[15px]">
+            <colgroup>
+              <col />
+              <col className="w-28" />
+              <col className="w-28" />
+              <col className="w-[34%]" />
+            </colgroup>
+            <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">받아쓰기</th><th>처음에 정답</th><th>단어 정확도</th><th>반이 자주 놓친 말</th></tr></thead>
+            <tbody>
+              {stats.sentences.map((x) => (
+                <tr key={x.topicId} className="border-t border-[#EEF0F3] align-top">
+                  <td className="px-4 py-2.5">
+                    <div className="text-sm font-semibold text-ink-3 [overflow-wrap:anywhere]">{x.label} · {formatDay(x.at)}</div>
+                    {open && <div className="font-bold [overflow-wrap:anywhere]">{x.sentence}</div>}
+                  </td>
+                  <td className="tabular py-2.5">{ratio(x)}</td>
+                  <td className={`tabular py-2.5 font-extrabold ${x.accuracy !== null && x.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(x.accuracy)}</td>
+                  <td className="py-2.5 pr-4">{open ? <div className="flex flex-wrap gap-1.5">{missedChips(x.missed)}</div> : <span className="text-sm text-ink-3">{x.missed.length ? `${x.missed.length}개` : '없음'}</span>}</td>
+                </tr>
+              ))}
+              {stats.sentences.length === 0 && <tr><td colSpan={4} className="px-4 py-10 text-center text-ink-3">아직 받아쓰기 기록이 없어요.</td></tr>}
+            </tbody>
+          </table>
+        </Card>
+      ) : (
+        // Side by side from 1360px; on a smaller laptop the student's card goes under the list.
+        <div className="flex flex-col gap-5 min-[1360px]:flex-row">
+          <Card className="!p-2 min-[1360px]:w-[560px] min-[1360px]:shrink-0">
+            <div className="flex justify-end px-2 pt-1">
+              <div className="flex gap-1 rounded-lg bg-[#E9EBEF] p-0.5">
+                {(['number', 'missed'] as const).map((o) => (
+                  <button key={o} type="button" aria-pressed={order === o} onClick={() => setOrder(o)} title={o === 'missed' ? '받아쓰기 단어 정확도가 낮은 학생부터' : undefined} className={`h-7 rounded-md px-2.5 text-xs ${order === o ? 'bg-white font-bold' : 'font-semibold text-ink-2'}`}>
+                    {o === 'number' ? '번호 순' : '많이 틀린 순'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Fixed widths, as in 반 관리; 학생 takes the rest. */}
+            <table className="w-full table-fixed text-left text-[15px]">
+              <colgroup>
+                <col />
+                <col className="w-14" />
+                <col className="w-14" />
+                <col className="w-24" />
+                <col className="w-24" />
+              </colgroup>
+              <thead className="text-xs font-bold text-ink-3"><tr><th className="px-4 py-3">학생</th><th>작문</th><th>⭐</th><th className="text-right">처음에 정답</th><th className="pr-4 text-right">단어 정확도</th></tr></thead>
+              <tbody>
+                {students.map((s) => (
+                  <tr key={s.id} onClick={() => pick(s.id)} className={`cursor-pointer border-t border-[#EEF0F3] ${student?.id === s.id ? 'bg-bg' : ''}`}>
+                    <td className="truncate px-4 py-2.5 font-semibold" title={s.name}><span className="tabular mr-1.5 text-[#A3A8B4]">{s.number}</span>{s.name}</td>
+                    <td className="tabular text-sm text-ink-2">{s.writing}</td>
+                    <td className="tabular text-sm text-ink-2">{s.stars}</td>
+                    <td className="tabular text-right font-semibold text-ink-2">{ratio(s.dictation)}</td>
+                    <td className={`tabular pr-4 text-right font-extrabold ${s.dictation.accuracy !== null && s.dictation.accuracy < 0.6 ? 'text-bad' : ''}`}>{pct(s.dictation.accuracy)}</td>
+                  </tr>
+                ))}
+                {students.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-ink-3">이 반 학생이 아직 없어요.</td></tr>}
+              </tbody>
+            </table>
+          </Card>
+          {student && (
+            <div ref={detail} className="flex min-w-0 flex-1 scroll-mt-4 flex-col gap-4">
+              <Card className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                {/* Four numbers, so the name keeps a little room and the numbers go under it before it shrinks away. */}
+                <div className="min-w-32 flex-1 truncate whitespace-nowrap text-2xl font-bold" title={student.name}>{student.number} {student.name}</div>
+                <div className="flex flex-wrap gap-3">
+                  {(
+                    [
+                      ['처음에 정답', ratio(student.dictation)],
+                      ['단어 정확도', pct(student.dictation.accuracy)],
+                      ['작문', student.writing],
+                      ['⭐ 칭찬', student.stars],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label} className="whitespace-nowrap rounded-xl bg-bg px-4 py-2"><div className="text-xs font-bold text-ink-3">{label}</div><div className="tabular text-2xl font-extrabold">{value}</div></div>
+                  ))}
+                </div>
+              </Card>
+              <Card>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <h2 className="font-bold">받아쓰기</h2>
+                  {student.entries.length > 0 && reveal(true)}
+                </div>
+                {student.entries.length === 0 && <div className="pt-2 text-sm text-ink-3">아직 받아쓰기 기록이 없어요.</div>}
+                {student.entries.map((e) => {
+                  const good = e.result === 'right' || e.result === 'accepted';
+                  return (
+                    <div key={e.topicId} className="flex items-start gap-3 border-t border-[#EEF0F3] py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-ink-3 [overflow-wrap:anywhere]">{e.label} · {formatDay(e.at)}</div>
+                        {/* The sentence with the words not heard right underlined, as the 답 card marks them, then the answer. */}
+                        {open && <div className="text-[15px] font-bold [overflow-wrap:anywhere]">{e.marked ? <Marked words={e.marked} /> : e.sentence}</div>}
+                        {open && <div className="text-[13px] text-ink-3 [overflow-wrap:anywhere]">{e.result === 'stopped' ? '쓴 답' : '처음 답'} · {e.answer}</div>}
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-extrabold ${good ? 'bg-good-soft text-good' : 'bg-bg text-ink-3'}`}>
+                        {e.result === 'stopped' ? '중단' : e.result === 'accepted' ? '정답 인정' : e.result === 'right' ? '정답' : pct(e.accuracy)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </Card>
+              {open && student.entries.length > 0 && (
+                <Card>
+                  <h2 className="mb-3 font-bold">자주 놓친 말</h2>
+                  <div className="flex flex-wrap gap-2">{missedChips(student.missed)}</div>
+                </Card>
+              )}
             </div>
           )}
         </div>

@@ -1,13 +1,14 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock, formatDay, remainingMs, reportReviewing, SEND_TIMEOUT_MS, timeoutSignal, useLive, useTicker, type ConnState } from '@/client/live';
-import type { AgoraNote, MyAnswer, StudentAgora, StudentView, WrongNote } from '@/client/views';
+import type { AgoraNote, MyAnswer, PrizeDraw, StudentAgora, StudentView, WrongNote } from '@/client/views';
 import { CountUp } from '@/components/CountUp';
 import { GrammarCard, filledSentence, zoneLabels } from '@/components/GrammarCard';
 import { IdleAvatar } from '@/components/IdleAvatar';
 import { PixelAvatar } from '@/components/PixelAvatar';
 import { AgoraPracticeCard } from '@/components/AgoraPracticeCard';
 import { PracticeCard } from '@/components/PracticeCard';
+import { PrizeFace, prizeName, prizeStage } from '@/components/PrizeDraw';
 import { Reaction, reactionLine } from '@/components/Reaction';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
 import { MAX_TEXT_ANSWER } from '@/lib/text';
@@ -246,7 +247,7 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
   // The server never opens an 아고라 while a quiz is open, so the two don't meet here. Its 대기실 is the arena's, and
   // so is the wait while the teacher reads out the next topic (준비).
   if (view.agora && !s) {
-    if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} onLocker={() => setLockerOpen(true)} onResult={openResult} waiting />;
+    if (view.agora.phase === 'lobby' || view.agora.phase === 'ready') return <Home view={view} serverNow={serverNow} onLocker={() => setLockerOpen(true)} onResult={openResult} waiting />;
     if (view.agora.phase === 'end') return <AgoraDone view={view} />;
     return <AgoraAnswer key={view.agora.topic.id} view={view} send={send} serverNow={serverNow} praiseSeen={praiseSeen} onPraiseSeen={onPraiseSeen} />;
   }
@@ -255,10 +256,10 @@ function Router({ view, send, serverNow, conn }: { view: StudentView; send: Send
       const mine = view.mySummary;
       return <Summary view={view} sum={mine} eventName={s.eventName} onLocker={() => setLockerOpen(true)} onNotes={() => openNotes({ eventName: s.eventName, wrong: mine.wrong, practice: mine.practice })} />;
     }
-    return <Home view={view} onLocker={() => setLockerOpen(true)} onResult={openResult} onAnswers={openAnswers} waiting={false} />;
+    return <Home view={view} serverNow={serverNow} onLocker={() => setLockerOpen(true)} onResult={openResult} onAnswers={openAnswers} waiting={false} />;
   }
   if (s.paused) return <Message title="잠깐!" body="선생님을 봐 주세요" dark />;
-  if (s.phase === 'lobby') return <Home view={view} onLocker={() => setLockerOpen(true)} onResult={openResult} waiting />;
+  if (s.phase === 'lobby') return <Home view={view} serverNow={serverNow} onLocker={() => setLockerOpen(true)} onResult={openResult} waiting />;
   if (s.phase === 'checkpoint') {
     return s.checkpoint?.kind === 'retry' ? <Message title="다시 도전" body={`많이 틀린 단어 ${s.checkpoint.total}개를 한 번 더!`} dark /> : <Message title="잠깐 쉬어요" body="앞 화면을 봐 주세요" />;
   }
@@ -318,6 +319,15 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // '다시 생각해 봐' from the teacher: shown when one arrives (not one from before this screen opened), a few seconds.
+  const [nudgeSeen, setNudgeSeen] = useState(a.nudgedAt);
+  const nudging = open && a.nudgedAt > nudgeSeen;
+  useEffect(() => {
+    if (!nudging) return;
+    buzz([60, 50, 60]);
+    const t = setTimeout(() => setNudgeSeen(a.nudgedAt), 7000);
+    return () => clearTimeout(t);
+  }, [nudging, a.nudgedAt]);
   const typed = value.trim();
   const label = saved !== null && saved === typed ? '제출했어요 · 고칠 수 있어요' : saved !== null ? '고친 답 제출' : '제출';
   const write = (action: Record<string, unknown>, after?: () => void) => {
@@ -375,6 +385,15 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
                 <div className="whitespace-pre-wrap text-[15px] font-semibold text-ink-2 [overflow-wrap:anywhere]">{a.mine.first ?? a.mine.text}</div>
               </div>
             )}
+            {nudging && (
+              <button type="button" onClick={() => setNudgeSeen(a.nudgedAt)} className="cls-pop flex items-center gap-3 rounded-2xl bg-accent px-4 py-3 text-left text-ink">
+                <span className="text-3xl" aria-hidden>🤔</span>
+                <span>
+                  <span className="block text-lg font-extrabold">다시 한번 생각해 봐요</span>
+                  <span className="block text-sm font-semibold">선생님이 보냈어요 · 고쳐서 다시 낼 수 있어요</span>
+                </span>
+              </button>
+            )}
             <form
               className="flex flex-col gap-2"
               onSubmit={(e) => {
@@ -402,8 +421,8 @@ function AgoraAnswer({ view, send, serverNow, praiseSeen, onPraiseSeen }: { view
                 <span className="tabular text-ink-3">
                   {[...value].length} / {ANSWER_MAX}
                 </span>
-                {/* 다시 쓰기 changes last lesson's answer; it can't be taken back. */}
-                {saved !== null && !review && (
+                {/* 다시 쓰기 changes last lesson's answer, and a 받아쓰기 a 마감 kept counts in 통계: neither can be taken back. */}
+                {saved !== null && !review && !a.mine?.kept && (
                   <button type="button" disabled={busy} onClick={() => write({ type: 'agora-unanswer' }, () => {
                     setValue('');
                     keepAnswerDraft(a.topic.id, null);
@@ -878,7 +897,7 @@ function PokeAvatar({ look, size }: { look: AvatarLook; size: number }) {
   );
 }
 
-function Home({ view, onLocker, onResult, onAnswers, waiting }: { view: StudentView; onLocker: () => void; onResult?: () => void; onAnswers?: () => void; waiting: boolean }) {
+function Home({ view, serverNow, onLocker, onResult, onAnswers, waiting }: { view: StudentView; serverNow: () => number; onLocker: () => void; onResult?: () => void; onAnswers?: () => void; waiting: boolean }) {
   const me = view.me!;
   const look = normalizeLook(me.look ?? undefined);
   const s = view.session;
@@ -886,7 +905,7 @@ function Home({ view, onLocker, onResult, onAnswers, waiting }: { view: StudentV
   const stamps = me.stamps % STAMPS_PER_UNLOCK;
   const nextGift = itemById(ATTENDANCE_UNLOCKS[Math.floor(me.stamps / STAMPS_PER_UNLOCK)] ?? '');
   // An 아고라's reward shows while it waits in the 대기실 or 준비.
-  const agoraReward = view.agora && (view.agora.phase === 'lobby' || view.agora.phase === 'ready') ? itemById(view.agora.reward.itemId) : undefined;
+  const agoraPrize = view.agora && (view.agora.phase === 'lobby' || view.agora.phase === 'ready') ? view.agora.reward : null;
   // What the 대기실 is for: the arena's quiz or an 아고라, named on the dark card, each with its gold card below.
   const coming = !waiting ? null : view.agora ? '아고라' : s ? '아레나' : null;
   return (
@@ -930,26 +949,8 @@ function Home({ view, onLocker, onResult, onAnswers, waiting }: { view: StudentV
           <div className="mt-0.5 break-keep text-lg font-extrabold leading-snug [overflow-wrap:anywhere]">{s.eventName}</div>
         </div>
       )}
-      {waiting && agoraReward && (
-        <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
-          <IdleAvatar look={previewLook(agoraReward, look)} size={64} seed={agoraReward.id} />
-          <div>
-            <div className="text-xs font-extrabold">오늘의 보상</div>
-            <div className="text-xl font-extrabold">{agoraReward.name}</div>
-            <div className="text-xs font-semibold text-[#4A3A10]">선생님 칭찬 ⭐을 받으면</div>
-          </div>
-        </div>
-      )}
-      {waiting && s?.reward && (
-        <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
-          {itemById(s.reward.itemId) && <IdleAvatar look={previewLook(itemById(s.reward.itemId)!, look)} size={64} seed={s.reward.itemId} />}
-          <div>
-            <div className="text-xs font-extrabold">오늘의 보상</div>
-            <div className="text-xl font-extrabold">{s.reward.itemName}</div>
-            <div className="text-xs font-semibold text-[#4A3A10]">정답 {s.reward.challengePct}%+ 또는 내 평균 +{s.reward.growthPp}%p</div>
-          </div>
-        </div>
-      )}
+      {waiting && agoraPrize && <LobbyPrize prize={agoraPrize} name={agoraPrize.name} look={look} how="선생님 칭찬 ⭐을 받으면" serverNow={serverNow} />}
+      {waiting && s?.reward && <LobbyPrize prize={s.reward} name={s.reward.itemName} look={look} how={`정답 ${s.reward.challengePct}%+ 또는 내 평균 +${s.reward.growthPp}%p`} serverNow={serverNow} />}
       {/* A first-timer (no footprints yet) can try one pretend question while waiting. */}
       {/* In an 아고라's 대기실 the practice is writing an answer; otherwise a first-timer taps a box. */}
       {waiting && view.agora ? view.agora.phase === 'lobby' && <AgoraPracticeCard look={look} /> : me.stamps === 0 && <PracticeCard look={look} />}
@@ -1001,6 +1002,25 @@ function Home({ view, onLocker, onResult, onAnswers, waiting }: { view: StudentV
 }
 
 /** What the gold card in the 대기실 and 준비 says the topic is: today's, or the one a 다시 보기 starts with. */
+/** 오늘의 보상 on the 대기 화면, with the projector's draw as it plays (두근두근…), then the item on my own character. */
+function LobbyPrize({ prize, name, look, how, serverNow }: { prize: PrizeDraw; name: string; look: AvatarLook; how: string; serverNow: () => number }) {
+  useTicker(serverNow() < prize.revealAt + 300, 150);
+  const now = serverNow();
+  const drawing = prizeStage(prize, now) === 'draw';
+  return (
+    <div className="cls-slide-up flex items-center gap-4 rounded-3xl bg-gold p-4">
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center">
+        <PrizeFace prize={prize} now={now} size={64} show={(item) => <IdleAvatar look={previewLook(item, look)} size={64} seed={item.id} />} />
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs font-extrabold">{drawing ? '두근두근… 오늘의 보상은' : '오늘의 보상'}</div>
+        <div className={`text-xl font-extrabold ${drawing ? 'opacity-60' : ''}`}>{prizeName(prize, name, now)}</div>
+        <div className="text-xs font-semibold text-[#4A3A10]">{how}</div>
+      </div>
+    </div>
+  );
+}
+
 function agoraLabel(a: StudentAgora): string {
   const of = a.count > 1 ? ` · ${a.index + 1} / ${a.count}` : '';
   return a.review !== null && a.phase === 'lobby' ? `다시 보기 · ${formatDay(a.review)} 수업${of}` : `오늘의 주제${of}`;

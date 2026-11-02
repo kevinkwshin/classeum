@@ -1,9 +1,9 @@
 // The game host, one per server process: owns the live session, runs its clock, keeps track of
 // every open screen, and pushes each one its role's view (over /api/stream). Records live in store.ts.
 import { createHash, randomInt } from 'node:crypto';
-import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, GrammarItem, GrammarTab, Phase, PublicQuestion, Question, RevealInfo, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
+import type { AvatarLook, AvatarOnField, CustomQuestion, FieldPoint, GrammarItem, GrammarTab, Phase, PublicQuestion, Question, RevealInfo, RewardSetting, Round, StudentSummary, Word, WrongNote } from '@/lib/types';
 import { DEFAULT_LOOK, EYE_STYLES, HAIR_COLORS, HAIR_STYLES, normalizeLook, SKIN_TONES } from '@/lib/avatar';
-import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
+import { ATTENDANCE_UNLOCKS, ITEMS, QUIZ_REWARD_ITEMS, RANDOM_REWARD, STAMPS_PER_UNLOCK, itemById } from '@/lib/items';
 import { hashString, MAX_TEXT_ANSWER, mulberry32, normalizeAnswer, shortDate, todayKey } from '@/lib/text';
 import { zoneOf } from '@/lib/field';
 import { db, flush, newId, save, saveTrouble, watchSaves, type EventRec, type RequestRec, type ResponseRec, type SessionSummaryRec, type StudentRec, type AgoraRec, type TopicRec } from './store';
@@ -13,7 +13,8 @@ import { GRAMMAR_TABS, gradeGrammar } from './grammar';
 import { compareNames } from './stats';
 import type { ImportIssue } from './excel';
 import { lanAddress, qrSvg } from './lan';
-import { acceptAnswer, addAgora, closeDictation, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, releaseDictation, resetCards, revealCards, setCardShown, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
+import { drawn, prizeFor, settled, type Prize } from './prize';
+import { acceptAnswer, addAgora, closeDictation, deleteAgora, displayAgora, dropAnswer, dropClassRuns, dropStudentAnswers, editAgora, findTopic, flipCard, lessonOf, putAnswer, releaseDictation, resetCards, revealCards, rewardItem, setCardShown, setReward, setSettings, studentAgora, studentNotes, teacherAgora, toggleStar, type AgoraInput, type AgoraLive } from './agora';
 
 export type Role = 'teacher' | 'display' | 'student';
 
@@ -156,6 +157,10 @@ interface Live {
   skipped: Set<string>;
   /** While the projector plays the 놀이 방법 demo (lobby only): when it ends, or 0. */
   howtoUntil: number;
+  /** 오늘의 보상 as the event had it when the 대기실 opened (itemId RANDOM_REWARD for 무작위); later changes wait for the next lesson. */
+  reward: RewardSetting;
+  /** The lesson's item: the set one, or drawn as the 대기실 opens and again at [다시 뽑기]. */
+  prize: Prize;
 }
 
 /** The kinds of question an event asks, in the order they come: words, the four 문법 tabs, an older file's 문항. */
@@ -254,6 +259,9 @@ function playSeconds(q: Question): number {
 
 /** One scored question at the end: the class's share of right answers, and the students who missed it with their answers. */
 type HardestRow = { id: string; kind: string; text: string; answer: string; accuracy: number; total: number; topWrong: string | null; missed: { number: number; name: string; mine: string }[] };
+
+/** At most one '다시 생각해 봐' to a student this often, so a double click or a busy teacher doesn't flood a phone. */
+const NUDGE_GAP_MS = 4000;
 
 class Hub {
   clients = new Set<Client>();
@@ -535,7 +543,15 @@ class Hub {
       pausedRemaining: live.paused?.remaining ?? null,
       checkpoint: live.checkpoint,
       summary: live.summary,
-      reward: event ? { ...event.reward, itemName: itemById(event.reward.itemId)?.name ?? '' } : null,
+      reward: {
+        itemId: live.prize.itemId,
+        itemName: live.prize.itemId ? (itemById(live.prize.itemId)?.name ?? '') : '',
+        challengePct: live.reward.challengePct,
+        growthPp: live.reward.growthPp,
+        random: live.reward.itemId === RANDOM_REWARD,
+        seq: live.prize.seq,
+        revealAt: live.prize.revealAt,
+      },
     };
   }
 
@@ -1259,7 +1275,12 @@ class Hub {
       praisedAt: 0,
       pageNumbers: [],
       listening: null,
+      // 오늘의 보상, as the 아고라 had it now: its item, or 무작위, drawn as the 대기실 opens (the projector plays it).
+      prizeRandom: a.reward?.itemId === RANDOM_REWARD,
+      prize: prizeFor(a.reward?.itemId === RANDOM_REWARD ? RANDOM_REWARD : rewardItem(a).id),
+      nudges: new Map(),
     };
+    if (this.agoraLive.prizeRandom) this.agoraLive.prize = drawn(this.agoraLive.prize, classId, Date.now());
     this.agoraOrder.clear();
     // As when an arena lobby opens: other classes' requests can't be approved during this class.
     for (const r of Object.values(d.requests)) {
@@ -1282,6 +1303,11 @@ class Hub {
     const now = this.agoraNow();
     if (!live || !now) return;
     const fromLobby = live.phase === 'lobby';
+    // Leaving the 대기실 fixes 오늘의 보상 (다시 보기's [함께 보기] too, where a ⭐ also rewards), not while it is drawn.
+    if (fromLobby) {
+      if (Date.now() < live.prize.revealAt) throw new Error('보상을 뽑는 중이에요. 다 뽑히면 시작해요.');
+      live.prize = settled(live.prize, live.classId);
+    }
     if (live.review !== null) {
       if (!fromLobby) return;
       live.phase = 'closed';
@@ -1601,10 +1627,14 @@ class Hub {
     this.schedulePush(true);
   }
 
-  /** A student takes back their answer; not in 다시 쓰기, where the answer being changed is last lesson's. */
+  /**
+   * A student takes back their answer; not in 다시 쓰기, where the answer being changed is last lesson's, and not a
+   * 받아쓰기 answer a 마감 has kept (its result counts in 통계), whichever way the 아고라 was opened again.
+   */
   unanswerTopic(tokenHash: string, topicId: string, n = NaN) {
     const { student, topic, live } = this.agoraWriter(tokenHash, topicId);
     if (live.review !== null) throw new Error('다시 쓰기에서는 지울 수 없어요. 고쳐서 제출해 주세요.');
+    if (Object.hasOwn(db().topicAnswers[topic.id] ?? {}, student.id) && db().topicAnswers[topic.id][student.id].closed !== undefined) throw new Error('마감된 받아쓰기 답은 지울 수 없어요. 고쳐서 제출해 주세요.');
     if (!this.agoraInOrder(topic.id, student.id, n)) return;
     dropAnswer(topic, student.id);
     save();
@@ -1759,8 +1789,6 @@ class Hub {
       const existing = new Set(Object.values(d.events).filter((e) => !e.deletedAt).map((e) => e.name));
       let name = g.name;
       for (let k = 2; existing.has(name); k++) name = `${g.name} (${k})`;
-      // Rotate through the catalog so the teacher only has to change the reward, not pick one.
-      const nextItem = QUIZ_REWARD_ITEMS[Object.keys(d.events).length % QUIZ_REWARD_ITEMS.length];
       d.events[id] = {
         id,
         name,
@@ -1768,7 +1796,8 @@ class Hub {
         questions: gen.questions,
         retry: gen.retry,
         warnings: gen.warnings,
-        reward: { itemId: nextItem.id, challengePct: 70, growthPp: 10 },
+        // 무작위: each lesson draws its item, so the teacher doesn't have to pick one.
+        reward: { itemId: RANDOM_REWARD, challengePct: 70, growthPp: 10 },
         fileName: draft.fileName,
         typed: draft.typed,
       };
@@ -1812,7 +1841,7 @@ class Hub {
 
   setReward(eventId: string, itemId: string, challengePct: number, growthPp: number) {
     const e = db().events[eventId];
-    if (!e || e.deletedAt || !itemById(itemId)) throw new Error('이벤트나 아이템을 찾을 수 없어요.');
+    if (!e || e.deletedAt || (itemId !== RANDOM_REWARD && !QUIZ_REWARD_ITEMS.some((i) => i.id === itemId))) throw new Error('이벤트나 아이템을 찾을 수 없어요.');
     e.reward = { itemId, challengePct: clamp(challengePct, 30, 100), growthPp: clamp(growthPp, 1, 50) };
     save();
     this.schedulePush(true);
@@ -1886,9 +1915,49 @@ class Hub {
       breaks: true,
       skipped: new Set(),
       howtoUntil: 0,
+      reward: { ...event.reward },
+      prize: prizeFor(event.reward.itemId),
     };
     for (const id of this.connectedStudents()) if (db().students[id]?.look) this.join(id);
+    // 무작위: today's reward is drawn as the 대기실 opens, and the projector plays the draw.
+    if (this.live.reward.itemId === RANDOM_REWARD) this.live.prize = drawn(this.live.prize, classId, Date.now());
     this.startTicker();
+    this.schedulePush(true);
+  }
+
+  /**
+   * '다시 생각해 봐' from the 아고라's console to one student who has written to the topic up, while writing is open:
+   * their phone alone shows it. `topicId` is the topic the teacher's screen showed; one every few seconds per student.
+   */
+  nudgeAgora(studentId: string, topicId: string) {
+    const live = this.agoraLive;
+    const now = this.agoraNow();
+    if (!live || !now || live.phase !== 'writing' || now.topic.id !== topicId) return;
+    const s = db().students[studentId];
+    if (!s || s.classId !== live.classId || !Object.hasOwn(db().topicAnswers[topicId] ?? {}, studentId)) return;
+    if (Date.now() - (live.nudges.get(studentId) ?? 0) < NUDGE_GAP_MS) return;
+    live.nudges.set(studentId, Date.now());
+    this.schedulePush(true);
+  }
+
+  /**
+   * [다시 뽑기] in a 대기실 whose reward is 무작위 (arena or 아고라): another item, played on the projector again, never
+   * the one up now. `from` is the lesson the teacher's screen showed and `seq` the draw it saw, so a second click or a
+   * late one draws nothing new, and nothing is drawn while a draw is still playing.
+   */
+  drawReward(from: string, seq: number) {
+    const now = Date.now();
+    const live = this.live;
+    if (live?.id === from) {
+      if (live.phase !== 'lobby' || live.reward.itemId !== RANDOM_REWARD || seq !== live.prize.seq || now < live.prize.revealAt) return;
+      live.howtoUntil = 0;
+      live.prize = drawn(live.prize, live.classId, now);
+    } else {
+      const agora = this.agoraLive;
+      if (agora?.id !== from || agora.phase !== 'lobby' || !agora.prizeRandom || seq !== agora.prize.seq || now < agora.prize.revealAt) return;
+      this.stopHowto();
+      agora.prize = drawn(agora.prize, agora.classId, now);
+    }
     this.schedulePush(true);
   }
 
@@ -1918,6 +1987,8 @@ class Hub {
   start() {
     const live = this.live;
     if (!live || live.phase !== 'lobby') return;
+    if (Date.now() < live.prize.revealAt) throw new Error('보상을 뽑는 중이에요. 다 뽑히면 시작해요.');
+    live.prize = settled(live.prize, live.classId);
     for (const id of live.joined) if (this.stampAttendance(id)) live.stamped.add(id);
     live.howtoUntil = 0;
     live.round = 'main';
@@ -2155,8 +2226,11 @@ class Hub {
     if (live.phase === 'summary') return;
     const d = db();
     const event = d.events[live.eventId];
+    // The lesson's item, settled by the start (a 무작위 never drawn is drawn then).
+    live.prize = settled(live.prize, live.classId);
+    const prizeId = live.prize.itemId ?? '';
     const mainCount = live.mainStats.size;
-    // Ended early (종료) before half the scored questions: answers are kept, but nobody is judged for rewards. The
+    // Ended early (끝내기) before half the scored questions: answers are kept, but nobody is judged for rewards. The
     // questions left out in the lobby or skipped were never going to be asked, so they don't count.
     const planned = plannedOf(live);
     const shortQuiz = mainCount < Math.ceil(planned / 2);
@@ -2204,13 +2278,14 @@ class Hub {
         const past = history.get(id) ?? [];
         const avg = past.length ? past.reduce((a, b) => a + b, 0) / past.length : null;
         // Integer and rounded comparisons, so 7/10 at a 70% bar counts.
-        const challenge = r.correct * 100 >= event.reward.challengePct * r.connected;
-        const growth = avg !== null && Math.round(acc * 10000) >= Math.round(avg * 10000) + event.reward.growthPp * 100;
+        // The lesson's own setting and item, as the 대기실 showed them (a change in another window waits for the next one).
+        const challenge = r.correct * 100 >= live.reward.challengePct * r.connected;
+        const growth = avg !== null && Math.round(acc * 10000) >= Math.round(avg * 10000) + live.reward.growthPp * 100;
         if (challenge || growth) {
-          const alreadyOwned = s.inventory.includes(event.reward.itemId);
-          if (!alreadyOwned) s.inventory.push(event.reward.itemId);
-          reward = { itemId: event.reward.itemId, reason: challenge ? 'challenge' : 'growth', alreadyOwned };
-          d.rewards.push({ sessionId: live.id, eventId: live.eventId, studentId: id, itemId: event.reward.itemId, reason: reward.reason, at: Date.now() });
+          const alreadyOwned = s.inventory.includes(prizeId);
+          if (!alreadyOwned) s.inventory.push(prizeId);
+          reward = { itemId: prizeId, reason: challenge ? 'challenge' : 'growth', alreadyOwned };
+          d.rewards.push({ sessionId: live.id, eventId: live.eventId, studentId: id, itemId: prizeId, reason: reward.reason, at: Date.now() });
           rewarded++;
         }
       }
