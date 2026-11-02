@@ -763,6 +763,7 @@ async function run(teacher: Stream, display: Stream) {
   check('…2번 카드에 ⭐', (display.view.agora.cards as View[]).find((c) => c.number === 2)?.star === true);
   await sleep(800);
   let file = JSON.parse(readFileSync(join(DATA, 'classeum.json'), 'utf8')) as View;
+  check('저장 파일에 예전 보상을 무작위로 바꾼 때가 남는다 (서버를 다시 켜도 한 번만 바꾸게)', typeof file.randomRewardsAt === 'number');
   check('저장: 마감 때의 답이 남고, 이 반에 공개한 받아쓰기가 남는다(서버를 다시 켜도)', file.topicAnswers[d1][studentId(A, 1)].closed === 'where did you go last weekend' && file.agoras[dict].released[A.id].includes(d1) && !file.agoras[dict].released[B.id]);
   check('정답 인정은 선생님만', (await post({ type: 'agora-accept', topicId: d1, studentId: studentId(A, 2), accepted: true }, {})).status === 403);
   check('선생님이 2번 답을 정답으로 인정한다', (await post({ type: 'agora-accept', topicId: d1, studentId: studentId(A, 2), accepted: true })).ok);

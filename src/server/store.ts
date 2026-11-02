@@ -3,7 +3,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AvatarLook, Question, RewardSetting, StudentSummary, Word } from '@/lib/types';
-import { QUIZ_REWARD_ITEMS } from '@/lib/items';
+import { RANDOM_REWARD } from '@/lib/items';
 import { DEFAULT_MINUTES, TITLE_MAX, type TopicSort } from '@/lib/agora';
 
 /** A class (반) the teacher runs; numbers are unique only within one class. */
@@ -188,6 +188,11 @@ export interface DB {
   /** 아고라, and the answers by topic. Not 'answers': on disk that key holds the packed quiz responses. */
   agoras: Record<string, AgoraRec>;
   topicAnswers: Record<string, Record<string, TopicAnswerRec>>;
+  /**
+   * When the events and 아고라 saved before 무작위 became 오늘의 보상's default were switched to it (the teacher wanted
+   * 무작위 from the start): done once, so an item picked after it stays.
+   */
+  randomRewardsAt?: number;
 }
 
 const DIR = join(process.cwd(), '.data');
@@ -222,17 +227,16 @@ function migrate(d: DB): DB {
     migrateAgoras(legacy.topics, d.agoras);
     delete legacy.topics;
   }
-  // 아고라 from before rewards each get one, in turn through the catalog, as new ones do.
-  const agoras = Object.values(d.agoras).sort((a, b) => a.createdAt - b.createdAt);
-  agoras.forEach((a, i) => {
-    (a as Partial<AgoraRec>).reward ??= { itemId: rewardItemAt(i) };
-  });
+  // 아고라 from before rewards get one: 무작위, as new ones do.
+  for (const a of Object.values(d.agoras)) (a as Partial<AgoraRec>).reward ??= { itemId: RANDOM_REWARD };
+  // 오늘의 보상 is 무작위 from the start, for what was saved before it was the default too: once, so an item the
+  // teacher picks afterwards stays.
+  if (d.randomRewardsAt === undefined) {
+    for (const e of Object.values(d.events)) e.reward = { ...e.reward, itemId: RANDOM_REWARD };
+    for (const a of Object.values(d.agoras)) a.reward = { itemId: RANDOM_REWARD };
+    d.randomRewardsAt = Date.now();
+  }
   return d;
-}
-
-/** The reward a new 아고라 starts with, going round the items a quiz can reward, so the teacher only changes it. */
-export function rewardItemAt(n: number): string {
-  return QUIZ_REWARD_ITEMS[n % QUIZ_REWARD_ITEMS.length].id;
 }
 
 /** A file from before 아고라 held topics, where each topic was an 아고라 of its own. */
@@ -285,7 +289,7 @@ function migrateAgoras(topics: Record<string, OldTopic>, agoras: DB['agoras']) {
     const line = [...t.text.split('\n')[0].trim()];
     const title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).join('')}…` : line.join('');
     const id = `ago_${t.id.replace(/^top_/, '')}`;
-    agoras[id] = { id, title, topics: [{ id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes }], runs: t.runs ?? {}, reward: { itemId: rewardItemAt(Object.keys(agoras).length) }, createdAt: t.createdAt };
+    agoras[id] = { id, title, topics: [{ id: t.id, text: t.text, note: t.note, columns: t.columns, sort: t.sort, minutes: t.minutes }], runs: t.runs ?? {}, reward: { itemId: RANDOM_REWARD }, createdAt: t.createdAt };
   }
 }
 
